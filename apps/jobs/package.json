@@ -1,0 +1,44 @@
+{
+  "name": "@cip/jobs",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "description": "BullMQ processors: maintenance now; AI, notifications, backfill, calendar and replays in later phases.",
+  "scripts": {
+    "build": "swc src -d dist --strip-leading-paths --config-file ../../.swcrc --ignore \"**/*.test.ts\"",
+    "typecheck": "tsc -p tsconfig.json",
+    "test": "vitest run",
+    "test:integration": "vitest run --config vitest.int.config.ts",
+    "dev": "node --env-file-if-exists=.env --watch --conditions=@cip/source --import @swc-node/register/esm-register src/main.ts",
+    "start": "node dist/main.js"
+  },
+  "dependencies": {
+    "@cip/contracts": "workspace:*",
+    "@cip/db": "workspace:*",
+    "@cip/observability": "workspace:*",
+    "@nestjs/common": "catalog:",
+    "@nestjs/core": "catalog:",
+    "bullmq": "catalog:",
+    "ioredis": "catalog:",
+    "kysely": "catalog:",
+    "pg": "catalog:",
+    "reflect-metadata": "catalog:",
+    "rxjs": "catalog:",
+    "zod": "catalog:"
+  },
+  "devDependencies": {
+    "@cip/config": "workspace:*",
+    "@swc-node/register": "catalog:",
+    "@swc/cli": "catalog:",
+    "@swc/core": "catalog:",
+    "@testcontainers/postgresql": "catalog:",
+    "@types/node": "catalog:",
+    "@types/pg": "catalog:",
+    "@typescript/native": "catalog:",
+    "@vitest/coverage-v8": "catalog:",
+    "testcontainers": "catalog:",
+    "typescript": "catalog:",
+    "unplugin-swc": "catalog:",
+    "vitest": "catalog:"
+  }
+}

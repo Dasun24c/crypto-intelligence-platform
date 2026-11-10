@@ -1,0 +1,50 @@
+{
+  "name": "@cip/db",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "description": "SQL-first migrations, Kysely types and the migration CLI (ADR 006).",
+  "exports": {
+    ".": {
+      "@cip/source": "./src/index.ts",
+      "default": "./dist/index.js"
+    },
+    "./testing": {
+      "@cip/source": "./src/testing.ts",
+      "default": "./dist/testing.js"
+    }
+  },
+  "bin": {
+    "cip-db": "./dist/cli.js"
+  },
+  "files": [
+    "dist",
+    "migrations"
+  ],
+  "scripts": {
+    "build": "swc src -d dist --strip-leading-paths --config-file ../../.swcrc --ignore \"**/*.test.ts\"",
+    "typecheck": "tsc -p tsconfig.json",
+    "test": "vitest run",
+    "test:integration": "vitest run --config vitest.int.config.ts",
+    "migrate": "node dist/cli.js migrate",
+    "verify-audit": "node dist/cli.js verify-audit"
+  },
+  "dependencies": {
+    "@cip/observability": "workspace:*",
+    "kysely": "catalog:",
+    "pg": "catalog:",
+    "zod": "catalog:"
+  },
+  "devDependencies": {
+    "@cip/config": "workspace:*",
+    "@swc/cli": "catalog:",
+    "@swc/core": "catalog:",
+    "@testcontainers/postgresql": "catalog:",
+    "@types/node": "catalog:",
+    "@types/pg": "catalog:",
+    "@typescript/native": "catalog:",
+    "@vitest/coverage-v8": "catalog:",
+    "testcontainers": "catalog:",
+    "vitest": "catalog:"
+  }
+}

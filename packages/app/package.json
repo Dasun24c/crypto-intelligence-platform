@@ -1,0 +1,49 @@
+{
+  "name": "@cip/app",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "description": "The React application shared by the web and desktop hosts (architecture §11).",
+  "exports": {
+    ".": {
+      "@cip/source": "./src/index.tsx",
+      "default": "./src/index.tsx"
+    },
+    "./styles.css": "./src/styles.css"
+  },
+  "scripts": {
+    "typecheck": "tsc -p tsconfig.json",
+    "test": "vitest run"
+  },
+  "dependencies": {
+    "@cip/contracts": "workspace:*",
+    "@cip/ui": "workspace:*",
+    "@fontsource-variable/inter": "catalog:",
+    "@hookform/resolvers": "catalog:",
+    "@tanstack/react-query": "catalog:",
+    "@tanstack/react-router": "catalog:",
+    "lucide-react": "catalog:",
+    "react-hook-form": "catalog:",
+    "zod": "catalog:",
+    "zustand": "catalog:"
+  },
+  "peerDependencies": {
+    "react": "^19.3.1",
+    "react-dom": "^19.3.1"
+  },
+  "devDependencies": {
+    "@cip/config": "workspace:*",
+    "@testing-library/react": "catalog:",
+    "@testing-library/user-event": "catalog:",
+    "@types/react": "catalog:",
+    "@types/react-dom": "catalog:",
+    "@typescript/native": "catalog:",
+    "@vitest/coverage-v8": "catalog:",
+    "jsdom": "catalog:",
+    "react": "catalog:",
+    "react-dom": "catalog:",
+    "tailwindcss": "catalog:",
+    "vite": "catalog:",
+    "vitest": "catalog:"
+  }
+}

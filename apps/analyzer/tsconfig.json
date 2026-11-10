@@ -1,0 +1,4 @@
+{
+  "extends": "@cip/config/tsconfig/nest.json",
+  "include": ["src", "*.config.ts"]
+}

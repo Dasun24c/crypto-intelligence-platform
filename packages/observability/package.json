@@ -1,0 +1,45 @@
+{
+  "name": "@cip/observability",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "description": "Server runtime support: config loading, logging, metrics, tracing, heartbeats and the ops endpoint.",
+  "exports": {
+    ".": {
+      "@cip/source": "./src/index.ts",
+      "default": "./dist/index.js"
+    }
+  },
+  "scripts": {
+    "build": "swc src -d dist --strip-leading-paths --config-file ../../.swcrc --ignore \"**/*.test.ts\"",
+    "typecheck": "tsc -p tsconfig.json",
+    "test": "vitest run",
+    "test:integration": "vitest run --config vitest.int.config.ts"
+  },
+  "dependencies": {
+    "@cip/contracts": "workspace:*",
+    "@opentelemetry/api": "catalog:",
+    "@opentelemetry/context-async-hooks": "catalog:",
+    "@opentelemetry/core": "catalog:",
+    "@opentelemetry/exporter-prometheus": "catalog:",
+    "@opentelemetry/exporter-trace-otlp-http": "catalog:",
+    "@opentelemetry/resources": "catalog:",
+    "@opentelemetry/sdk-metrics": "catalog:",
+    "@opentelemetry/sdk-trace": "catalog:",
+    "ioredis": "catalog:",
+    "pino": "catalog:",
+    "pino-pretty": "catalog:",
+    "zod": "catalog:"
+  },
+  "devDependencies": {
+    "@cip/config": "workspace:*",
+    "@nestjs/common": "catalog:",
+    "@swc/cli": "catalog:",
+    "@swc/core": "catalog:",
+    "@types/node": "catalog:",
+    "@typescript/native": "catalog:",
+    "@vitest/coverage-v8": "catalog:",
+    "testcontainers": "catalog:",
+    "vitest": "catalog:"
+  }
+}

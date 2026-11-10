@@ -1,0 +1,14 @@
+**/node_modules
+**/dist
+**/coverage
+**/.turbo
+.git
+.secrets
+.env
+.env.*
+apps/desktop/src-tauri/target
+e2e/test-results
+e2e/playwright-report
+docs
+*.md
+!packages/**/README.md

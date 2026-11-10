@@ -1,0 +1,11 @@
+pnpm-lock.yaml
+**/dist/
+**/coverage/
+**/.turbo/
+apps/desktop/src-tauri/
+e2e/test-results/
+e2e/playwright-report/
+packages/db/src/generated/
+docs/
+REQUIREMENTS.md
+*.md

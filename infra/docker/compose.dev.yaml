@@ -1,0 +1,183 @@
+# Local stack: the same images as staging/production, on one machine (architecture §17).
+# Start everything with `docker compose up --build --wait` from the repository root.
+# Ports are bound to 127.0.0.1 only; the database and Valkey use non-standard host ports (15432, 16379)
+# so they do not clash with a local PostgreSQL or Redis. Override with CIP_DB_PORT, CIP_VALKEY_PORT,
+# CIP_API_PORT and CIP_WEB_PORT. Secrets are generated into ./.secrets on first start.
+
+x-server:
+  &server # Built once by the `secrets` service (several services building one tag in parallel collide).
+  image: cip-server:dev
+  pull_policy: never
+  restart: unless-stopped
+  volumes:
+    - ../../.secrets:/secrets:ro
+  depends_on:
+    migrate:
+      condition: service_completed_successfully
+    valkey:
+      condition: service_healthy
+
+x-service-env: &service-env
+  NODE_ENV: production
+  LOG_LEVEL: info
+  APP_VERSION: 0.1.0-dev
+  REDIS_URL: redis://valkey:6379
+
+services:
+  secrets:
+    image: cip-server:dev
+    build:
+      context: ../..
+      dockerfile: infra/docker/Dockerfile
+      target: server
+    user: root
+    command: ['node', 'infra/dev-secrets.mjs', '/secrets']
+    volumes:
+      - ../../.secrets:/secrets
+    restart: 'no'
+
+  db:
+    image: timescale/timescaledb:2.31.0-pg18@sha256:0fcff5761363809d1242f2261a3482197b5a5337407f8b97a976fb174206d579
+    environment:
+      POSTGRES_USER: cip_owner
+      POSTGRES_DB: cip
+      POSTGRES_PASSWORD_FILE: /secrets/db-password-owner
+      TIMESCALEDB_TELEMETRY: 'off'
+    volumes:
+      - ../../.secrets:/secrets:ro
+      - db-data:/var/lib/postgresql
+    ports:
+      - '127.0.0.1:${CIP_DB_PORT:-15432}:5432'
+    depends_on:
+      secrets:
+        condition: service_completed_successfully
+    healthcheck:
+      test: ['CMD-SHELL', 'pg_isready -U cip_owner -d cip -h 127.0.0.1']
+      interval: 3s
+      timeout: 3s
+      retries: 40
+    restart: unless-stopped
+
+  valkey:
+    image: valkey/valkey:9.1.3@sha256:3add1a336a920ea54770a001ab6feb3da5fceea96a40373a3a2cd469b815f0b7
+    # AOF every second so queued jobs survive restarts; noeviction because BullMQ requires it (architecture §15).
+    command:
+      [
+        'valkey-server',
+        '--appendonly',
+        'yes',
+        '--appendfsync',
+        'everysec',
+        '--maxmemory-policy',
+        'noeviction',
+      ]
+    volumes:
+      - valkey-data:/data
+    ports:
+      - '127.0.0.1:${CIP_VALKEY_PORT:-16379}:6379'
+    healthcheck:
+      test: ['CMD', 'valkey-cli', 'ping']
+      interval: 3s
+      timeout: 3s
+      retries: 20
+    restart: unless-stopped
+
+  migrate:
+    image: cip-server:dev
+    pull_policy: never
+    command:
+      - sh
+      - -c
+      - node packages/db/dist/cli.js migrate && node apps/api/dist/cli.js seed-dev
+    environment:
+      NODE_ENV: development
+      DATABASE_OWNER_URL_FILE: /secrets/db-url-owner
+      DATABASE_URL_FILE: /secrets/db-url-svc_api
+      DB_PASSWORD_SVC_API_FILE: /secrets/db-password-svc_api
+      DB_PASSWORD_SVC_INGESTOR_FILE: /secrets/db-password-svc_ingestor
+      DB_PASSWORD_SVC_ANALYZER_FILE: /secrets/db-password-svc_analyzer
+      DB_PASSWORD_SVC_JOBS_FILE: /secrets/db-password-svc_jobs
+      DEV_SEED_PASSWORD: ${DEV_SEED_PASSWORD:-local-dev-password}
+    volumes:
+      - ../../.secrets:/secrets:ro
+    depends_on:
+      db:
+        condition: service_healthy
+    restart: 'no'
+
+  api:
+    <<: *server
+    command: ['node', 'apps/api/dist/main.js']
+    environment:
+      <<: *service-env
+      DATABASE_URL_FILE: /secrets/db-url-svc_api
+      AUTH_JWT_PRIVATE_KEY_FILE: /secrets/jwt-ed25519.pem
+      MFA_ENCRYPTION_KEY_FILE: /secrets/mfa-key
+      CORS_ORIGINS: http://localhost:8080,http://localhost:5173,http://localhost:1420
+    ports:
+      - '127.0.0.1:${CIP_API_PORT:-3000}:3000'
+    healthcheck:
+      test: ['CMD', 'node', 'infra/healthcheck.mjs', 'http://127.0.0.1:3000/readyz']
+      interval: 5s
+      timeout: 4s
+      retries: 24
+
+  ingestor:
+    <<: *server
+    command: ['node', 'apps/ingestor/dist/main.js']
+    environment:
+      <<: *service-env
+      DATABASE_URL_FILE: /secrets/db-url-svc_ingestor
+    healthcheck:
+      test: ['CMD', 'node', 'infra/healthcheck.mjs', 'http://127.0.0.1:9465/readyz']
+      interval: 5s
+      timeout: 4s
+      retries: 24
+
+  analyzer:
+    <<: *server
+    command: ['node', 'apps/analyzer/dist/main.js']
+    environment:
+      <<: *service-env
+      DATABASE_URL_FILE: /secrets/db-url-svc_analyzer
+    healthcheck:
+      test: ['CMD', 'node', 'infra/healthcheck.mjs', 'http://127.0.0.1:9466/readyz']
+      interval: 5s
+      timeout: 4s
+      retries: 24
+
+  jobs:
+    <<: *server
+    command: ['node', 'apps/jobs/dist/main.js']
+    environment:
+      <<: *service-env
+      DATABASE_URL_FILE: /secrets/db-url-svc_jobs
+    healthcheck:
+      test: ['CMD', 'node', 'infra/healthcheck.mjs', 'http://127.0.0.1:9467/readyz']
+      interval: 5s
+      timeout: 4s
+      retries: 24
+
+  web:
+    image: cip-web:dev
+    build:
+      context: ../..
+      dockerfile: infra/docker/Dockerfile
+      target: web
+    environment:
+      SITE_ADDRESS: ':8080'
+    ports:
+      - '127.0.0.1:${CIP_WEB_PORT:-8080}:8080'
+    depends_on:
+      api:
+        condition: service_healthy
+    healthcheck:
+      test: ['CMD', 'wget', '-q', '--spider', 'http://127.0.0.1:8080/']
+      interval: 5s
+      timeout: 3s
+      retries: 12
+    restart: unless-stopped
+
+volumes:
+  db-data:
+  valkey-data:
