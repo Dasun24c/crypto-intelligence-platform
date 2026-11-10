@@ -25,19 +25,32 @@ test('a wrong password is refused with a clear message', async ({ page }) => {
   await expect(page.getByRole('alert')).toContainText('Sign-in failed');
 });
 
-test('a viewer signs in, sees every service healthy, keeps the session on reload and signs out', async ({
+test('a viewer signs in, sees every service running, keeps the session on reload and signs out', async ({
   page,
 }) => {
   await signIn(page, VIEWER);
   await expect(page.getByRole('heading', { name: 'Command Center' })).toBeVisible();
-  await expect(page.getByText('No market data is connected yet')).toBeVisible();
+  // The live connection (Socket.IO through Caddy) comes up whether or not any feed is streaming.
+  await expect(page.getByText('Live', { exact: true })).toBeVisible({ timeout: 30_000 });
+  // One tile per enabled instrument: a live price, or a plain "No live data" when its feed is not
+  // streaming (the stack may have no venue access). Nothing is ever invented.
+  await expect(
+    page.getByRole('article').first().or(page.getByText('No instruments are enabled')),
+  ).toBeVisible();
+
+  // exact: each tile also links to "Market activity for <instrument>".
+  await page.getByRole('link', { name: 'Market Activity', exact: true }).click();
+  await expect(page.getByRole('heading', { name: 'Market Activity' })).toBeVisible();
 
   await page.getByRole('link', { name: 'System Health' }).click();
   await expect(page.getByRole('heading', { name: 'System Health' })).toBeVisible();
   for (const service of ['api', 'ingestor', 'analyzer', 'jobs']) {
     const row = page.getByRole('row').filter({ has: page.getByRole('cell', { name: service, exact: true }) });
-    await expect(row.getByText('OK')).toBeVisible({ timeout: 30_000 });
+    // The ingestor runs but reports itself degraded while it cannot reach a venue.
+    const healthy = service === 'ingestor' ? /^(OK|Degraded)$/ : 'OK';
+    await expect(row.getByText(healthy)).toBeVisible({ timeout: 30_000 });
   }
+  await expect(page.getByRole('heading', { name: 'Market data feeds' })).toBeVisible();
 
   // A full reload resumes the session from the httpOnly refresh cookie.
   await page.reload();

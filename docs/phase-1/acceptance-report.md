@@ -2,7 +2,7 @@
 
 | | |
 |---|---|
-| Status | Ready for your review. 4 criteria met; 2 met locally and waiting for their first GitHub run (D7); 1 partly verified (desktop sign-in on Windows and macOS); 1 not yet verified (desktop bundles in CI, D7) |
+| Status | **Accepted 2026-11-10 with three items carried into Phase 2** (you asked to start Phase 2): the first GitHub CI run (1.2, 1.6), desktop sign-in on Windows or macOS (1.3) and the desktop bundles built in CI (1.8). Originally: ready for your review. 4 criteria met; 2 met locally and waiting for their first GitHub run (D7); 1 partly verified (desktop sign-in on Windows and macOS); 1 not yet verified (desktop bundles in CI, D7) |
 | Date | 2026-11-10 |
 | Scope | [Implementation plan, Phase 1](../phase-0/08-implementation-plan.md#phase-1--foundations) |
 | Evidence | Runs on this machine (Windows 11, Docker Desktop, Node.js 26.13.0), 2026-11-10 |

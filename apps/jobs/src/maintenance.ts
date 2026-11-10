@@ -37,10 +37,20 @@ export async function pruneRefreshTokens(db: Kysely<Database>): Promise<number> 
   return Number(result.numDeletedRows);
 }
 
+/** A recurring task on the maintenance queue (pair status, closure calendar, ...). */
+export interface ScheduledTask {
+  name: string;
+  /** Every N ms, or on a cron pattern in UTC (one of the two). */
+  everyMs?: number;
+  pattern?: string;
+  run: () => Promise<Record<string, unknown>>;
+}
+
 export interface MaintenanceOptions {
   redisUrl: string;
   prefix: string;
   pruneEveryMs: number;
+  tasks?: ScheduledTask[];
   db: Kysely<Database>;
   log: Logger;
   onCompleted?: (name: string) => void;
@@ -91,10 +101,31 @@ export class Maintenance {
         },
       },
     );
+    for (const task of this.opts.tasks ?? [])
+      await this.queue.upsertJobScheduler(
+        task.name,
+        task.pattern ? { pattern: task.pattern, tz: 'UTC' } : { every: task.everyMs! },
+        {
+          name: task.name,
+          data: {},
+          opts: {
+            attempts: 3,
+            backoff: { type: 'exponential', delay: 30_000 },
+            removeOnComplete: 100,
+            removeOnFail: 500,
+          },
+        },
+      );
     await this.worker.waitUntilReady();
   }
 
-  private async process(job: Job): Promise<{ deleted: number }> {
+  private async process(job: Job): Promise<Record<string, unknown>> {
+    const task = this.opts.tasks?.find((t) => t.name === job.name);
+    if (task) {
+      const result = await task.run();
+      this.opts.log.info({ job: job.name, ...result }, 'maintenance task done');
+      return result;
+    }
     if (job.name !== PRUNE_REFRESH_TOKENS) throw new Error(`unknown maintenance job ${job.name}`);
     const deleted = await pruneRefreshTokens(this.opts.db);
     this.opts.log.info({ job: job.name, deleted }, 'pruned refresh tokens');

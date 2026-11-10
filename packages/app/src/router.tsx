@@ -4,12 +4,15 @@ import {
   createRouter,
   Link,
   redirect,
+  type RouterHistory,
 } from '@tanstack/react-router';
 import { type Capability, can, type UserSummary } from '@cip/contracts';
 import { Shell } from './layout/shell.js';
 import { AdminAuditPage } from './pages/admin-audit.js';
+import { AdminInstrumentsPage } from './pages/admin-instruments.js';
 import { AdminUsersPage } from './pages/admin-users.js';
 import { HomePage } from './pages/home.js';
+import { MarketActivityPage } from './pages/market-activity.js';
 import { ProfilePage } from './pages/profile.js';
 import { SystemHealthPage } from './pages/system-health.js';
 
@@ -37,6 +40,11 @@ function requireCapability(capability: Capability) {
   };
 }
 
+/** `/market?instrument=<id>`: which instrument Market Activity shows (deep links from the tiles). */
+export interface MarketSearch {
+  instrument?: string;
+}
+
 const rootRoute = createRootRouteWithContext<RouterContext>()({
   component: Shell,
   notFoundComponent: NotFound,
@@ -44,6 +52,13 @@ const rootRoute = createRootRouteWithContext<RouterContext>()({
 
 const routeTree = rootRoute.addChildren([
   createRoute({ getParentRoute: () => rootRoute, path: '/', component: HomePage }),
+  createRoute({
+    getParentRoute: () => rootRoute,
+    path: '/market',
+    validateSearch: (search: Record<string, unknown>): MarketSearch =>
+      typeof search['instrument'] === 'string' ? { instrument: search['instrument'] } : {},
+    component: MarketActivityPage,
+  }),
   createRoute({ getParentRoute: () => rootRoute, path: '/system', component: SystemHealthPage }),
   createRoute({ getParentRoute: () => rootRoute, path: '/profile', component: ProfilePage }),
   createRoute({
@@ -54,18 +69,26 @@ const routeTree = rootRoute.addChildren([
   }),
   createRoute({
     getParentRoute: () => rootRoute,
+    path: '/admin/instruments',
+    beforeLoad: requireCapability('instruments.manage'),
+    component: AdminInstrumentsPage,
+  }),
+  createRoute({
+    getParentRoute: () => rootRoute,
     path: '/admin/audit',
     beforeLoad: requireCapability('audit.view'),
     component: AdminAuditPage,
   }),
 ]);
 
-export function createAppRouter() {
+/** The app's router; tests pass a memory history. */
+export function createAppRouter(options: { history?: RouterHistory } = {}) {
   return createRouter({
     routeTree,
     // Provided for real by <RouterProvider context> once a user is signed in.
     context: { user: undefined as unknown as UserSummary },
     defaultPreload: 'intent',
+    ...(options.history ? { history: options.history } : {}),
   });
 }
 

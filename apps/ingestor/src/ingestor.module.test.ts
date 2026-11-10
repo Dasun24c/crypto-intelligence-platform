@@ -13,7 +13,7 @@ describe('ingestor status', () => {
       () => Promise.resolve('PONG'),
     ).probe();
     expect(probe.status).toBe('ok');
-    expect(probe.detail).toMatch(/^idle: .*venue connections/);
+    expect(probe.detail).toBe('starting');
   });
 
   it('is ready only when the database and Redis answer', async () => {

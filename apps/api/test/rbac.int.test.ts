@@ -16,6 +16,8 @@ interface Endpoint {
   policy: AccessPolicy;
   /** A body that passes the guard but is harmless (usually invalid, so nothing changes). */
   body?: unknown;
+  /** The route pattern the app registers, when it is not `path` with the id as ":id". */
+  route?: string;
 }
 
 const NOBODY = randomUUID();
@@ -49,6 +51,63 @@ const ENDPOINTS: Endpoint[] = [
   { method: 'GET', path: '/api/v1/admin/audit', policy: 'audit.view' },
   { method: 'GET', path: '/api/v1/admin/audit/verify', policy: 'audit.view' },
   { method: 'GET', path: '/api/v1/system/health', policy: 'dashboards.view' },
+  { method: 'GET', path: '/api/v1/system/feeds', policy: 'dashboards.view' },
+  // Phase 2: market data (any role) and its administration.
+  { method: 'GET', path: '/api/v1/instruments', policy: 'dashboards.view' },
+  { method: 'GET', path: '/api/v1/market/gaps', policy: 'dashboards.view' },
+  { method: 'GET', path: '/api/v1/market/closures', policy: 'dashboards.view' },
+  {
+    method: 'GET',
+    path: '/api/v1/market/spreads/PAXG',
+    policy: 'dashboards.view',
+    route: '/api/v1/market/spreads/:baseAsset',
+  },
+  {
+    method: 'GET',
+    path: `/api/v1/market/${NOBODY}/candles?tf=1m`,
+    policy: 'dashboards.view',
+    route: '/api/v1/market/:instrumentId/candles',
+  },
+  {
+    method: 'GET',
+    path: `/api/v1/market/${NOBODY}/ticker`,
+    policy: 'dashboards.view',
+    route: '/api/v1/market/:instrumentId/ticker',
+  },
+  {
+    method: 'GET',
+    path: `/api/v1/market/${NOBODY}/book`,
+    policy: 'dashboards.view',
+    route: '/api/v1/market/:instrumentId/book',
+  },
+  {
+    method: 'GET',
+    path: `/api/v1/market/${NOBODY}/book/metrics`,
+    policy: 'dashboards.view',
+    route: '/api/v1/market/:instrumentId/book/metrics',
+  },
+  {
+    method: 'GET',
+    path: `/api/v1/market/${NOBODY}/large-trades`,
+    policy: 'dashboards.view',
+    route: '/api/v1/market/:instrumentId/large-trades',
+  },
+  {
+    method: 'GET',
+    path: `/api/v1/market/${NOBODY}/walls`,
+    policy: 'dashboards.view',
+    route: '/api/v1/market/:instrumentId/walls',
+  },
+  { method: 'GET', path: '/api/v1/admin/instruments', policy: 'instruments.manage' },
+  { method: 'POST', path: '/api/v1/admin/instruments', policy: 'instruments.manage', body: {} },
+  { method: 'PATCH', path: `/api/v1/admin/instruments/${NOBODY}`, policy: 'instruments.manage', body: {} },
+  { method: 'POST', path: '/api/v1/admin/closures', policy: 'settings.manage', body: {} },
+  {
+    method: 'DELETE',
+    path: '/api/v1/admin/closures?from=0',
+    policy: 'settings.manage',
+    route: '/api/v1/admin/closures',
+  },
   { method: 'GET', path: '/healthz', policy: 'public' },
   { method: 'GET', path: '/readyz', policy: 'public' },
 ];
@@ -89,7 +148,7 @@ describe('RBAC matrix', () => {
       )
       .filter((r) => !r.startsWith('OPTIONS '))
       .sort();
-    const expected = ENDPOINTS.map((e) => `${e.method} ${e.path.replace(NOBODY, ':id')}`).sort();
+    const expected = ENDPOINTS.map((e) => `${e.method} ${e.route ?? e.path.replace(NOBODY, ':id')}`).sort();
     expect(served).toEqual(expected);
   });
 

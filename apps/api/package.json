@@ -3,7 +3,7 @@
   "version": "0.0.0",
   "private": true,
   "type": "module",
-  "description": "REST API: authentication, RBAC, audit logging, administration and system health.",
+  "description": "REST API and live channels: authentication, RBAC, audit logging, market data, administration and system health.",
   "scripts": {
     "build": "swc src -d dist --strip-leading-paths --config-file ../../.swcrc --ignore \"**/*.test.ts\"",
     "typecheck": "tsc -p tsconfig.json",
@@ -16,6 +16,8 @@
   "dependencies": {
     "@cip/contracts": "workspace:*",
     "@cip/db": "workspace:*",
+    "@cip/domain": "workspace:*",
+    "@cip/exchange-adapters": "workspace:*",
     "@cip/observability": "workspace:*",
     "@nestjs/common": "catalog:",
     "@nestjs/core": "catalog:",
@@ -31,6 +33,7 @@
     "pg": "catalog:",
     "reflect-metadata": "catalog:",
     "rxjs": "catalog:",
+    "socket.io": "catalog:",
     "uuid": "catalog:",
     "zod": "catalog:"
   },
@@ -47,6 +50,7 @@
     "@types/pg": "catalog:",
     "@typescript/native": "catalog:",
     "@vitest/coverage-v8": "catalog:",
+    "socket.io-client": "catalog:",
     "testcontainers": "catalog:",
     "typescript": "catalog:",
     "unplugin-swc": "catalog:",

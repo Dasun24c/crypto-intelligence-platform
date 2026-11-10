@@ -21,9 +21,14 @@ export function App({ session }: { session: Session }) {
     void session.bootstrap();
   }, [session]);
 
-  // After sleep or a network change, refetch everything so no widget shows stale data as current.
+  // After sleep or a network change, refetch everything and resync the live channels, so no widget
+  // shows stale data as current.
   useEffect(
-    () => session.platform.onSleepWake(() => void queryClient.invalidateQueries()),
+    () =>
+      session.platform.onSleepWake(() => {
+        void queryClient.invalidateQueries();
+        session.live.reconnect();
+      }),
     [session, queryClient],
   );
 

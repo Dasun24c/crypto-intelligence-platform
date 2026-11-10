@@ -183,8 +183,12 @@ docs/
 | Stream | `ai:events` | jobs → api | AI analysis lifecycle |
 | Stream | `alerts:events` | analyzer → jobs, api | Fired alerts |
 | Stream | `sys:activity` | all → api | Activity counters for the 3D view |
-| Pub/sub (Socket.IO Redis emitter) | rooms `ticker:*`, `book:*`, `candles:*` | ingestor → api → clients | High-frequency, conflated, no replay |
+| Pub/sub | `live:{channel}` (`ticker:*`, `book:*`, `candles:*`, `spread` on `market:*`) | ingestor → every api → clients | High-frequency, conflated, no replay; plain JSON envelopes ([ADR 014](../adr/014-live-fan-out-without-socketio-adapter.md) replaced the Socket.IO emitter) |
+| Pub/sub | `config:instruments`, `config:closures` | api, jobs → ingestor, api | Admin changes and pair-status changes take effect without a restart |
+| Keys | `ticker:{id}`, `book:{id}` (60 s / 30 s TTL), `feed:status:{venue}` (15 s TTL) | ingestor → api | Latest values for REST and subscribe snapshots; feed health per venue, written by that venue's lease holder |
 | BullMQ | `ai-analysis`, `notifications`, `backfill`, `replay`, `calendar-sync`, `pair-status`, `closure-calendar`, `maintenance`, `onchain` | → jobs | Units of work with retries, rate limits and scheduling |
+
+> Phase 2 runs `pair-status` (every 5 min), `closure-calendar` (daily) and the nightly candle consistency check as scheduled tasks on the `maintenance` queue rather than queues of their own: each is one small job at a time, so separate queues would add nothing.
 
 - Streams are capped (`MAXLEN ~`) at about 7 days of entries. Every api instance reads every stream with its own cursor, so each one can fan out to its own clients.
 - **Leases** (`lease:ingestor:{venue}`, `lease:analyzer:{instrumentId}`) have a 15 s TTL and are renewed every 5 s. Each lease carries a fencing epoch. Analyzer checkpoints are updated only `WHERE lease_epoch <= $epoch`, so a former owner can't overwrite a newer one.

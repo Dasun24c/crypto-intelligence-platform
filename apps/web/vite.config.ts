@@ -12,7 +12,7 @@ export default defineConfig({
   server: {
     port: 5173,
     strictPort: true,
-    proxy: { '/api': api, '/healthz': api, '/readyz': api },
+    proxy: { '/api': api, '/healthz': api, '/readyz': api, '/socket.io': { target: api, ws: true } },
   },
   build: {
     target: 'es2022',

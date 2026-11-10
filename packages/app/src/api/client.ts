@@ -96,6 +96,11 @@ export class ApiClient {
     return this.accessToken !== null;
   }
 
+  /** The in-memory access token, presented by the live connection at its handshake and renewals. */
+  get token(): string | null {
+    return this.accessToken;
+  }
+
   /** Gets a new access token from the refresh token. Returns false when the session is over. */
   refresh(): Promise<boolean> {
     this.refreshing ??= this.withLock(() => this.doRefresh()).finally(() => {

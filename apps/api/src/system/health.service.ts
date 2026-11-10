@@ -11,6 +11,7 @@ import {
 import { pingDb } from '@cip/db';
 import { effectiveStatus, type Readiness, readHeartbeats } from '@cip/observability';
 import { CLOCK, type Clock, PG_POOL, REDIS } from '../tokens.js';
+import { FeedsService } from './feeds.service.js';
 
 const RANK: Record<HealthStatus, number> = { ok: 0, degraded: 1, down: 2 };
 const worst = (statuses: HealthStatus[]): HealthStatus =>
@@ -26,6 +27,7 @@ export class HealthService {
     @Inject(PG_POOL) private readonly pool: pg.Pool,
     @Inject(REDIS) private readonly redis: Redis,
     @Inject(CLOCK) private readonly clock: Clock,
+    private readonly feedsService: FeedsService,
   ) {}
 
   private async probe(name: DependencyHealth['name'], fn: () => Promise<number>): Promise<DependencyHealth> {
@@ -70,11 +72,14 @@ export class HealthService {
           : 'down';
       return { service, status, instances };
     });
+    const dbUp = dependencies.find((d) => d.name === 'database')?.status === 'ok';
+    const feeds = dbUp && redisUp ? await this.feedsService.feeds() : [];
     const dependencyStatus = worst(dependencies.map((d) => d.status));
     const serviceStatus = worst(services.map((s) => s.status));
+    const feedsOk = feeds.every((f) => f.state === 'connected');
     const status: HealthStatus =
-      dependencyStatus === 'down' ? 'down' : serviceStatus === 'ok' ? 'ok' : 'degraded';
-    return { status, checkedAt: now, dependencies, services };
+      dependencyStatus === 'down' ? 'down' : serviceStatus === 'ok' && feedsOk ? 'ok' : 'degraded';
+    return { status, checkedAt: now, dependencies, services, feeds };
   }
 
   /** Readiness of this api instance: it can serve only if both dependencies answer. */

@@ -1,6 +1,6 @@
 import { cva, type VariantProps } from 'class-variance-authority';
 import { AlertTriangle, CheckCircle2, Info, Loader2, XCircle } from 'lucide-react';
-import { Slot } from 'radix-ui';
+import { Slot, Switch as SwitchPrimitive } from 'radix-ui';
 import type { ComponentProps, ReactNode } from 'react';
 import { cn } from './cn.js';
 
@@ -72,6 +72,37 @@ export function Select({ className, ...props }: ComponentProps<'select'>) {
       className={cn('h-9 rounded-md border border-border-strong bg-surface px-2 text-sm text-fg', className)}
       {...props}
     />
+  );
+}
+
+/** A native checkbox in the theme's accent colour. */
+export function Checkbox({ className, ...props }: Omit<ComponentProps<'input'>, 'type'>) {
+  return (
+    <input
+      type="checkbox"
+      className={cn('size-4 shrink-0 rounded-sm border-border-strong accent-accent', className)}
+      {...props}
+    />
+  );
+}
+
+/**
+ * An on/off switch (Radix: role="switch", toggled with Space or Enter). Give it an accessible name
+ * with `aria-label` or a `<Label htmlFor>`; its state is announced as on or off.
+ */
+export function Switch({ className, ...props }: ComponentProps<typeof SwitchPrimitive.Root>) {
+  return (
+    <SwitchPrimitive.Root
+      className={cn(
+        'inline-flex h-5 w-9 shrink-0 cursor-pointer items-center rounded-full border border-border-strong bg-surface-3 transition-colors',
+        'data-[state=checked]:border-accent data-[state=checked]:bg-accent',
+        'disabled:cursor-not-allowed disabled:opacity-50',
+        className,
+      )}
+      {...props}
+    >
+      <SwitchPrimitive.Thumb className="pointer-events-none block size-3.5 translate-x-0.5 rounded-full bg-fg transition-transform data-[state=checked]:translate-x-[18px] data-[state=checked]:bg-accent-fg" />
+    </SwitchPrimitive.Root>
   );
 }
 

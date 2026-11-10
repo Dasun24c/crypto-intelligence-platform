@@ -1,0 +1,31 @@
+{
+  "name": "@cip/market-data",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "description": "Candle building, order books and gap detection (architecture §5.2–§5.4). Pure: no I/O, no framework.",
+  "exports": {
+    ".": {
+      "@cip/source": "./src/index.ts",
+      "default": "./dist/index.js"
+    }
+  },
+  "scripts": {
+    "build": "swc src -d dist --strip-leading-paths --config-file ../../.swcrc --ignore \"**/*.test.ts\"",
+    "typecheck": "tsc -p tsconfig.json",
+    "test": "vitest run"
+  },
+  "dependencies": {
+    "@cip/domain": "workspace:*"
+  },
+  "devDependencies": {
+    "@cip/config": "workspace:*",
+    "@cip/exchange-adapters": "workspace:*",
+    "@swc/cli": "catalog:",
+    "@swc/core": "catalog:",
+    "@types/node": "catalog:",
+    "@typescript/native": "catalog:",
+    "@vitest/coverage-v8": "catalog:",
+    "vitest": "catalog:"
+  }
+}

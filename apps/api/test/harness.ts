@@ -7,6 +7,7 @@ import { createApiApp } from '../src/app.ts';
 import { PasswordService } from '../src/auth/password.service.ts';
 import { TokenService } from '../src/auth/token.service.ts';
 import { type ApiConfig, ApiEnvSchema } from '../src/config.ts';
+import type { VenueDirectory } from '../src/market/venue-directory.ts';
 import { UsersRepository } from '../src/users/users.repository.ts';
 
 export const WEB_ORIGIN = 'http://localhost:5173';
@@ -20,7 +21,20 @@ export interface Harness {
   close(): Promise<void>;
 }
 
-export async function startApi(): Promise<Harness> {
+/** Every pair is known and trading unless a test says otherwise; no venue is called in tests. */
+export const fakeVenues: VenueDirectory = {
+  lookup: async (venue, symbol) =>
+    symbol.startsWith('NOPE')
+      ? null
+      : {
+          symbol,
+          status: symbol.startsWith('HALT') ? 'halted' : 'trading',
+          priceTick: venue === 'binance' ? '0.01' : '0.001',
+          qtyStep: '0.0001',
+        },
+};
+
+export async function startApi(opts: { venues?: VenueDirectory } = {}): Promise<Harness> {
   const { privateKey } = generateKeyPairSync('ed25519');
   const config = ApiEnvSchema.parse({
     NODE_ENV: 'test',
@@ -43,6 +57,7 @@ export async function startApi(): Promise<Harness> {
     config,
     logger: createLogger({ service: 'api', instance: 'test', level: 'silent' }),
     clock: () => clock.now,
+    venues: opts.venues ?? fakeVenues,
   });
   await app.listen(0, '127.0.0.1');
   const base = (await app.getUrl()).replace('[::1]', '127.0.0.1');

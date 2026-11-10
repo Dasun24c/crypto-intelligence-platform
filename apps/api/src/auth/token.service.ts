@@ -17,6 +17,8 @@ export interface AccessClaims {
   role: Role;
   /** Epoch seconds (JWT `iat`). */
   issuedAt: number;
+  /** Epoch ms (JWT `exp`): live connections are asked to renew before it. */
+  expiresAt: number;
 }
 
 export interface MfaClaims {
@@ -73,7 +75,7 @@ export class TokenService {
   }
 
   async issueAccessToken(
-    claims: Omit<AccessClaims, 'issuedAt'>,
+    claims: Omit<AccessClaims, 'issuedAt' | 'expiresAt'>,
   ): Promise<{ token: string; expiresAt: number }> {
     const { current } = await this.keys;
     const iat = this.nowSeconds();
@@ -93,8 +95,9 @@ export class TokenService {
   async verifyAccessToken(token: string): Promise<AccessClaims> {
     const payload = await this.verify(token, ACCESS_AUDIENCE, 'at+jwt');
     const role = RoleSchema.safeParse(payload['role']);
-    if (!payload.sub || !role.success || payload.iat === undefined) throw new ProblemError('AUTH_REQUIRED');
-    return { userId: payload.sub, role: role.data, issuedAt: payload.iat };
+    if (!payload.sub || !role.success || payload.iat === undefined || payload.exp === undefined)
+      throw new ProblemError('AUTH_REQUIRED');
+    return { userId: payload.sub, role: role.data, issuedAt: payload.iat, expiresAt: payload.exp * 1000 };
   }
 
   async issueMfaToken(userId: string, client: 'web' | 'desktop', enroll: boolean): Promise<string> {

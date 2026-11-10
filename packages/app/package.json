@@ -24,6 +24,7 @@
     "@tanstack/react-router": "catalog:",
     "lucide-react": "catalog:",
     "react-hook-form": "catalog:",
+    "socket.io-client": "catalog:",
     "zod": "catalog:",
     "zustand": "catalog:"
   },

@@ -1,17 +1,26 @@
 import { Controller, Get, Res } from '@nestjs/common';
 import type { Response } from 'express';
-import type { SystemHealth } from '@cip/contracts';
+import type { FeedStatus, SystemHealth } from '@cip/contracts';
 import { Access } from '../common/access.js';
+import { FeedsService } from './feeds.service.js';
 import { HealthService } from './health.service.js';
 
 @Controller('system')
 @Access('dashboards.view')
 export class SystemController {
-  constructor(private readonly health: HealthService) {}
+  constructor(
+    private readonly health: HealthService,
+    private readonly feeds: FeedsService,
+  ) {}
 
   @Get('health')
   check(): Promise<SystemHealth> {
     return this.health.check();
+  }
+
+  @Get('feeds')
+  feedStatus(): Promise<FeedStatus[]> {
+    return this.feeds.feeds();
   }
 }
 

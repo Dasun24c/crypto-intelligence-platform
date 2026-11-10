@@ -17,7 +17,13 @@ import { TokenService } from './auth/token.service.js';
 import { ProblemFilter } from './common/problem.filter.js';
 import { RateLimiter } from './common/rate-limiter.js';
 import type { ApiConfig } from './config.js';
+import { LiveGateway } from './live/live.gateway.js';
+import { AdminClosuresController, AdminInstrumentsController } from './market/admin-market.controller.js';
+import { MarketController } from './market/market.controller.js';
+import { MarketRepository } from './market/market.repository.js';
+import { publicVenueDirectory, VENUE_DIRECTORY, type VenueDirectory } from './market/venue-directory.js';
 import { MeController } from './me/me.controller.js';
+import { FeedsService } from './system/feeds.service.js';
 import { HealthService } from './system/health.service.js';
 import { ProbesController, SystemController } from './system/system.controller.js';
 import { API_CONFIG, CLOCK, type Clock, DB, LOGGER, PG_POOL, REDIS } from './tokens.js';
@@ -27,6 +33,8 @@ export interface ApiModuleOptions {
   config: ApiConfig;
   logger: Logger;
   clock?: Clock;
+  /** Venue lookups for instrument administration; tests pass a fake. */
+  venues?: VenueDirectory;
 }
 
 /** Closes the connection pools when the application shuts down. */
@@ -53,6 +61,9 @@ export class AppModule {
         MeController,
         AdminUsersController,
         AdminAuditController,
+        AdminInstrumentsController,
+        AdminClosuresController,
+        MarketController,
         SystemController,
         ProbesController,
       ],
@@ -74,6 +85,7 @@ export class AppModule {
           useFactory: () =>
             new Redis(config.REDIS_URL, { maxRetriesPerRequest: 2, connectionName: 'cip-api' }),
         },
+        { provide: VENUE_DIRECTORY, useFactory: () => opts.venues ?? publicVenueDirectory() },
         { provide: APP_GUARD, useClass: AccessGuard },
         { provide: APP_FILTER, useClass: ProblemFilter },
         Connections,
@@ -86,6 +98,9 @@ export class AppModule {
         MfaService,
         AuthService,
         HealthService,
+        FeedsService,
+        MarketRepository,
+        LiveGateway,
       ],
     };
   }

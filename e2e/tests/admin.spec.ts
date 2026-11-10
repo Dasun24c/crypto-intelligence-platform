@@ -28,6 +28,11 @@ test('an admin must use TOTP, then manages users and verifies the audit chain', 
   await page.getByRole('button', { name: 'Verify' }).click();
   await expect(page.getByRole('heading', { name: 'Command Center' })).toBeVisible();
 
+  // Instrument administration lists every instrument, enabled or not, with its switches.
+  await page.getByRole('link', { name: 'Instruments' }).click();
+  await expect(page.getByRole('heading', { name: 'Instruments' })).toBeVisible();
+  await expect(page.getByRole('switch', { name: /^Enabled: / }).first()).toBeVisible();
+
   // Create a user; the change is audited.
   await page.getByRole('link', { name: 'Users' }).click();
   await page.getByRole('button', { name: 'New user' }).click();

@@ -1,8 +1,8 @@
 // @vitest-environment jsdom
-import { render, screen } from '@testing-library/react';
-import { describe, expect, it } from 'vitest';
+import { fireEvent, render, screen } from '@testing-library/react';
+import { describe, expect, it, vi } from 'vitest';
 import { cn } from './cn.js';
-import { Button, StatusBadge } from './components.js';
+import { Button, StatusBadge, Switch } from './components.js';
 
 describe('ui', () => {
   it('lets later utilities win when merging classes', () => {
@@ -20,5 +20,14 @@ describe('ui', () => {
     const button = screen.getByRole('button', { name: 'Save' });
     expect((button as HTMLButtonElement).disabled).toBe(true);
     expect(button.getAttribute('aria-busy')).toBe('true');
+  });
+
+  it('exposes a switch with its name and state, and reports changes', () => {
+    const onChange = vi.fn();
+    render(<Switch aria-label="Enabled" checked={false} onCheckedChange={onChange} />);
+    const control = screen.getByRole('switch', { name: 'Enabled' });
+    expect(control.getAttribute('aria-checked')).toBe('false');
+    fireEvent.click(control);
+    expect(onChange).toHaveBeenCalledWith(true);
   });
 });

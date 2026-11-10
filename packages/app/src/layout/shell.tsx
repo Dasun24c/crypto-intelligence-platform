@@ -1,6 +1,8 @@
 import { Link, Outlet } from '@tanstack/react-router';
 import {
   Activity,
+  ChartCandlestick,
+  Coins,
   LayoutDashboard,
   LogOut,
   ScrollText,
@@ -12,6 +14,7 @@ import {
 import { useSyncExternalStore, type ComponentType } from 'react';
 import { type Capability, can } from '@cip/contracts';
 import { Badge, Button, cn } from '@cip/ui';
+import { LiveConnectionBadge } from '../components/market-badges.js';
 import { useCurrentUser, useSession } from '../session.js';
 
 interface NavItem {
@@ -23,7 +26,9 @@ interface NavItem {
 
 const NAV: NavItem[] = [
   { to: '/', label: 'Command Center', icon: LayoutDashboard },
+  { to: '/market', label: 'Market Activity', icon: ChartCandlestick },
   { to: '/system', label: 'System Health', icon: Activity },
+  { to: '/admin/instruments', label: 'Instruments', icon: Coins, capability: 'instruments.manage' },
   { to: '/admin/users', label: 'Users', icon: Users, capability: 'users.manage' },
   { to: '/admin/audit', label: 'Audit log', icon: ScrollText, capability: 'audit.view' },
   { to: '/profile', label: 'Profile', icon: UserCircle },
@@ -80,6 +85,7 @@ export function Shell() {
       <div className="flex min-w-0 flex-1 flex-col">
         <header className="flex h-12 items-center justify-end gap-3 border-b border-border px-4">
           <ConnectionStatus />
+          <LiveConnectionBadge />
           <span className="text-sm text-fg-muted">{user.displayName}</span>
           <Badge tone="info">{user.role}</Badge>
           <Button variant="ghost" size="sm" onClick={() => void session.logout()}>

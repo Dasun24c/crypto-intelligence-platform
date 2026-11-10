@@ -2,7 +2,7 @@
 
 Real-time monitoring and analysis of crypto markets, and of gold through the PAXG token: market data from Binance and Coinbase, technical indicators, Smart Money Concepts detection, AI analysis with Grok, alerts, and a web and desktop app.
 
-**Status:** Phase 1 (Foundations) is built and awaiting acceptance. It delivers the platform's base: sign-in with MFA, roles, a hash-chained audit log, user administration, System Health, the four backend services as running skeletons, the web and desktop shells, the Docker stack and the CI pipeline. Market data starts in Phase 2. See the [Phase 1 acceptance report](docs/phase-1/acceptance-report.md) and the [implementation plan](docs/phase-0/08-implementation-plan.md).
+**Status:** Phase 2 (Market data) is built and awaiting acceptance: live trades, books, tickers and candles for nine pairs on Binance and Coinbase (public data only, no keys), gap detection and repair, the gold closure calendar and the PAXG cross-venue spread, large trades and walls, live WebSocket channels, and the Command Center, Market Activity and System Health views. Phase 1 (Foundations) is accepted. See the [Phase 2 acceptance report](docs/phase-2/acceptance-report.md), the [Phase 1 acceptance report](docs/phase-1/acceptance-report.md) and the [implementation plan](docs/phase-0/08-implementation-plan.md).
 
 ## Quick start
 
@@ -31,6 +31,20 @@ These users exist only in the local stack (`seed-dev` refuses to run outside `NO
 
 Host ports are bound to `127.0.0.1` only: web `8080`, api `3000`, PostgreSQL `15432`, Valkey `16379`. Change them with `CIP_WEB_PORT`, `CIP_API_PORT`, `CIP_DB_PORT` and `CIP_VALKEY_PORT`.
 
+The stack streams the venues' public market data from the start; on first start it fetches 7 days of candle history per pair (`BACKFILL_DAYS`). Without network access to the venues, or for a demo, run it on the **replay venue** instead: recorded traffic played through the same code, every instrument labelled as a replay, nothing contacting the venues ([ADR 015](docs/adr/015-replay-venue.md)). Use a separate project so the replay instruments never mix with your live data:
+
+```bash
+COMPOSE_FILE=compose.yaml:infra/docker/compose.replay.yaml docker compose -p cip-replay up --build --wait
+```
+
+(PowerShell: `$env:COMPOSE_FILE='compose.yaml;infra/docker/compose.replay.yaml'`. It uses the same host ports, so stop the live stack first.)
+
+| Market data command | Effect |
+|---|---|
+| `node scripts/live-smoke.mjs` | Checks that every enabled instrument streams, serves a ticker and writes candles (the nightly CI check) |
+| `docker compose exec jobs node apps/jobs/dist/cli.js consistency [YYYY-MM-DD]` | Compares a UTC day's stored candles with the venues' REST candles (default: yesterday; it also runs nightly) |
+| `node tools/recorder/record.mjs --venue binance --symbols BTCUSDT --seconds 130 --out file.jsonl` | Records public venue messages for tests and the replay venue |
+
 ## Development
 
 Install pnpm 12 (`corepack enable` with Node 24 or earlier, or the [standalone installer](https://pnpm.io/installation)). Then:
@@ -56,7 +70,9 @@ pnpm downloads Node.js 26.13.0 for this project (`devEngines` in `package.json`)
 
 ```
 apps/        api, ingestor, analyzer, jobs (NestJS); web (Vite); desktop (Tauri 2)
-packages/    contracts (zod), db (migrations, Kysely), observability, app (React), ui (design system), config
+packages/    contracts (zod), db (migrations, Kysely), observability, app (React), ui (design system), config,
+             domain (candles, decimals, closures), exchange-adapters (venues, replay), market-data (books, candles, detection)
+tools/       recorder for venue messages
 infra/docker Dockerfile, Compose stack, Caddyfile, dev secret generation
 e2e/         Playwright smoke tests
 scripts/     CI guards: no exchange private endpoints, artefact scan

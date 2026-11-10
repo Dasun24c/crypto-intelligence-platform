@@ -2,7 +2,7 @@
 
 | | |
 |---|---|
-| Status | Accepted |
+| Status | Accepted; the Redis adapter and emitter are superseded by [ADR 014](014-live-fan-out-without-socketio-adapter.md) |
 | Date | 2026-11-10 |
 | Deciders | Project owner (Phase 0 approval) |
 | Related | [Architecture §10 Real-time gateway](../phase-0/03-architecture.md#10-real-time-gateway) · [API contracts §5 WebSocket protocol](../phase-0/06-api-contracts.md#5-websocket-protocol) · [Feasibility §7.2](../phase-0/02-feasibility.md#72-pinned-versions) · [Risks R25](../phase-0/04-risks-and-dependencies.md#1-risk-register) · [ADR 003](003-redis-streams-and-bullmq.md) |

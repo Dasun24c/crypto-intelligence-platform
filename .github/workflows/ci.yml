@@ -70,6 +70,9 @@ jobs:
     name: Stack start-up and Playwright smoke tests
     runs-on: ubuntu-24.04
     timeout-minutes: 30
+    # Criterion 2.11: end-to-end tests use only the replay venue, so CI never depends on Binance or Coinbase.
+    env:
+      COMPOSE_FILE: compose.yaml:infra/docker/compose.replay.yaml
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - uses: pnpm/action-setup@73e46992e05b19abd31f2f3c20e0e7370d762115 # v6.1.1

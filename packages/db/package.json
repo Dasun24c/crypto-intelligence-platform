@@ -30,6 +30,7 @@
     "verify-audit": "node dist/cli.js verify-audit"
   },
   "dependencies": {
+    "@cip/domain": "workspace:*",
     "@cip/observability": "workspace:*",
     "kysely": "catalog:",
     "pg": "catalog:",

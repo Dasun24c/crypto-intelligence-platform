@@ -21,7 +21,7 @@ export class IngestorStatus implements OnApplicationShutdown {
   ) {}
 
   probe(): HeartbeatProbe {
-    return { status: 'ok', detail: 'idle: venue connections arrive in Phase 2' };
+    return { status: 'ok', detail: 'starting' };
   }
 
   readiness(): Promise<Readiness> {

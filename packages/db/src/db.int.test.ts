@@ -49,6 +49,7 @@ describe('migrations', () => {
       '0002_app_users_and_tokens',
       '0003_audit_log',
       '0004_service_roles_and_grants',
+      '0005_market_schema',
     ]);
     const again = await migrateToLatest(owner);
     expect(again.error).toBeUndefined();
@@ -66,14 +67,16 @@ describe('migrations', () => {
   });
 
   it('match the Kysely table types', async () => {
-    const { rows } = await sql<{ table_name: string; column_name: string }>`
-      SELECT table_name, column_name FROM information_schema.columns WHERE table_schema = 'app'
+    const { rows } = await sql<{ table_schema: string; table_name: string; column_name: string }>`
+      SELECT table_schema, table_name, column_name FROM information_schema.columns
+      WHERE table_schema IN ('app', 'market')
     `.execute(owner);
     const actual: Record<string, string[]> = {};
-    for (const r of rows) (actual[r.table_name] ??= []).push(r.column_name);
+    for (const r of rows) (actual[`${r.table_schema}.${r.table_name}`] ??= []).push(r.column_name);
     const { TABLE_COLUMNS } = await import('./columns.js');
+    expect(Object.keys(actual).sort()).toEqual(Object.keys(TABLE_COLUMNS).sort());
     for (const [table, columns] of Object.entries(TABLE_COLUMNS)) {
-      expect(actual[table.replace('app.', '')]?.sort(), table).toEqual([...columns].sort());
+      expect(actual[table]?.sort(), table).toEqual([...columns].sort());
     }
   });
 });
@@ -143,6 +146,132 @@ describe('audit log', () => {
       await client.end();
     }
     expect((await verifyAuditChain(owner)).ok).toBe(true);
+  });
+});
+
+describe('market schema (migration 0005)', () => {
+  it('stores time series in hypertables with columnstore and retention policies (data model §8)', async () => {
+    const { rows: hypertables } = await sql<{ name: string }>`
+      SELECT hypertable_schema || '.' || hypertable_name AS name FROM timescaledb_information.hypertables ORDER BY 1
+    `.execute(owner);
+    expect(hypertables.map((h) => h.name)).toEqual([
+      'market.candles',
+      'market.cross_venue_spreads',
+      'market.feed_events',
+      'market.orderbook_metrics',
+      'market.orderbook_snapshots',
+      'market.trades',
+    ]);
+    const { rows: jobs } = await sql<{ proc: string; name: string; config: Record<string, string> }>`
+      SELECT proc_name AS proc, hypertable_schema || '.' || hypertable_name AS name, config
+      FROM timescaledb_information.jobs WHERE hypertable_schema = 'market'
+    `.execute(owner);
+    const retention = Object.fromEntries(
+      jobs.filter((j) => j.proc === 'policy_retention').map((j) => [j.name, j.config['drop_after']]),
+    );
+    expect(retention).toEqual({
+      'market.trades': '14 days',
+      'market.orderbook_metrics': '90 days',
+      'market.orderbook_snapshots': '14 days',
+      'market.feed_events': '365 days',
+    });
+    const compressed = jobs
+      .filter((j) => j.proc !== 'policy_retention')
+      .map((j) => j.name)
+      .sort();
+    expect(compressed).toEqual(hypertables.map((h) => h.name));
+  });
+
+  it('seeds the nine launch pairs, with PAXG on the gold calendar and Binance as primary', async () => {
+    const rows = await owner
+      .selectFrom('market.instruments')
+      .select([
+        'venue_id',
+        'venue_symbol',
+        'asset_class',
+        'role',
+        'underlying_calendar_id',
+        'is_primary_venue',
+      ])
+      .orderBy('venue_id')
+      .orderBy('venue_symbol')
+      .execute();
+    expect(rows.map((r) => `${r.venue_id}:${r.venue_symbol}`)).toEqual([
+      'binance:BTCUSDT',
+      'binance:ETHUSDT',
+      'binance:PAXGUSDT',
+      'binance:SOLUSDT',
+      'coinbase:BTC-USD',
+      'coinbase:ETH-USD',
+      'coinbase:PAXG-USD',
+      'coinbase:SOL-USD',
+      'coinbase:USDT-USD',
+    ]);
+    const paxg = rows.filter((r) => r.asset_class === 'tokenised_gold');
+    expect(paxg.every((r) => r.underlying_calendar_id === 'gold')).toBe(true);
+    expect(paxg.map((r) => r.is_primary_venue)).toEqual([true, false]);
+    expect(rows.find((r) => r.venue_symbol === 'USDT-USD')?.role).toBe('reference');
+  });
+
+  it('gives each service only the market rights it needs (data model §9)', async () => {
+    const candle = {
+      instrument_id: '019a6f00-0000-7000-8000-000000000001',
+      timeframe: '1m' as const,
+      open_time: new Date(Date.UTC(2026, 10, 10, 12, 0)),
+      open: '1',
+      high: '1',
+      low: '1',
+      close: '1',
+      volume: '0',
+      quote_volume: '0',
+      source: 'exchange_kline' as const,
+      quality: 'complete' as const,
+      finalized_at: new Date(),
+    };
+    const ingestor = createDb({ connectionString: roleUrls.svc_ingestor, max: 1 });
+    const jobs = createDb({ connectionString: roleUrls.svc_jobs, max: 1 });
+    try {
+      await ingestor.insertInto('market.candles').values(candle).execute();
+      expect(
+        await sqlState(
+          api
+            .insertInto('market.candles')
+            .values({ ...candle, timeframe: '5m' })
+            .execute(),
+        ),
+      ).toBe('42501');
+      expect(
+        await sqlState(
+          ingestor
+            .updateTable('market.instruments')
+            .set({ enabled: false })
+            .where('venue_symbol', '=', 'BTCUSDT')
+            .execute(),
+        ),
+      ).toBe('42501');
+      await jobs
+        .updateTable('market.instruments')
+        .set({ venue_status: 'trading' })
+        .where('venue_symbol', '=', 'BTCUSDT')
+        .execute();
+      expect(
+        await sqlState(
+          jobs
+            .updateTable('market.instruments')
+            .set({ enabled: false })
+            .where('venue_symbol', '=', 'BTCUSDT')
+            .execute(),
+        ),
+      ).toBe('42501');
+      await api
+        .updateTable('market.instruments')
+        .set({ enabled: true })
+        .where('venue_symbol', '=', 'BTCUSDT')
+        .execute();
+    } finally {
+      await ingestor.destroy();
+      await jobs.destroy();
+    }
   });
 });
 

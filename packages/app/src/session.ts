@@ -8,6 +8,7 @@ import type {
   UserSummary,
 } from '@cip/contracts';
 import { ApiClient } from './api/client.js';
+import { LiveClient, type SocketFactory } from './live/live-client.js';
 import type { Platform } from './platform.js';
 
 export type SessionState =
@@ -22,22 +23,44 @@ export type SessionState =
     }
   | { status: 'signed-in'; user: UserSummary; me: MeResponse };
 
+export interface SessionOptions {
+  /** Replaces the Socket.IO transport (tests). */
+  createSocket?: SocketFactory;
+}
+
+const SESSION_ENDED = 'Your session ended. Sign in again.';
+
 /**
  * Owns the sign-in state machine: loading → (needs-server) → signed-out → (mfa) → signed-in.
  * Pages call these actions; the store is the single source of truth for who is signed in.
  */
 export class Session {
   readonly client: ApiClient;
+  /** The live connection shared by every widget of the signed-in session. */
+  readonly live: LiveClient;
   readonly store = create<{ state: SessionState }>(() => ({ state: { status: 'loading' } }));
 
-  constructor(readonly platform: Platform) {
-    this.client = new ApiClient(platform, () =>
-      this.set({ status: 'signed-out', notice: 'Your session ended. Sign in again.' }),
-    );
+  constructor(
+    readonly platform: Platform,
+    options: SessionOptions = {},
+  ) {
+    this.client = new ApiClient(platform, () => this.set({ status: 'signed-out', notice: SESSION_ENDED }));
+    this.live = new LiveClient({
+      getServerUrl: () => platform.getServerUrl(),
+      getToken: () => this.client.token,
+      refreshToken: () => this.client.refresh(),
+      onSessionEnded: () => {
+        this.client.clear();
+        this.set({ status: 'signed-out', notice: SESSION_ENDED });
+      },
+      ...(options.createSocket ? { createSocket: options.createSocket } : {}),
+    });
   }
 
   private set(state: SessionState): void {
     this.store.setState({ state });
+    // Nothing live outlives the session.
+    if (state.status !== 'signed-in') this.live.stop();
   }
 
   get state(): SessionState {
@@ -139,6 +162,12 @@ export function useCurrentUser(): UserSummary {
   const state = useSessionState();
   if (state.status !== 'signed-in') throw new Error('useCurrentUser while not signed in');
   return state.user;
+}
+
+/** The signed-in user's display time zone (preferences), UTC otherwise. */
+export function useDisplayTimeZone(): string {
+  const state = useSessionState();
+  return state.status === 'signed-in' ? state.me.preferences.displayTimeZone : 'UTC';
 }
 
 /** Current time, updated every `intervalMs`, so ages ("5 s ago") stay correct without impure renders. */

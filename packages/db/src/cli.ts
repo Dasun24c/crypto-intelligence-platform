@@ -4,11 +4,14 @@ import { createLogger, INSTANCE_ID, loadEnv } from '@cip/observability';
 import { createDb } from './client.js';
 import { verifyAuditChain } from './audit.js';
 import { migrateToLatest } from './migrator.js';
+import { seedReplayInstruments } from './replay.js';
 import { configureServiceRoles } from './roles.js';
 
 /**
  * `cip-db migrate`      apply pending migrations as the owner role, then set service-role passwords
  * `cip-db verify-audit` walk the audit hash chain and exit non-zero if it is broken
+ * `cip-db seed-replay`  add the replay venue's instruments (tests, CI and demos only); with `--only`,
+ *                      also disable every other instrument, so nothing contacts the live venues
  */
 const EnvSchema = z.object({
   /** Owner credentials: used for migrations only, never by a running service. */
@@ -47,8 +50,20 @@ async function main(command: string | undefined): Promise<number> {
         log[result.ok ? 'info' : 'error'](result, result.ok ? 'audit chain verified' : 'audit chain BROKEN');
         return result.ok ? 0 : 2;
       }
+      case 'seed-replay': {
+        const inserted = await seedReplayInstruments(db);
+        const only = process.argv.includes('--only');
+        if (only)
+          await db
+            .updateTable('market.instruments')
+            .set({ enabled: false })
+            .where('venue_id', '!=', 'replay')
+            .execute();
+        log.info({ inserted, liveDisabled: only }, 'replay instruments seeded');
+        return 0;
+      }
       default:
-        log.error({ command }, 'usage: cip-db migrate | verify-audit');
+        log.error({ command }, 'usage: cip-db migrate | verify-audit | seed-replay [--only]');
         return 64;
     }
   } finally {

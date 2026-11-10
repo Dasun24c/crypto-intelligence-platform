@@ -10,10 +10,12 @@ An Architecture Decision Record (ADR) records one significant decision: the cont
 | [004](004-smc-engine-event-sourced-reducer.md) | SMC engine as an event-sourced pure reducer with checkpoints | Accepted | 2026-11-10 |
 | [005](005-analysis-pauses-at-data-gaps.md) | Analysis pauses at data gaps | Accepted | 2026-11-10 |
 | [006](006-kysely-sql-first-migrations.md) | Kysely with SQL-first migrations | Accepted | 2026-11-10 |
-| [007](007-socketio-websocket-only.md) | Socket.IO, WebSocket-only, with Redis adapter and emitter | Accepted | 2026-11-10 |
+| [007](007-socketio-websocket-only.md) | Socket.IO, WebSocket-only, with Redis adapter and emitter | Accepted (adapter and emitter superseded by 014) | 2026-11-10 |
 | [008](008-desktop-thin-tauri-client.md) | Desktop as a thin Tauri client | Accepted | 2026-11-10 |
 | [009](009-built-in-auth.md) | Built-in authentication (argon2id, TOTP, rotating refresh tokens) | Accepted | 2026-11-10 |
 | [010](010-valkey-redis-compatible-store.md) | Valkey as the Redis-compatible store | Accepted, verified in Phase 1 | 2026-11-10 |
 | [011](011-ai-grounded-citations.md) | AI cites ids from a provided context and the server validates grounding | Accepted | 2026-11-10 |
 | [012](012-ta-lib-reference-data.md) | Indicator reference data generated with TA-Lib in a dev-only Python tool | Accepted | 2026-11-10 |
 | [013](013-toolchain-pins.md) | Toolchain pins confirmed in Phase 1 | Accepted | 2026-11-10 |
+| [014](014-live-fan-out-without-socketio-adapter.md) | Live fan-out over Redis pub/sub and `md:events`, without the Socket.IO Redis adapter | Accepted | 2026-11-10 |
+| [015](015-replay-venue.md) | The replay venue plays recordings through the production adapters | Accepted | 2026-11-10 |

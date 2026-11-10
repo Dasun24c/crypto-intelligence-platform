@@ -147,8 +147,9 @@ interface Instrument {
   assetClass: 'crypto' | 'tokenised_gold' | 'stablecoin';
   role: 'monitored' | 'reference';
   displayName: string;            // e.g. 'PAXG (gold-backed token) · Binance PAXG/USDT'
-  priceTick: Decimal; isPrimaryVenue: boolean;
+  priceTick: Decimal; qtyStep: Decimal; isPrimaryVenue: boolean;   // qtyStep: Phase 2
   venueStatus: 'trading' | 'halted' | 'delisted' | 'unknown';
+  enabled: boolean;               // Phase 2; GET /instruments lists enabled ones, /admin/instruments all
   profile: { name: string; version: number } | null;
   underlyingCalendar: 'gold' | null;
 }
@@ -161,6 +162,38 @@ interface Candle {
 
 interface Ticker { instrumentId: string; ts: Ts; last: Decimal; bid: Decimal; ask: Decimal; change24hPct: number; volume24hQuote: Decimal; }
 interface BookSnapshot { instrumentId: string; ts: Ts; bids: [Decimal, Decimal][]; asks: [Decimal, Decimal][]; coverageBps: number; }
+
+// Market data detail (as implemented in Phase 2; zod schemas in packages/contracts/src/market.ts)
+interface BookMetrics {           // 1 Hz; depth is quote-currency notional within ±0.1/0.5/1% of mid
+  ts: Ts; mid: Decimal; spreadBps: number;
+  bidDepth10bp: number | null; askDepth10bp: number | null; bidDepth50bp: number | null; askDepth50bp: number | null;
+  bidDepth100bp: number | null; askDepth100bp: number | null;
+  imbalance10bp: number | null; imbalance50bp: number | null; imbalance100bp: number | null; coverageBps: number | null;
+}
+interface LargeTrade {            // one taker order (architecture §5.6)
+  id: string; instrumentId: string; ts: Ts; takerSide: 'buy' | 'sell';
+  avgPrice: Decimal; qty: Decimal; notionalUsd: Decimal;
+  grouping: 'single' | 'taker_order' | 'burst'; fillCount: number; priceLevels: number;
+  thresholdUsd: Decimal;          // the threshold in force when the order completed
+}
+interface Wall {
+  id: string; instrumentId: string; side: 'bid' | 'ask'; price: Decimal;
+  firstSeen: Ts; lastSeen: Ts; maxNotionalUsd: Decimal;
+  endedReason: 'filled' | 'pulled' | 'unknown' | null;   // null while it stands
+}
+interface CrossVenueSpread {      // stored every 10 s; published at 1 Hz on the market channels
+  baseAsset: string; ts: Ts; primaryInstrumentId: string; secondaryInstrumentId: string;
+  primaryUsd: Decimal;            // primary venue price × USDT-USD
+  secondaryUsd: Decimal; usdtUsd: Decimal; spreadBps: number;   // (secondary − primary) / primary
+}
+interface DataGap {
+  id: string; instrumentId: string; stream: 'trades' | 'depth' | 'kline' | 'ticker';
+  from: Ts; to: Ts | null; detectedAt: Ts;
+  detectedBy: 'sequence' | 'heartbeat' | 'timer' | 'reconnect' | 'consistency_check';
+  status: 'open' | 'backfilling' | 'repaired' | 'unrepairable'; resolvedAt: Ts | null;
+  details: Record<string, unknown>;   // reason, and the repair's outcome (inserted, aggregates)
+}
+interface Closure { calendar: 'gold'; from: Ts; to: Ts; reason: 'weekend' | 'daily_break' | 'holiday'; source: 'generated' | 'manual'; }
 
 interface LiquidityLevel {
   id: string; tf: Tf; type: LevelType; side: 'buy_side' | 'sell_side'; price: Decimal;
@@ -226,6 +259,8 @@ interface SystemHealth {
 interface FeedStatus { instrumentId: string; stream: 'trades' | 'depth' | 'kline' | 'ticker'; state: 'connected' | 'degraded' | 'disconnected'; lastMessageAt: Ts; lagMsP50: number; lagMsP95: number; openGaps: number; }
 ```
 
+> **As implemented through Phase 2.** `SystemHealth` is built up phase by phase. Today it is `{ status, checkedAt, dependencies: {name: 'database' | 'redis', status, latencyMs, detail}[], services: {service, status, instances[]}[], feeds: FeedStatus[] }`; `analysis` and `ai` arrive with phases 4 and 6. `FeedStatus` also carries `detail` (`streaming`, `no messages`, `delayed`, `disconnected`, `not streaming`, `halted`, `delisted`), and `lastMessageAt`, `lagMsP50` and `lagMsP95` are `null` when unknown. Lag is measured against venue time corrected for the measured clock offset of the host (architecture §5.4).
+
 ### Alert conditions
 
 ```ts
@@ -248,8 +283,9 @@ type AlertCondition =
 
 ### 5.1 Connection
 
-- Connect to `wss://<host>/v1` (Socket.IO, `transports: ['websocket']`) with `auth: { token: <accessToken> }`.
-- When the token is about to expire, the server emits `auth:expired`. The client refreshes and sends `auth:renew { token }` without reconnecting.
+- Connect to the Socket.IO namespace `/v1` at `wss://<host>` (HTTP path `/socket.io`, `transports: ['websocket']`) with `auth: { token: <accessToken> }`. A refused handshake fails with `connect_error` whose message is `AUTH_REQUIRED`, `AUTH_EXPIRED` or `FORBIDDEN`.
+- About 60 s before the token expires, the server emits `auth:expired`. The client refreshes and sends `auth:renew { token }` (acknowledged with `{ ok }`) without reconnecting. Without a valid renewal the server disconnects 30 s after expiry.
+- Fan-out (ADR 014): non-durable messages reach every `api` instance over Redis pub/sub (`live:{channel}`), durable ones from the `md:events` stream; each instance serves its own sockets.
 
 ### 5.2 Messages
 
@@ -309,7 +345,7 @@ interface ActivityPulse { ts: Ts; kind: 'pattern' | 'sweep' | 'mss' | 'ai_comple
 2. The client remembers the last `seq` per durable channel.
 3. After reconnecting, the client subscribes with `since: { [channel]: lastSeq }`.
 4. If the stream still holds entries after `lastSeq`, the server replays them in order (`mode: 'replayed'`) and then continues live.
-5. Otherwise the server returns `mode: 'snapshot'` with the current state (for example, all non-resolved setups and the latest 50 transitions), and the client replaces its local state.
+5. Otherwise the server returns `mode: 'snapshot'` with the current state (for example, all non-resolved setups and the latest 50 transitions), and the client replaces its local state. Phase 2 snapshots: `trades:{id}` → `{ largeTrades: LargeTrade[] }` (latest 50); `market:{id}` → `{ openGaps: DataGap[], activeWalls: Wall[] }`. A subscribe without `since` answers `mode: 'live'` with the current `seq`. Around a resubscribe a message can arrive twice: clients drop durable messages whose `seq` is not newer than the last one they applied.
 6. Non-durable channels always return a snapshot on subscribe. Candle charts reload missing closed candles over REST.
 
 ## 6. AI contract

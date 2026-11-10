@@ -72,7 +72,206 @@ export interface Database {
   'app.audit_log': AuditLogTable;
   'app.settings': SettingsTable;
   'app.user_preferences': UserPreferencesTable;
+  'market.venues': VenuesTable;
+  'market.instrument_profiles': InstrumentProfilesTable;
+  'market.underlying_calendars': UnderlyingCalendarsTable;
+  'market.underlying_market_closures': UnderlyingMarketClosuresTable;
+  'market.instruments': InstrumentsTable;
+  'market.candles': CandlesTable;
+  'market.trades': TradesTable;
+  'market.orderbook_metrics': OrderbookMetricsTable;
+  'market.orderbook_snapshots': OrderbookSnapshotsTable;
+  'market.cross_venue_spreads': CrossVenueSpreadsTable;
+  'market.feed_events': FeedEventsTable;
+  'market.large_trades': LargeTradesTable;
+  'market.orderbook_walls': OrderbookWallsTable;
+  'market.data_gaps': DataGapsTable;
 }
+
+// ---------------------------------------------------------------- market (data model §4)
+// `numeric` columns come back from node-postgres as strings: exact decimals, as the API expects.
+
+type Venue = 'binance' | 'coinbase' | 'replay';
+
+export interface VenuesTable {
+  id: Venue;
+  name: string;
+  enabled: Generated<boolean>;
+}
+
+export interface InstrumentProfilesTable {
+  id: string;
+  name: string;
+  version: number;
+  params: unknown;
+  params_hash: string;
+  created_by: string | null;
+  created_at: Generated<Date>;
+}
+
+export interface UnderlyingCalendarsTable {
+  id: string;
+  time_zone: string;
+  weekly_rule: unknown;
+}
+
+export interface UnderlyingMarketClosuresTable {
+  calendar_id: string;
+  starts_at: Date;
+  ends_at: Date;
+  reason: 'weekend' | 'daily_break' | 'holiday';
+  source: 'generated' | 'manual';
+}
+
+export interface InstrumentsTable {
+  id: string;
+  venue_id: Venue;
+  venue_symbol: string;
+  base_asset: string;
+  quote_asset: string;
+  asset_class: 'crypto' | 'tokenised_gold' | 'stablecoin';
+  role: ColumnType<'monitored' | 'reference', 'monitored' | 'reference' | undefined>;
+  price_tick: string;
+  qty_step: string;
+  profile_id: string | null;
+  underlying_calendar_id: string | null;
+  is_primary_venue: Generated<boolean>;
+  store_raw_trades: Generated<boolean>;
+  venue_status: ColumnType<
+    'trading' | 'halted' | 'delisted' | 'unknown',
+    'trading' | 'halted' | 'delisted' | 'unknown' | undefined
+  >;
+  enabled: Generated<boolean>;
+  created_at: Generated<Date>;
+  updated_at: Generated<Date>;
+}
+
+export interface CandlesTable {
+  instrument_id: string;
+  timeframe: '1m' | '5m' | '15m' | '1h' | '4h' | '1d';
+  open_time: Date;
+  open: string;
+  high: string;
+  low: string;
+  close: string;
+  volume: string;
+  quote_volume: string;
+  trade_count: number | null;
+  taker_buy_volume: string | null;
+  micro_profile: number[] | null;
+  source: 'exchange_kline' | 'trades' | 'rest' | 'aggregated' | 'replay';
+  quality: 'complete' | 'repaired' | 'partial';
+  underlying_closed: Generated<boolean>;
+  finalized_at: Date;
+}
+
+export interface TradesTable {
+  instrument_id: string;
+  ts: Date;
+  trade_id: string;
+  price: string;
+  qty: string;
+  taker_side: 'buy' | 'sell';
+  taker_order_ref: string | null;
+  received_at: Date;
+}
+
+export interface OrderbookMetricsTable {
+  instrument_id: string;
+  ts: Date;
+  mid: string;
+  spread_bps: number;
+  bid_usd_10bp: number | null;
+  ask_usd_10bp: number | null;
+  bid_usd_50bp: number | null;
+  ask_usd_50bp: number | null;
+  bid_usd_100bp: number | null;
+  ask_usd_100bp: number | null;
+  imbalance_10bp: number | null;
+  imbalance_50bp: number | null;
+  imbalance_100bp: number | null;
+  coverage_bps: number | null;
+}
+
+export interface OrderbookSnapshotsTable {
+  instrument_id: string;
+  ts: Date;
+  bids: string[];
+  asks: string[];
+  venue_seq: string | null;
+}
+
+export interface CrossVenueSpreadsTable {
+  base_asset: string;
+  ts: Date;
+  primary_instrument_id: string;
+  secondary_instrument_id: string;
+  primary_usd: string;
+  secondary_usd: string;
+  usdt_usd: string;
+  spread_bps: number;
+}
+
+export interface FeedEventsTable {
+  ts: Date;
+  venue_id: Venue;
+  instrument_id: string | null;
+  event:
+    | 'connected'
+    | 'disconnected'
+    | 'reconnecting'
+    | 'resubscribed'
+    | 'rate_limited'
+    | 'delayed'
+    | 'recovered'
+    | 'error'
+    | 'status_change';
+  details: ColumnType<Record<string, unknown>, Record<string, unknown> | undefined, never>;
+}
+
+export interface LargeTradesTable {
+  id: string;
+  instrument_id: string;
+  ts: Date;
+  taker_side: 'buy' | 'sell';
+  avg_price: string;
+  qty: string;
+  notional_usd: string;
+  grouping: 'single' | 'taker_order' | 'burst';
+  fill_count: number;
+  price_levels: number;
+  threshold_usd: string;
+}
+
+export interface OrderbookWallsTable {
+  id: string;
+  instrument_id: string;
+  side: 'bid' | 'ask';
+  price: string;
+  first_seen: Date;
+  last_seen: Date;
+  max_notional_usd: string;
+  ended_reason: 'filled' | 'pulled' | 'unknown' | null;
+}
+
+export interface DataGapsTable {
+  id: string;
+  instrument_id: string;
+  stream: 'trades' | 'depth' | 'kline' | 'ticker';
+  gap_start: Date;
+  gap_end: Date | null;
+  detected_at: Date;
+  detected_by: 'sequence' | 'heartbeat' | 'timer' | 'reconnect' | 'consistency_check';
+  status: 'open' | 'backfilling' | 'repaired' | 'unrepairable';
+  resolved_at: Date | null;
+  details: ColumnType<Record<string, unknown>, Record<string, unknown> | undefined, Record<string, unknown>>;
+}
+
+export type InstrumentRow = Selectable<InstrumentsTable>;
+export type CandleRow = Selectable<CandlesTable>;
+export type NewCandle = Insertable<CandlesTable>;
+export type NewTrade = Insertable<TradesTable>;
+export type DataGapRow = Selectable<DataGapsTable>;
 
 export type UserRow = Selectable<UsersTable>;
 export type NewUser = Insertable<UsersTable>;

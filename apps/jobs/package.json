@@ -10,11 +10,15 @@
     "test": "vitest run",
     "test:integration": "vitest run --config vitest.int.config.ts",
     "dev": "node --env-file-if-exists=.env --watch --conditions=@cip/source --import @swc-node/register/esm-register src/main.ts",
-    "start": "node dist/main.js"
+    "start": "node dist/main.js",
+    "cli": "node dist/cli.js",
+    "cli:dev": "node --env-file-if-exists=.env --conditions=@cip/source --import @swc-node/register/esm-register src/cli.ts"
   },
   "dependencies": {
     "@cip/contracts": "workspace:*",
     "@cip/db": "workspace:*",
+    "@cip/domain": "workspace:*",
+    "@cip/exchange-adapters": "workspace:*",
     "@cip/observability": "workspace:*",
     "@nestjs/common": "catalog:",
     "@nestjs/core": "catalog:",
