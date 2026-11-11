@@ -129,6 +129,57 @@ export const SweepSchema = z.object({
 });
 export type Sweep = z.infer<typeof SweepSchema>;
 
+export const ZONE_TYPES = ['order_block', 'fvg', 'supply', 'demand'] as const;
+export const ZoneTypeSchema = z.enum(ZONE_TYPES);
+export type ZoneType = z.infer<typeof ZoneTypeSchema>;
+export const ZONE_STATUSES = ['untouched', 'partially_filled', 'filled', 'invalidated', 'expired'] as const;
+export const ZoneStatusSchema = z.enum(ZONE_STATUSES);
+export type ZoneStatus = z.infer<typeof ZoneStatusSchema>;
+
+/**
+ * A point of interest (rulebook §4). Bullish zones (demand, bullish order blocks and FVGs) are
+ * approached from above: `top` is their proximal edge. Bearish zones mirror this. `fillPct` is the
+ * deepest penetration from the proximal edge, in % of the height.
+ */
+export const PoiZoneSchema = z.object({
+  id: UuidSchema,
+  tf: TimeframeSchema,
+  type: ZoneTypeSchema,
+  direction: Direction,
+  top: DecimalSchema,
+  bottom: DecimalSchema,
+  /** Open times of the first and last candle forming it. */
+  originFrom: TsSchema,
+  originTo: TsSchema,
+  knownAt: TsSchema,
+  /** Order blocks on 1h, 4h and 1d. */
+  htf: z.boolean(),
+  location: z.enum(['internal', 'external', 'straddling', 'none']),
+  status: ZoneStatusSchema,
+  fillPct: z.number(),
+  /** Close of the first candle that traded into it. */
+  firstTouchAt: TsSchema.nullable(),
+  statusChangedAt: TsSchema.nullable(),
+  /** Order blocks: the structure break whose leg they start. */
+  structureEventId: UuidSchema.nullable(),
+  /** An order block or supply/demand zone of the other kind that it overlaps by more than half. */
+  linkedZoneId: UuidSchema.nullable(),
+  /** Order blocks: opposite liquidity was swept just before the leg. */
+  sweptLiquidityAtOrigin: z.boolean(),
+  flags: FlagsSchema,
+});
+export type PoiZone = z.infer<typeof PoiZoneSchema>;
+
+/** `zone.status`: what changed on a zone (merge it into the zone by id). */
+export const ZoneStatusChangeSchema = z.object({
+  id: UuidSchema,
+  status: ZoneStatusSchema,
+  fillPct: z.number(),
+  firstTouchAt: TsSchema.nullable(),
+  statusChangedAt: TsSchema.nullable(),
+});
+export type ZoneStatusChange = z.infer<typeof ZoneStatusChangeSchema>;
+
 /** `GET /smc/{instrumentId}/overlay`: everything a chart needs in one call. */
 export const ChartOverlaySchema = z.object({
   instrumentId: UuidSchema,
@@ -140,8 +191,8 @@ export const ChartOverlaySchema = z.object({
   ranges: z.array(TradingRangeSchema),
   levels: z.array(LiquidityLevelSchema),
   sweeps: z.array(SweepSchema),
-  /** Points of interest arrive in Phase 5, setups in Phase 6: empty until then. */
-  zones: z.array(z.unknown()),
+  zones: z.array(PoiZoneSchema),
+  /** Setups arrive in Phase 6: empty until then. */
   setups: z.array(z.unknown()),
   /** Gold-market closures in the window (gold instruments only). */
   closures: z.array(z.object({ from: TsSchema, to: TsSchema, reason: z.string() })),
@@ -178,6 +229,19 @@ export const LevelsQuerySchema = z.strictObject({
   limit: z.coerce.number().int().min(1).max(5_000).default(1_000),
 });
 export type LevelsQuery = z.infer<typeof LevelsQuerySchema>;
+
+/**
+ * `GET /smc/{instrumentId}/zones?tf&status&types&runId`: zones a `tf` chart can show (their own
+ * timeframe `tf` or longer), by default the live ones (untouched, partially filled or filled).
+ */
+export const ZonesQuerySchema = z.strictObject({
+  tf: TimeframeSchema,
+  status: list(ZoneStatusSchema).optional(),
+  types: list(ZoneTypeSchema).optional(),
+  runId: UuidSchema.optional(),
+  limit: z.coerce.number().int().min(1).max(5_000).default(1_000),
+});
+export type ZonesQuery = z.infer<typeof ZonesQuerySchema>;
 
 // ── Replays (API contracts §3 "Setups and replays") ───────────────────────────────────────────
 
@@ -238,7 +302,9 @@ export type SmcMessageType =
   | 'range.ended'
   | 'level.created'
   | 'level.status'
-  | 'sweep';
+  | 'sweep'
+  | 'zone.created'
+  | 'zone.status';
 
 /** `level.status`: what changed on a level (merge it into the level by id). */
 export const LevelStatusChangeSchema = z.object({
@@ -271,5 +337,14 @@ export interface SmcEventMessage {
   /** When it was decided: the close of the deciding candle (epoch ms). */
   time: number;
   type: SmcMessageType;
-  data: SwingPoint | StructureEvent | TradingRange | RangeEnd | LiquidityLevel | LevelStatusChange | Sweep;
+  data:
+    | SwingPoint
+    | StructureEvent
+    | TradingRange
+    | RangeEnd
+    | LiquidityLevel
+    | LevelStatusChange
+    | Sweep
+    | PoiZone
+    | ZoneStatusChange;
 }

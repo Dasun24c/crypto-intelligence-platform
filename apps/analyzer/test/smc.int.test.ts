@@ -235,6 +235,41 @@ describe('SMC analysis runtime (Phase 4)', () => {
       .where('run_id', '=', run.id)
       .execute();
     expect(sweeps.length).toBe(events.filter((e) => e.type === 'sweep').length);
+    // Zones (Phase 5): one row per zone, holding the state of its last status event.
+    for (const t of ['zone_created', 'zone_status'] as const) expect(types).toContain(t);
+    const zones = await owner
+      .selectFrom('analysis.poi_zones')
+      .selectAll()
+      .where('run_id', '=', run.id)
+      .execute();
+    expect(zones.length).toBe(events.filter((e) => e.type === 'zone_created').length);
+    const last = new Map<string, { status: string; fillPct: number; firstTouchAt: number | null }>();
+    for (const e of events)
+      if (e.type === 'zone_status')
+        last.set(
+          e.entity_id!,
+          (e.payload as { data: { status: string; fillPct: number; firstTouchAt: number | null } }).data,
+        );
+    expect(last.size).toBeGreaterThan(0);
+    for (const z of zones) {
+      const s = last.get(z.id);
+      expect({
+        status: z.status,
+        fill: Number(z.fill_pct),
+        touch: z.first_touch_at?.getTime() ?? null,
+      }).toEqual(
+        s
+          ? { status: s.status, fill: s.fillPct, touch: s.firstTouchAt }
+          : { status: 'untouched', fill: 0, touch: null },
+      );
+    }
+    // An order block points at its break; a linked zone is linked back.
+    const ob = zones.find((z) => z.type === 'order_block');
+    expect(ob?.structure_event_id).toBeTruthy();
+    for (const z of zones.filter((x) => x.linked_zone_id !== null)) {
+      const other = zones.find((x) => x.id === z.linked_zone_id)!;
+      expect(other.linked_zone_id).not.toBeNull();
+    }
     // Checkpoints every 60 boundaries during the warm-up.
     const cp = await store.loadCheckpoint(run.id);
     expect(cp).not.toBeNull();

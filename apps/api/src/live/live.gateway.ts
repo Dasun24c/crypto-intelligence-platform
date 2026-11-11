@@ -284,7 +284,7 @@ export class LiveGateway implements OnApplicationBootstrap, OnApplicationShutdow
     if (ch.startsWith('smc:')) {
       // The live run's active levels and ranges; history comes from GET /smc/{id}/overlay.
       const run = await this.smc.run(id);
-      return { run, ...(run ? await this.smc.active(run.id) : { levels: [], ranges: [] }) };
+      return { run, ...(run ? await this.smc.active(run.id) : { levels: [], ranges: [], zones: [] }) };
     }
     if (ch.startsWith('trades:'))
       return { largeTrades: (await this.market.largeTrades(id, { limit: 50 })).items };

@@ -107,6 +107,17 @@ Roles: **V** viewer, **A** analyst, **Ad** admin. Every endpoint needs authentic
 > - **Not yet**: `/smc/{id}/zones` arrives with Phase 5.
 > - **Schemas**: all in `packages/contracts/src/smc.ts`.
 
+> **As implemented in Phase 5.** Points of interest (rulebook §4):
+>
+> - **`GET /smc/{id}/zones?tf&status&types&runId&limit`** returns `PoiZone[]`, oldest first. It covers zones whose timeframe is `tf` or longer. `status` and `types` are comma-separated; `status` defaults to the live statuses (`untouched`, `partially_filled`, `filled`).
+> - **Overlay**: `zones` now holds the zones known by the window's end that were still live at its start, so a zone shows until it ended.
+> - **`PoiZone`** is the shape above, plus five fields:
+>   - `firstTouchAt` and `statusChangedAt`: decision times, null until they happen.
+>   - `structureEventId`: for an order block, the break whose leg it starts.
+>   - `linkedZoneId`: an order block, or supply/demand zone, of the other kind that it overlaps by more than half (set on both).
+>   - `sweptLiquidityAtOrigin`: for an order block.
+> - **`fillPct`** is a number with at most two decimals, the deepest penetration from the proximal edge (a bullish zone's top, a bearish zone's bottom).
+
 ### Setups and replays
 
 | Method | Path | Role | Returns |
@@ -395,6 +406,8 @@ interface ActivityPulse { ts: Ts; kind: 'pattern' | 'sweep' | 'mss' | 'ai_comple
 >   - `range.ended` carries `{ id, endedAt, endReason }`.
 > - **What is sent**: each detection once, when the live run first stores it. Warm-up detections and those recomputed after a restart are not sent. A new lease holder first publishes what a dead holder stored but did not publish.
 > - **Snapshot**: `{ run, levels, ranges }`, holding the live run's active levels and ranges. History comes from `GET /smc/{id}/overlay`.
+>
+> Phase 5 adds `zone.created` (a `PoiZone`) and `zone.status` (`{ id, status, fillPct, firstTouchAt, statusChangedAt }`, to merge into the zone with that id). The snapshot adds `zones`, the live run's live zones.
 
 ### 5.4 Sequencing and resync
 

@@ -95,6 +95,7 @@ export interface Database {
   'analysis.trading_ranges': TradingRangesTable;
   'analysis.liquidity_levels': LiquidityLevelsTable;
   'analysis.sweeps': SweepsTable;
+  'analysis.poi_zones': PoiZonesTable;
 }
 
 // ---------------------------------------------------------------- market (data model §4)
@@ -351,6 +352,8 @@ export interface DetectionEventsTable {
     | 'level_created'
     | 'level_status'
     | 'sweep'
+    | 'zone_created'
+    | 'zone_status'
     | 'gap_marker';
   entity_id: string | null;
   payload: ColumnType<unknown, string, never>;
@@ -441,6 +444,31 @@ export interface SweepsTable {
   flags: ColumnType<string[], string[] | undefined, string[]>;
 }
 
+/** Points of interest (rulebook §4, migration 0008). `fill_pct` is numeric(5, 2): a string. */
+export interface PoiZonesTable {
+  id: string;
+  run_id: string;
+  instrument_id: string;
+  timeframe: SmcTimeframe;
+  type: 'order_block' | 'fvg' | 'supply' | 'demand';
+  direction: 'bullish' | 'bearish';
+  top: string;
+  bottom: string;
+  origin_from: Date;
+  origin_to: Date;
+  known_at: Date;
+  htf: ColumnType<boolean, boolean | undefined, boolean>;
+  location: ColumnType<'internal' | 'external' | 'straddling' | 'none', string | undefined, string>;
+  structure_event_id: string | null;
+  linked_zone_id: string | null;
+  swept_liquidity_at_origin: ColumnType<boolean, boolean | undefined, boolean>;
+  status: 'untouched' | 'partially_filled' | 'filled' | 'invalidated' | 'expired';
+  fill_pct: ColumnType<string, string | number | undefined, string | number>;
+  first_touch_at: Date | null;
+  status_changed_at: Date | null;
+  flags: ColumnType<string[], string[] | undefined, string[]>;
+}
+
 export type InstrumentRow = Selectable<InstrumentsTable>;
 export type CandleRow = Selectable<CandlesTable>;
 export type NewCandle = Insertable<CandlesTable>;
@@ -456,6 +484,8 @@ export type StructureEventRow = Selectable<StructureEventsTable>;
 export type TradingRangeRow = Selectable<TradingRangesTable>;
 export type LiquidityLevelRow = Selectable<LiquidityLevelsTable>;
 export type SweepRow = Selectable<SweepsTable>;
+export type PoiZoneRow = Selectable<PoiZonesTable>;
+export type NewPoiZone = Insertable<PoiZonesTable>;
 export type NewIndicatorValue = Insertable<IndicatorValuesTable>;
 
 export type UserRow = Selectable<UsersTable>;

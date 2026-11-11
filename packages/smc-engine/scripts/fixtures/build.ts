@@ -9,12 +9,20 @@ import { levelCases } from './cases-levels.ts';
 import { rangeCases } from './cases-ranges.ts';
 import { structureCases } from './cases-structure.ts';
 import { sweepCases } from './cases-sweeps.ts';
+import { zoneCases } from './cases-zones.ts';
 import { type Case, type Exp, fmt, TF_MS, type Tf } from './lib.ts';
 
 export const SOURCE = 'synthetic: packages/smc-engine/scripts/fixtures';
 const OUT = new URL('../../fixtures/', import.meta.url);
 
-const cases: Case[] = [...structureCases, ...rangeCases, ...levelCases, ...sweepCases, ...goldCases];
+const cases: Case[] = [
+  ...structureCases,
+  ...rangeCases,
+  ...levelCases,
+  ...sweepCases,
+  ...goldCases,
+  ...zoneCases,
+];
 
 function toJson(c: Case): unknown {
   const series = [

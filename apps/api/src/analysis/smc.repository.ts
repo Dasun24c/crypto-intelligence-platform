@@ -3,16 +3,20 @@ import type { Kysely, SelectQueryBuilder } from 'kysely';
 import {
   type LevelType,
   type LiquidityLevel,
+  type PoiZone,
   type RunRef,
   type StructureEvent,
   type Sweep,
   type SwingPoint,
   type Tf,
   type TradingRange,
+  type ZoneStatus,
+  type ZoneType,
 } from '@cip/contracts';
 import type {
   Database,
   LiquidityLevelRow,
+  PoiZoneRow,
   StructureEventRow,
   SweepRow,
   SwingPointRow,
@@ -95,7 +99,32 @@ export const toSweep = (r: SweepRow & { level_type: string }): Sweep => ({
   flags: r.flags,
 });
 
-/** Timeframes at least as long as `tf`: the origins of the levels a `tf` chart shows. */
+export const toZone = (r: PoiZoneRow): PoiZone => ({
+  id: r.id,
+  tf: r.timeframe,
+  type: r.type,
+  direction: r.direction,
+  top: r.top,
+  bottom: r.bottom,
+  originFrom: t(r.origin_from),
+  originTo: t(r.origin_to),
+  knownAt: t(r.known_at),
+  htf: r.htf,
+  location: r.location,
+  status: r.status,
+  fillPct: Number(r.fill_pct),
+  firstTouchAt: tn(r.first_touch_at),
+  statusChangedAt: tn(r.status_changed_at),
+  structureEventId: r.structure_event_id,
+  linkedZoneId: r.linked_zone_id,
+  sweptLiquidityAtOrigin: r.swept_liquidity_at_origin,
+  flags: r.flags,
+});
+
+/** Zones still tracked for touches and fills (rulebook §4.4). */
+export const LIVE_ZONE_STATUSES: ZoneStatus[] = ['untouched', 'partially_filled', 'filled'];
+
+/** Timeframes at least as long as `tf`: the origins of the levels (and zones) a `tf` chart shows. */
 export const atLeast = (tf: Tf): Tf[] => TIMEFRAMES.filter((x) => TF_MS[x] >= TF_MS[tf]);
 
 export interface Window {
@@ -236,6 +265,38 @@ export class SmcRepository {
     return rows.map(toLevel);
   }
 
+  /**
+   * Zones a `tf` chart shows (timeframe `tf` or longer), oldest first. Without a window: by status
+   * (the live ones by default). With one: the zones known by its end that were still live at its
+   * start, so ended zones show up to their end.
+   */
+  async zones(
+    runId: string,
+    tf: Tf,
+    q: Window & { status?: ZoneStatus[]; types?: ZoneType[] },
+  ): Promise<PoiZone[]> {
+    let query = this.db
+      .selectFrom('analysis.poi_zones')
+      .selectAll()
+      .where('run_id', '=', runId)
+      .where('timeframe', 'in', atLeast(tf));
+    if (q.types?.length) query = query.where('type', 'in', q.types);
+    if (q.from !== undefined || q.to !== undefined) {
+      if (q.to !== undefined) query = query.where('known_at', '<=', new Date(q.to));
+      if (q.from !== undefined) {
+        const from = new Date(q.from);
+        query = query.where((eb) =>
+          eb.or([eb('status', 'in', LIVE_ZONE_STATUSES), eb('status_changed_at', '>=', from)]),
+        );
+      }
+      if (q.status?.length) query = query.where('status', 'in', q.status);
+    } else {
+      query = query.where('status', 'in', q.status?.length ? q.status : LIVE_ZONE_STATUSES);
+    }
+    const rows = (await query.orderBy('known_at', 'desc').limit(q.limit).execute()).reverse();
+    return rows.map(toZone);
+  }
+
   /** Gold-market closures overlapping a window, for an instrument with an underlying calendar. */
   async closures(
     instrumentId: string,
@@ -254,9 +315,11 @@ export class SmcRepository {
     return rows.map((r) => ({ from: t(r.starts_at), to: t(r.ends_at), reason: r.reason }));
   }
 
-  /** The current state for the `smc:` channel snapshot: active levels and ranges on every timeframe. */
-  async active(runId: string): Promise<{ levels: LiquidityLevel[]; ranges: TradingRange[] }> {
-    const [levels, ranges] = await Promise.all([
+  /** The current state for the `smc:` channel snapshot: active levels, ranges and live zones. */
+  async active(
+    runId: string,
+  ): Promise<{ levels: LiquidityLevel[]; ranges: TradingRange[]; zones: PoiZone[] }> {
+    const [levels, ranges, zones] = await Promise.all([
       this.db
         .selectFrom('analysis.liquidity_levels')
         .selectAll()
@@ -272,7 +335,15 @@ export class SmcRepository {
         .where('ended_at', 'is', null)
         .orderBy('detected_at')
         .execute(),
+      this.db
+        .selectFrom('analysis.poi_zones')
+        .selectAll()
+        .where('run_id', '=', runId)
+        .where('status', 'in', LIVE_ZONE_STATUSES)
+        .orderBy('known_at')
+        .limit(2_000)
+        .execute(),
     ]);
-    return { levels: levels.map(toLevel), ranges: ranges.map(toRange) };
+    return { levels: levels.map(toLevel), ranges: ranges.map(toRange), zones: zones.map(toZone) };
   }
 }

@@ -6,6 +6,7 @@ import {
   type ChartOverlay,
   type Envelope,
   type LiquidityLevel,
+  type PoiZone,
   REPLAY_QUEUE,
   type ReplayJob,
   type ReplayStatus,
@@ -18,7 +19,7 @@ import {
   WS_NAMESPACE,
   WS_PATH,
 } from '@cip/contracts';
-import { createDb, LAUNCH_PROFILE_IDS } from '@cip/db';
+import { createDb, LAUNCH_PROFILE_IDS, type NewPoiZone } from '@cip/db';
 import { call, createUser, type Harness, startApi, tokenFor } from './harness.ts';
 
 /** API contracts §3 "Indicators and SMC" and "Setups and replays", §5.3 `smc:{instrumentId}`. */
@@ -210,6 +211,63 @@ async function seed(runId: string, base: number): Promise<void> {
       flags: ['liquidity_unverified'],
     })
     .execute();
+  // Zones (Phase 5): a 1h order block and a linked demand zone, an invalidated 15m FVG, a 5m FVG.
+  const zone = (
+    n: number,
+    tf: '5m' | '15m' | '1h',
+    type: 'order_block' | 'fvg' | 'demand',
+    over: Partial<NewPoiZone> & Pick<NewPoiZone, 'top' | 'bottom' | 'known_at'>,
+  ): NewPoiZone => ({
+    id: id(base + n),
+    run_id: runId,
+    instrument_id: BTC,
+    timeframe: tf,
+    type,
+    direction: 'bullish' as const,
+    origin_from: new Date(FROM + 6 * H),
+    origin_to: new Date(FROM + 7 * H),
+    status: 'untouched' as const,
+    flags: [],
+    ...over,
+  });
+  await owner
+    .insertInto('analysis.poi_zones')
+    .values([
+      zone(20, '1h', 'order_block', {
+        top: '104.5',
+        bottom: '103',
+        known_at: new Date(FROM + 9 * H),
+        htf: true,
+        structure_event_id: id(base + 4),
+        status: 'partially_filled',
+        fill_pct: 37.5,
+        first_touch_at: new Date(FROM + 12 * H),
+        status_changed_at: new Date(FROM + 12 * H),
+      }),
+      zone(21, '1h', 'demand', {
+        top: '104.2',
+        bottom: '103.2',
+        known_at: new Date(FROM + 10 * H),
+        linked_zone_id: id(base + 20),
+      }),
+      zone(22, '15m', 'fvg', {
+        direction: 'bearish',
+        top: '106.4',
+        bottom: '106',
+        known_at: new Date(FROM + 10 * H),
+        status: 'invalidated',
+        fill_pct: 100,
+        first_touch_at: new Date(FROM + 11 * H),
+        status_changed_at: new Date(FROM + 11 * H),
+      }),
+      zone(23, '5m', 'fvg', { top: '101', bottom: '100.5', known_at: new Date(FROM + 2 * H) }),
+    ])
+    .execute();
+  await owner
+    .updateTable('analysis.poi_zones')
+    .set({ linked_zone_id: id(base + 21) })
+    .where('id', '=', id(base + 20))
+    .execute();
 }
 
 /** The same three engine events in a run's log (for digests). */
@@ -343,6 +401,40 @@ describe('SMC endpoints', () => {
     });
   });
 
+  it('lists the zones a timeframe shows: its own and longer, live unless asked', async () => {
+    const zones = async (q: string) => (await get(`/smc/${BTC}/zones?${q}`)).body as PoiZone[];
+    const [ob, demand] = await zones('tf=1h');
+    expect(ob).toEqual({
+      id: id(120),
+      tf: '1h',
+      type: 'order_block',
+      direction: 'bullish',
+      top: '104.5',
+      bottom: '103',
+      originFrom: FROM + 6 * H,
+      originTo: FROM + 7 * H,
+      knownAt: FROM + 9 * H,
+      htf: true,
+      location: 'none',
+      status: 'partially_filled',
+      fillPct: 37.5,
+      firstTouchAt: FROM + 12 * H,
+      statusChangedAt: FROM + 12 * H,
+      structureEventId: id(104),
+      linkedZoneId: id(121),
+      sweptLiquidityAtOrigin: false,
+      flags: [],
+    });
+    expect(demand).toMatchObject({ id: id(121), type: 'demand', linkedZoneId: id(120), fillPct: 0 });
+    expect((await zones('tf=15m')).map((z) => z.id)).toEqual([id(120), id(121)]);
+    expect((await zones('tf=15m&status=invalidated')).map((z) => [z.id, z.fillPct])).toEqual([
+      [id(122), 100],
+    ]);
+    expect((await zones('tf=5m&types=fvg')).map((z) => z.id)).toEqual([id(123)]);
+    expect((await zones(`tf=1h&runId=${REPLAY}`)).map((z) => z.id)).toEqual([id(220), id(221)]);
+    expect((await get(`/smc/${BTC}/zones?tf=1h&status=swept`)).status).toBe(400);
+  });
+
   it('lists the levels a timeframe shows: its own and longer origins, active unless asked', async () => {
     const levels = async (q: string) =>
       ((await get(`/smc/${BTC}/levels?${q}`)).body as LiquidityLevel[]).map((l) => l.type);
@@ -359,14 +451,19 @@ describe('SMC endpoints', () => {
     expect(overlay.run).toMatchObject({
       id: LIVE,
       status: 'running',
-      profile: { name: 'crypto-majors', version: 2 },
+      profile: { name: 'crypto-majors', version: 3 },
     });
     expect(overlay.swings).toHaveLength(2);
     expect(overlay.structure).toHaveLength(1);
     expect(overlay.ranges).toHaveLength(2);
     expect(overlay.levels.map((l) => l.type)).toEqual(['eql', 'pdh']);
     expect(overlay.sweeps).toHaveLength(1);
-    expect(overlay).toMatchObject({ zones: [], setups: [], closures: [] });
+    expect(overlay).toMatchObject({ setups: [], closures: [] });
+    // The 1h chart shows the live 1h zones (the 15m and 5m ones belong to shorter charts).
+    expect(overlay.zones.map((z) => [z.id, z.type, z.status])).toEqual([
+      [id(120), 'order_block', 'partially_filled'],
+      [id(121), 'demand', 'untouched'],
+    ]);
     const replay = (await get(`/smc/${BTC}/swings?tf=1h&runId=${REPLAY}`)).body as SwingPoint[];
     expect(replay.map((s) => s.id)).toEqual([id(201), id(202)]);
     expect((await get(`/smc/${BTC}/swings?tf=1h&runId=${id(999)}`)).status).toBe(404);
@@ -507,7 +604,12 @@ describe('smc channel', () => {
       since: { [ch]: '1-0' },
     })) as SubscribeAck;
     expect(old.results[ch]).toMatchObject({ mode: 'snapshot', snapshot: { run: { id: LIVE } } });
-    const snapshot = old.results[ch]!.snapshot as { levels: LiquidityLevel[]; ranges: TradingRange[] };
+    const snapshot = old.results[ch]!.snapshot as {
+      levels: LiquidityLevel[];
+      ranges: TradingRange[];
+      zones: PoiZone[];
+    };
+    expect(snapshot.zones.map((z) => z.id)).toEqual([id(123), id(120), id(121)]);
     expect(snapshot.levels.map((l) => l.type)).toEqual(['pdh', 'eqh']);
     expect(snapshot.ranges.map((r) => r.id)).toEqual([id(106)]);
   });

@@ -1,11 +1,18 @@
 import { describe, expect, it } from 'vitest';
 import { CHANNEL_PATTERN, channels, isDurableChannel } from './market.js';
-import { LevelsQuerySchema, ReplayRequestSchema, SmcQuerySchema, SwingsQuerySchema } from './smc.js';
+import {
+  LevelsQuerySchema,
+  PoiZoneSchema,
+  ReplayRequestSchema,
+  SmcQuerySchema,
+  SwingsQuerySchema,
+  ZonesQuerySchema,
+} from './smc.js';
 import { SmcParamsSchema } from './smc-params.js';
 
 const ID = '019a6f00-0000-7000-8000-000000000101';
 
-/** The crypto-majors defaults (rulebook §10), as migration 0007 stores them. */
+/** The crypto-majors defaults (rulebook §10), as migration 0008 stores them (profile version 3). */
 export const SMC_DEFAULTS = {
   atrPeriod: 14,
   structureTimeframes: ['5m', '15m', '1h', '4h', '1d'],
@@ -23,7 +30,9 @@ export const SMC_DEFAULTS = {
     legBodyAtr: 2,
     legCandleBodyRatio: 0.5,
   },
+  orderBlocks: { lookback: 5, maxClusterCandles: 3, breakWithinBars: 10, zoneMode: 'wick' },
   fvg: { minSizeAtr: 0.2 },
+  supplyDemand: { baseMaxCandles: 4, baseBodyAtr: 0.5, departureAtr: 2 },
   ranges: {
     lookback: 48,
     maxHeightAtr: 6,
@@ -52,6 +61,9 @@ export const SMC_DEFAULTS = {
     equalCandles: 500,
     swingCandles: 300,
     sweepExtremeCandles: 300,
+    fvgCandles: 200,
+    orderBlockCandles: 300,
+    supplyDemandCandles: 300,
   },
 };
 
@@ -65,8 +77,45 @@ describe('SMC contracts', () => {
       { ...SMC_DEFAULTS, sessions: [{ name: 'tokyo', start: '00:00', end: '07:00' }] },
       { ...SMC_DEFAULTS, sessions: [{ name: 'asia', start: '00:30', end: '07:00' }] },
       { ...SMC_DEFAULTS, extra: 1 },
+      { ...SMC_DEFAULTS, orderBlocks: { ...SMC_DEFAULTS.orderBlocks, zoneMode: 'mid' } },
+      // A version 2 profile (Phase 4) has no zone settings.
+      (({ orderBlocks: _o, supplyDemand: _s, ...v2 }) => v2)(SMC_DEFAULTS),
     ])
       expect(SmcParamsSchema.safeParse(bad).success).toBe(false);
+  });
+
+  it('describe points of interest and their queries', () => {
+    const zone = {
+      id: ID,
+      tf: '1h',
+      type: 'order_block',
+      direction: 'bearish',
+      top: '108.5',
+      bottom: '106',
+      originFrom: 1_000,
+      originTo: 2_000,
+      knownAt: 3_000,
+      htf: true,
+      location: 'none',
+      status: 'partially_filled',
+      fillPct: 37.5,
+      firstTouchAt: 4_000,
+      statusChangedAt: 4_000,
+      structureEventId: ID,
+      linkedZoneId: null,
+      sweptLiquidityAtOrigin: false,
+      flags: [],
+    };
+    expect(PoiZoneSchema.parse(zone)).toEqual(zone);
+    expect(PoiZoneSchema.safeParse({ ...zone, type: 'breaker' }).success).toBe(false);
+    expect(
+      ZonesQuerySchema.parse({ tf: '15m', types: 'fvg,order_block', status: 'untouched' }),
+    ).toMatchObject({
+      types: ['fvg', 'order_block'],
+      status: ['untouched'],
+      limit: 1000,
+    });
+    expect(ZonesQuerySchema.safeParse({ tf: '15m', status: 'swept' }).success).toBe(false);
   });
 
   it('parse the list queries', () => {

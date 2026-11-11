@@ -2,7 +2,7 @@
 
 Real-time monitoring and analysis of crypto markets, and of gold through the PAXG token: market data from Binance and Coinbase, technical indicators, Smart Money Concepts detection, AI analysis with Grok, alerts, and a web and desktop app.
 
-**Status:** Phase 4 (SMC structure and liquidity) is built and awaiting acceptance. The SMC engine detects swings, BOS, CHOCH, MSS, displacement, trading ranges, every liquidity level type, sweeps, false breakouts and breakouts, with gold-market and thin-book flags. It runs live for every pair in the analyzer, with checkpoints, lease fencing and replays that reproduce a live run's digest, and the API serves it with a live channel. Phases 1–3 (Foundations, Market data, Technical analysis) are accepted. See the [Phase 4 acceptance report](docs/phase-4/acceptance-report.md), the [Phase 3 report](docs/phase-3/acceptance-report.md) and the [implementation plan](docs/phase-0/08-implementation-plan.md).
+**Status:** Phase 5 (SMC points of interest) is built and awaiting acceptance. The SMC engine now also finds order blocks, fair value gaps and supply and demand zones, and tracks each one's touches, fill, invalidation, expiry and location against the active range, live for every pair. The API serves them with the other SMC detections and on the live channel. Phases 1–4 (Foundations, Market data, Technical analysis, SMC structure and liquidity) are accepted. See the [Phase 5 acceptance report](docs/phase-5/acceptance-report.md), the [Phase 4 report](docs/phase-4/acceptance-report.md) and the [implementation plan](docs/phase-0/08-implementation-plan.md).
 
 ## Quick start
 
@@ -97,6 +97,7 @@ Workspace packages are consumed from source through the `@cip/source` export con
 - [Phase 2 acceptance report](docs/phase-2/acceptance-report.md)
 - [Phase 3 acceptance report](docs/phase-3/acceptance-report.md)
 - [Phase 4 acceptance report](docs/phase-4/acceptance-report.md)
+- [Phase 5 acceptance report](docs/phase-5/acceptance-report.md)
 - [Desktop app](apps/desktop/README.md)
 
 The platform is for analysis and education. It holds no exchange API keys, implements no trading, and never presents analysis as a guaranteed prediction.

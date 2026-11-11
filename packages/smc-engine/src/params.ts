@@ -4,7 +4,8 @@ import { TF_MS, TIMEFRAMES, type Timeframe } from '@cip/domain';
  * The version of the rulebook this engine implements (docs/phase-0/07-smc-rulebook.md, v0.1).
  * Every detection carries it; changing a rule means a new version and a new run (ADR 004).
  */
-export const RULESET_VERSION = '0.1.0';
+/** 0.2.0: Phase 5 adds the points of interest (rulebook §4). */
+export const RULESET_VERSION = '0.2.0';
 
 export const SESSION_NAMES = ['asia', 'london', 'new_york'] as const;
 export type SessionName = (typeof SESSION_NAMES)[number];
@@ -40,8 +41,18 @@ export interface SmcParams {
     legBodyAtr: number;
     legCandleBodyRatio: number;
   };
-  /** Only `createdFvg` on displacement uses this in Phase 4 (rulebook §2.3, §4.2). */
+  /** §4.1 order blocks: the search back from the leg start, the cluster, and how soon the break must come. */
+  orderBlocks: {
+    lookback: number;
+    maxClusterCandles: number;
+    breakWithinBars: number;
+    /** `wick`: the cluster's full range; `body`: its bodies only. */
+    zoneMode: 'wick' | 'body';
+  };
+  /** §4.2 fair value gaps, and `createdFvg` on displacement (§2.3). */
   fvg: { minSizeAtr: number };
+  /** §4.3 supply and demand zones: the base's candles and the departure's travel beyond it. */
+  supplyDemand: { baseMaxCandles: number; baseBodyAtr: number; departureAtr: number };
   ranges: {
     lookback: number;
     maxHeightAtr: number;
@@ -71,6 +82,10 @@ export interface SmcParams {
     equalCandles: number;
     swingCandles: number;
     sweepExtremeCandles: number;
+    /** §4.4 zone lifetimes, in candles of the zone's timeframe. */
+    fvgCandles: number;
+    orderBlockCandles: number;
+    supplyDemandCandles: number;
   };
 }
 
@@ -91,7 +106,9 @@ const base: SmcParams = {
     legBodyAtr: 2.0,
     legCandleBodyRatio: 0.5,
   },
+  orderBlocks: { lookback: 5, maxClusterCandles: 3, breakWithinBars: 10, zoneMode: 'wick' },
   fvg: { minSizeAtr: 0.2 },
+  supplyDemand: { baseMaxCandles: 4, baseBodyAtr: 0.5, departureAtr: 2.0 },
   ranges: {
     lookback: 48,
     maxHeightAtr: 6.0,
@@ -120,6 +137,9 @@ const base: SmcParams = {
     equalCandles: 500,
     swingCandles: 300,
     sweepExtremeCandles: 300,
+    fvgCandles: 200,
+    orderBlockCandles: 300,
+    supplyDemandCandles: 300,
   },
 };
 
@@ -195,7 +215,21 @@ export function validateSmcParams(p: SmcParams): void {
   count('displacement.legMaxCandles', d.legMaxCandles, d.legMinCandles);
   positive('displacement.legBodyAtr', d.legBodyAtr);
   ratio('displacement.legCandleBodyRatio', d.legCandleBodyRatio);
+  const ob = p.orderBlocks;
+  count('orderBlocks.lookback', ob.lookback);
+  count('orderBlocks.maxClusterCandles', ob.maxClusterCandles);
+  count('orderBlocks.breakWithinBars', ob.breakWithinBars);
+  if (ob.zoneMode !== 'wick' && ob.zoneMode !== 'body')
+    throw new RangeError('orderBlocks.zoneMode must be "wick" or "body"');
+  if (ob.lookback + ob.maxClusterCandles + ob.breakWithinBars > ZONE_HORIZON)
+    throw new RangeError(`orderBlocks windows must add up to at most ${ZONE_HORIZON} candles`);
   nonNegative('fvg.minSizeAtr', p.fvg.minSizeAtr);
+  const sd = p.supplyDemand;
+  count('supplyDemand.baseMaxCandles', sd.baseMaxCandles);
+  positive('supplyDemand.baseBodyAtr', sd.baseBodyAtr);
+  positive('supplyDemand.departureAtr', sd.departureAtr);
+  if (sd.baseMaxCandles + 1 + d.legMaxCandles > ZONE_HORIZON)
+    throw new RangeError(`supplyDemand windows must add up to at most ${ZONE_HORIZON} candles`);
   const r = p.ranges;
   count('ranges.lookback', r.lookback, 3);
   positive('ranges.maxHeightAtr', r.maxHeightAtr);
@@ -239,6 +273,13 @@ export function validateSmcParams(p: SmcParams): void {
  * swing windows, displacement legs). Older candles are needed by no Phase 4 rule.
  */
 export const MAX_LOOKBACK = 512;
+
+/**
+ * How far back (in candles of its timeframe) a zone can start from the candle that creates it:
+ * order-block searches and supply/demand bases stay within it. An ended zone's key is kept this
+ * long, so the same zone is never created twice.
+ */
+export const ZONE_HORIZON = 64;
 
 /** The timeframes each rule group runs on, from the params. */
 export interface RuleTimeframes {

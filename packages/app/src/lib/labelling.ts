@@ -24,6 +24,11 @@ export const CONCEPTS = [
   'breakouts',
   'thin-book',
   'gold',
+  'order-blocks',
+  'fair-value-gaps',
+  'supply-demand',
+  'zone-fills',
+  'zone-location',
 ] as const;
 export const CLASSES = ['bullish', 'bearish', 'negative', 'closure', 'reopening', 'thin_book'] as const;
 
@@ -107,6 +112,22 @@ export function candidatesFrom(overlay: ChartOverlay, from: number, to: number):
         extremePrice: w.extremePrice,
       },
     });
+  const zoneName = { order_block: 'order block', fvg: 'FVG', supply: 'supply zone', demand: 'demand zone' };
+  for (const z of overlay.zones) {
+    const name = `${z.direction} ${zoneName[z.type]} ${z.bottom}–${z.top} (${z.tf})`;
+    add(z.id, z.knownAt, name, {
+      type: 'zone_created',
+      tf: z.tf,
+      data: { type: z.type, direction: z.direction, top: z.top, bottom: z.bottom },
+    });
+    // Its latest change: the overlay holds a zone's current state, not its history.
+    if (z.statusChangedAt !== null && z.status !== 'untouched')
+      add(`${z.id}:status`, z.statusChangedAt, `${name} ${z.status.replace('_', ' ')} (${z.fillPct} %)`, {
+        type: 'zone_status',
+        tf: z.tf,
+        data: { status: z.status, fillPct: z.fillPct },
+      });
+  }
   return out.sort((a, b) => a.at - b.at || a.summary.localeCompare(b.summary));
 }
 
@@ -141,6 +162,12 @@ export const MANUAL_KINDS = {
   'range detected': { type: 'range_detected', data: {} },
   'sweep of buy-side liquidity': { type: 'sweep', data: { side: 'buy_side' } },
   'sweep of sell-side liquidity': { type: 'sweep', data: { side: 'sell_side' } },
+  'order block bullish': { type: 'zone_created', data: { type: 'order_block', direction: 'bullish' } },
+  'order block bearish': { type: 'zone_created', data: { type: 'order_block', direction: 'bearish' } },
+  'FVG bullish': { type: 'zone_created', data: { type: 'fvg', direction: 'bullish' } },
+  'FVG bearish': { type: 'zone_created', data: { type: 'fvg', direction: 'bearish' } },
+  'demand zone': { type: 'zone_created', data: { type: 'demand', direction: 'bullish' } },
+  'supply zone': { type: 'zone_created', data: { type: 'supply', direction: 'bearish' } },
 } as const satisfies Record<string, { type: string; data: Record<string, unknown>; onCandle?: boolean }>;
 export type ManualKind = keyof typeof MANUAL_KINDS;
 

@@ -682,6 +682,19 @@ CREATE TABLE ops.system_events (                        -- hypertable on ts
 > - **Profiles**: version 2 of `crypto-majors` and `gold` adds `params.smc` (rulebook §10), and every instrument moves to it.
 > - **Grants**: all three services may read the new tables; only svc_analyzer may INSERT and UPDATE them. Replays run in the analyzer (ADR 017), so svc_jobs does not write them.
 
+> **As implemented in Phase 5** (migration 0008):
+>
+> - **`analysis.poi_zones`** is as in §5.1, with these differences:
+>   - `fill_pct` is `numeric(5,2)`, exact to 0.01 % as the engine computes it (rulebook I16), not `real`.
+>   - `bottom` must be strictly below `top`.
+>   - `first_touch_at` and `status_changed_at` are decision times: the close of the deciding candle.
+>   - `origin_from` and `origin_to` are open times.
+>   - `linked_zone_id` is set both ways: the zone created later records the link, and the projection sets the earlier zone's link if it has none (rulebook I23).
+>   - A query index on `(run_id, known_at)`.
+> - **Event log**: `detection_events.type` adds `zone_created` and `zone_status`. A status event carries the zone's whole state (status, fill, first touch, last status change), so a projection update takes the last one.
+> - **Profiles**: version 3 of `crypto-majors` (`…0205`) and `gold` (`…0206`) adds the zone settings of rulebook §10, and every instrument moves to it.
+> - **Grants**: as for the Phase 4 projections.
+
 ## 8. Hypertables, columnstore and retention
 
 | Table | Chunk interval | Columnstore after | Retention | Estimated rows/day (9 pairs) |

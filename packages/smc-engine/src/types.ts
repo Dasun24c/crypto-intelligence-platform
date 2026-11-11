@@ -163,6 +163,49 @@ export interface SweepData {
   levelStatus: LevelStatus;
 }
 
+export type ZoneType = 'order_block' | 'fvg' | 'supply' | 'demand';
+export type ZoneStatus = 'untouched' | 'partially_filled' | 'filled' | 'invalidated' | 'expired';
+
+/**
+ * A point of interest (rulebook §4). Bullish zones (demand, bullish order blocks and FVGs) sit
+ * below price: their proximal edge is the top, their distal edge the bottom. Bearish zones mirror
+ * this.
+ */
+export interface ZoneData {
+  type: ZoneType;
+  direction: Direction;
+  top: string;
+  bottom: string;
+  /** Open times of the first and last candle forming the zone. */
+  originFrom: number;
+  originTo: number;
+  knownAt: number;
+  /** Order blocks on 1h, 4h and 1d (§4.1). */
+  htf: boolean;
+  location: Location;
+  /** Order blocks: key of the structure break whose leg they start. */
+  structureEvent: string | null;
+  /** An order block, or supply/demand zone, of the other kind that it overlaps by more than half (§4.3). */
+  linkedZone: string | null;
+  /** Order blocks: liquidity on the other side was swept just before the leg (§4.1). */
+  sweptLiquidityAtOrigin: boolean;
+  status: ZoneStatus;
+  fillPct: number;
+  flags: EngineFlag[];
+}
+
+export interface ZoneStatusData {
+  status: ZoneStatus;
+  /** The deepest penetration from the proximal edge so far, in % of the zone's height (§4.4). */
+  fillPct: number;
+  /** Close of the first candle that traded into it; null until touched. */
+  firstTouchAt: number | null;
+  /** When the status last changed. */
+  statusChangedAt: number | null;
+  /** What happened: the first touch, a deeper fill, a close beyond the distal edge, or its lifetime ended. */
+  reason: 'touch' | 'fill' | 'invalidated' | 'expired';
+}
+
 export interface GapMarkerData {
   /** Open time of the first missing (or partial) candle. */
   from: number;
@@ -193,6 +236,8 @@ export type SmcEvent =
   | EventOf<'level_created', LevelData>
   | EventOf<'level_status', LevelStatusData>
   | EventOf<'sweep', SweepData>
+  | EventOf<'zone_created', ZoneData>
+  | EventOf<'zone_status', ZoneStatusData>
   | EventOf<'gap_marker', GapMarkerData>;
 
 export type SmcEventType = SmcEvent['type'];

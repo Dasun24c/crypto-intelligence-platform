@@ -489,6 +489,27 @@ function LabelChart({
               className="fill-info/10 stroke-info/50"
             />
           ))}
+          {overlay?.zones.map((z) => {
+            // From its first candle to where it ended (invalidated or expired), else the window's end.
+            const ended = z.status === 'invalidated' || z.status === 'expired';
+            const until =
+              ended && z.statusChangedAt !== null ? z.statusChangedAt : candles.at(-1)!.t + TF_MS[tf];
+            return (
+              <rect
+                key={z.id}
+                x={x(z.originFrom)}
+                y={y(Number(z.top))}
+                width={Math.max(slot, x(until) - x(z.originFrom))}
+                height={Math.max(1, y(Number(z.bottom)) - y(Number(z.top)))}
+                className={
+                  z.direction === 'bullish' ? 'fill-ok/10 stroke-ok/40' : 'fill-crit/10 stroke-crit/40'
+                }
+                strokeDasharray={z.type === 'fvg' ? '2 2' : undefined}
+              >
+                <title>{`${z.type.replace('_', ' ')} ${z.direction} ${z.bottom}–${z.top}: ${z.status.replace('_', ' ')}, ${z.fillPct} % filled`}</title>
+              </rect>
+            );
+          })}
           {overlay?.levels.map((l) => (
             <line
               key={l.id}
@@ -571,7 +592,8 @@ function LabelChart({
         </svg>
         <p className="mt-2 text-xs text-fg-muted">
           Shaded: warm-up candles before the window. ▲▼ swings, BOS/CHOCH/MSS breaks, dashed levels, boxed
-          ranges, circled sweep extremes. Click a candle to add a detection at it.
+          ranges, circled sweep extremes; green and red boxes are bullish and bearish zones (dotted: FVGs),
+          drawn until they end. Click a candle to add a detection at it.
         </p>
       </CardContent>
     </Card>
