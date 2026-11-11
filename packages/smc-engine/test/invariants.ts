@@ -12,7 +12,12 @@ import type { SmcEvent } from '../src/types.js';
  * - a level never changes after it was swept, broken or expired, and is never swept then;
  * - a zone (§4) has its top above its bottom; it changes only while live (not invalidated or
  *   expired), its status never moves back (untouched → partially_filled → filled), and its fill
- *   never shrinks and reaches 100 exactly when it is filled.
+ *   never shrinks and reaches 100 exactly when it is filled;
+ * - a setup (§6) starts `forming`, moves only along the state machine, never leaves `resolved`,
+ *   records evidence with every transition (criterion 6.2),
+ *   and when it confirms has passed every mandatory item with its levels in order (bearish:
+ *   T1 < entry < invalidation) and no data gap; its score is Σ weight × credit, and only a setup
+ *   that confirmed carries an outcome.
  */
 export function invariantViolations(events: readonly SmcEvent[], tick: string): string[] {
   const out: string[] = [];
@@ -21,7 +26,15 @@ export function invariantViolations(events: readonly SmcEvent[], tick: string): 
   const levels = new Map<string, string>();
   const ranges = new Set<string>();
   const zones = new Map<string, { status: string; fill: number }>();
+  const setups = new Map<string, { state: string; confirmed: boolean }>();
   const ORDER = ['untouched', 'partially_filled', 'filled'];
+  const NEXT: Record<string, string[]> = {
+    forming: ['triggered', 'resolved'],
+    triggered: ['triggered', 'confirmed', 'resolved'],
+    confirmed: ['entry_active', 'resolved'],
+    entry_active: ['resolved'],
+    resolved: [],
+  };
   let seq = 0;
   const onTick = (e: SmcEvent, price: string | null) => {
     if (price !== null && toUnits(price) % tickUnits !== 0) out.push(`${e.key}: ${price} is off the tick`);
@@ -135,6 +148,56 @@ export function invariantViolations(events: readonly SmcEvent[], tick: string): 
         known(e, e.data.firstTouchAt, 'first touch');
         known(e, e.data.statusChangedAt, 'status change');
         zones.set(e.key, { status: e.data.status, fill: e.data.fillPct });
+        break;
+      }
+      case 'setup_transition': {
+        const d = e.data;
+        const was = setups.get(e.key);
+        if (!was) {
+          if (d.from !== null || d.to !== 'forming') out.push(`${e.key}: starts ${d.from} → ${d.to}`);
+          createOnce(e);
+        } else if (d.from !== was.state || !NEXT[was.state]!.includes(d.to))
+          out.push(`${e.key}: ${d.from} → ${d.to} after ${was.state}`);
+        if (d.from === 'triggered' && d.to === 'triggered' && d.reason !== 'not_confirmed')
+          out.push(`${e.key}: stays triggered for ${d.reason}`);
+        if (!d.reason || Object.keys(d.evidence).length === 0)
+          out.push(`${e.key}: ${d.from} → ${d.to} (${d.reason}) without evidence`);
+        if (e.tf !== d.setupTf) out.push(`${e.key}: decided on ${e.tf}, set up on ${d.setupTf}`);
+        known(e, d.createdAt, 'creation');
+        for (const p of [d.levels.entry, d.levels.invalidation, d.levels.target1, d.levels.target2])
+          onTick(e, p);
+        if ((d.to === 'resolved') !== (d.resolution !== null))
+          out.push(`${e.key}: ${d.to} with resolution ${d.resolution}`);
+        const score = d.checklist.reduce((s, c) => s + c.weight * c.credit, 0);
+        if (score !== d.score) out.push(`${e.key}: score ${d.score} where the items give ${score}`);
+        if (d.checklist.some((c) => ![0, 0.5, 1].includes(c.credit)))
+          out.push(`${e.key}: credit off 0/0.5/1`);
+        if (d.mandatoryPassed !== d.checklist.every((c) => !c.mandatory || c.credit === 1))
+          out.push(`${e.key}: mandatoryPassed disagrees with the items`);
+        for (const k of d.refs.sweeps)
+          if (!created.has(k)) out.push(`${e.key}: refers to unknown sweep ${k}`);
+        if (d.entryZone !== null && !zones.has(d.entryZone))
+          out.push(`${e.key}: entry zone ${d.entryZone} is unknown`);
+        if (d.refs.mss) {
+          if (!created.has(d.refs.mss.anchor))
+            out.push(`${e.key}: MSS anchor ${d.refs.mss.anchor} is unknown`);
+          closed(e, d.refs.mss.breakCandleTime, 'MSS break candle');
+        }
+        const confirmed = (was?.confirmed ?? false) || d.to === 'confirmed';
+        if (d.to === 'confirmed') {
+          if (!d.mandatoryPassed) out.push(`${e.key}: confirmed with a mandatory item failing`);
+          if (d.qualityFlags.includes('data_gap')) out.push(`${e.key}: confirmed over a data gap`);
+          const [t1, entry, inv] = [d.levels.target1, d.levels.entry, d.levels.invalidation].map((x) =>
+            x === null ? NaN : toUnits(x),
+          ) as [number, number, number];
+          const inOrder = d.direction === 'bearish' ? t1 < entry && entry < inv : t1 > entry && entry > inv;
+          if (!inOrder) out.push(`${e.key}: confirmed with levels out of order`);
+        }
+        if (d.outcome !== null && !(confirmed && d.to === 'resolved'))
+          out.push(`${e.key}: an outcome before resolution or without confirmation`);
+        if (d.to === 'resolved' && confirmed && d.outcome === null)
+          out.push(`${e.key}: resolved without its outcome`);
+        setups.set(e.key, { state: d.to, confirmed });
         break;
       }
       case 'gap_marker':

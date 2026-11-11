@@ -10,7 +10,27 @@ const count = (min: number) => z.number().int().min(min).max(100_000);
 const positive = z.number().positive();
 const atLeastZero = z.number().nonnegative();
 const ratio = z.number().positive().max(1);
+const fraction = z.number().min(0).max(1);
 const hour = z.string().regex(/^\d\d:00$/, 'a whole UTC hour, "HH:00"');
+
+/** Rulebook §6 patterns and §7 checklist items (the same lists as packages/smc-engine's). */
+export const PATTERN_NAMES = [
+  'double_liquidity_trap',
+  'eq_near_poi',
+  'htf_order_block',
+  'sweep_outside_fill_inside',
+] as const;
+export const CHECKLIST_ITEM_NAMES = [
+  'htf_bias',
+  'liquidity_marked',
+  'poi_present',
+  'sweep',
+  'mss',
+  'levels_defined',
+  'risk_reward',
+  'news_clear',
+] as const;
+const PatternSchema = () => z.enum(PATTERN_NAMES);
 
 export const SmcParamsSchema = z.strictObject({
   atrPeriod: count(2),
@@ -65,6 +85,48 @@ export const SmcParamsSchema = z.strictObject({
     fvgCandles: count(1),
     orderBlockCandles: count(1),
     supplyDemandCandles: count(1),
+  }),
+  setups: z.strictObject({
+    patterns: z.array(PatternSchema()),
+    mss: z.strictObject({ maxBars: count(1), maxDistanceAtr: positive, requireDisplacement: z.boolean() }),
+    levels: z.strictObject({
+      slBufferAtr: atLeastZero,
+      targetMinDistanceAtr: atLeastZero,
+      entryRef: z.literal('proximal'),
+    }),
+    timing: z.strictObject({ entryExpiryBars: count(1), maxHoldBars: count(1) }),
+    pattern1: z.strictObject({
+      minBarsBetweenSweeps: count(1),
+      maxBarsBetweenSweeps: count(1),
+      rangeEdgeTolAtr: atLeastZero,
+    }),
+    pattern2: z.strictObject({ proximityAtr: positive, maxPoiFill: fraction }),
+    pattern3: z.strictObject({
+      approachAtr: positive,
+      liqProximityAtr: atLeastZero,
+      sweepWindowBars: count(0),
+      maxObFill: fraction,
+    }),
+    pattern4: z.strictObject({ maxTargetFvgFill: fraction }),
+    checklist: z.strictObject({
+      minRR: positive,
+      newsBlackoutMin: z.strictObject({ before: count(0), after: count(0) }),
+      newsCurrencies: z.array(z.string().regex(/^[A-Z]{3}$/)),
+      weights: z.strictObject(
+        Object.fromEntries(CHECKLIST_ITEM_NAMES.map((k) => [k, count(0)])) as Record<
+          (typeof CHECKLIST_ITEM_NAMES)[number],
+          ReturnType<typeof count>
+        >,
+      ),
+      mandatory: z.array(z.enum(CHECKLIST_ITEM_NAMES)),
+    }),
+    quality: z.strictObject({
+      lowLiqVolumeRatio: positive,
+      maxSpreadBps: positive,
+      lateThresholdSec: count(1),
+      blockConfirmWhenUnderlyingClosed: z.boolean(),
+      blockConfirmOnLowLiquidity: z.boolean(),
+    }),
   }),
 });
 export type SmcParamsDto = z.infer<typeof SmcParamsSchema>;

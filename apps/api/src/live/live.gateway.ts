@@ -10,6 +10,7 @@ import {
   CONFIG_CHANNELS,
   type Envelope,
   isDurableChannel,
+  type SetupTransitionMessage,
   type SmcEventMessage,
   type SubscribeAck,
   SubscribeRequestSchema,
@@ -20,6 +21,7 @@ import {
 } from '@cip/contracts';
 import type { Logger } from '@cip/observability';
 import { AnalysisRepository } from '../analysis/analysis.repository.js';
+import { SetupsRepository } from '../analysis/setups.repository.js';
 import { SmcRepository } from '../analysis/smc.repository.js';
 import { TokenService } from '../auth/token.service.js';
 import type { AuthenticatedUser } from '../common/access.js';
@@ -38,7 +40,11 @@ const STREAMS = [MARKET_EVENTS, ANALYSIS_EVENTS_STREAM] as const;
 type DurableStream = (typeof STREAMS)[number];
 /** The stream a durable channel's messages come from. */
 export const streamOf = (ch: string): DurableStream =>
-  ch.startsWith('indicators:') || ch.startsWith('smc:') ? ANALYSIS_EVENTS_STREAM : MARKET_EVENTS;
+  ch.startsWith('indicators:') || ch.startsWith('smc:') || ch === 'setups' || ch.startsWith('setups:')
+    ? ANALYSIS_EVENTS_STREAM
+    : MARKET_EVENTS;
+/** Channels that carry every instrument: no instrument id to check. */
+const GLOBAL_CHANNELS = new Set(['system:health', 'setups']);
 const MARKET_TYPES = new Set(['gap.opened', 'gap.closed', 'feed.status', 'wall.appeared', 'wall.ended']);
 const MAX_CHANNELS = 200;
 const MAX_REPLAY = 10_000;
@@ -98,6 +104,7 @@ export class LiveGateway implements OnApplicationBootstrap, OnApplicationShutdow
     private readonly health: HealthService,
     private readonly analysis: AnalysisRepository,
     private readonly smc: SmcRepository,
+    private readonly setups: SetupsRepository,
   ) {}
 
   onApplicationBootstrap(): void {
@@ -216,7 +223,7 @@ export class LiveGateway implements OnApplicationBootstrap, OnApplicationShutdow
     const results: SubscribeAck['results'] = {};
     for (const ch of parsed.data.channels) {
       const id = ch.split(':')[1];
-      if (!CHANNEL_PATTERN.test(ch) || (ch !== 'system:health' && (!id || !known.has(id)))) {
+      if (!CHANNEL_PATTERN.test(ch) || (!GLOBAL_CHANNELS.has(ch) && (!id || !known.has(id)))) {
         results[ch] = { mode: 'live', error: 'CHANNEL_UNKNOWN' };
         continue;
       }
@@ -257,10 +264,9 @@ export class LiveGateway implements OnApplicationBootstrap, OnApplicationShutdow
       ? await this.redis.xrange(stream, `(${since}`, latest, 'COUNT', MAX_REPLAY)
       : [];
     if (replayable && entries.length < MAX_REPLAY) {
-      for (const [seq, fields] of entries) {
-        const envelope = toEnvelope(seq, fields);
-        if (envelope?.ch === ch) socket.emit('message', envelope);
-      }
+      for (const [seq, fields] of entries)
+        for (const envelope of toEnvelopes(seq, fields))
+          if (envelope.ch === ch) socket.emit('message', envelope);
       return { mode: 'replayed', seq: latest };
     }
     return { mode: 'snapshot', seq: latest, snapshot: await this.durableSnapshot(ch) };
@@ -286,6 +292,9 @@ export class LiveGateway implements OnApplicationBootstrap, OnApplicationShutdow
       const run = await this.smc.run(id);
       return { run, ...(run ? await this.smc.active(run.id) : { levels: [], ranges: [], zones: [] }) };
     }
+    // Setups that are not resolved, and the latest 50 transitions (API contracts §5.4).
+    if (ch === 'setups') return this.setups.snapshot();
+    if (ch.startsWith('setups:')) return this.setups.snapshot(id);
     if (ch.startsWith('trades:'))
       return { largeTrades: (await this.market.largeTrades(id, { limit: 50 })).items };
     const now = this.clock();
@@ -326,11 +335,11 @@ export class LiveGateway implements OnApplicationBootstrap, OnApplicationShutdow
         for (const [stream, entries] of res ?? [])
           for (const [seq, fields] of entries) {
             this.lastSeq[stream as DurableStream] = seq;
-            const envelope = toEnvelope(seq, fields);
-            if (envelope && this.nsp?.adapter.rooms.has(envelope.ch)) {
-              this.delivered++;
-              this.nsp.to(envelope.ch).emit('message', envelope);
-            }
+            for (const envelope of toEnvelopes(seq, fields))
+              if (this.nsp?.adapter.rooms.has(envelope.ch)) {
+                this.delivered++;
+                this.nsp.to(envelope.ch).emit('message', envelope);
+              }
           }
       } catch (err) {
         if (!this.running) return;
@@ -387,8 +396,31 @@ function replier(ack: unknown): (response: unknown) => void {
 }
 
 /**
+ * An `md:events` or `an:events` entry as the envelopes of its durable channels (none for types no
+ * channel carries). A setup transition goes to its instrument's `setups:{id}` and to `setups`.
+ */
+export function toEnvelopes(seq: string, fields: string[]): Envelope[] {
+  const type = fields[1];
+  const raw = fields[3];
+  if (type === 'setup' && raw) {
+    const m = JSON.parse(raw) as Partial<SetupTransitionMessage>;
+    if (typeof m.instrumentId !== 'string') return [];
+    const ts = Number(seq.split('-')[0]);
+    return [`setups:${m.instrumentId}`, 'setups'].map((ch) => ({
+      ch,
+      seq,
+      ts,
+      type: 'setup.transition',
+      data: m,
+    }));
+  }
+  const envelope = toEnvelope(seq, fields);
+  return envelope ? [envelope] : [];
+}
+
+/**
  * An `md:events` or `an:events` entry as the envelope of its durable channel, or null for types
- * no channel carries.
+ * no channel carries (setup transitions: see toEnvelopes).
  */
 export function toEnvelope(seq: string, fields: string[]): Envelope | null {
   const type = fields[1];

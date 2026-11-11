@@ -2,7 +2,7 @@
 
 Real-time monitoring and analysis of crypto markets, and of gold through the PAXG token: market data from Binance and Coinbase, technical indicators, Smart Money Concepts detection, AI analysis with Grok, alerts, and a web and desktop app.
 
-**Status:** Phase 5 (SMC points of interest) is built and awaiting acceptance. The SMC engine now also finds order blocks, fair value gaps and supply and demand zones, and tracks each one's touches, fill, invalidation, expiry and location against the active range, live for every pair. The API serves them with the other SMC detections and on the live channel. Phases 1–4 (Foundations, Market data, Technical analysis, SMC structure and liquidity) are accepted. See the [Phase 5 acceptance report](docs/phase-5/acceptance-report.md), the [Phase 4 report](docs/phase-4/acceptance-report.md) and the [implementation plan](docs/phase-0/08-implementation-plan.md).
+**Status:** Phase 6 (Patterns, checklist and outcomes) is built and awaiting acceptance. The SMC engine now also finds the four setup patterns and follows each setup from "Watching" to its outcome: the sweep-anchored MSS, a hypothetical entry, invalidation and targets, the confluence checklist with its quality flags, and the result in R. Every transition is recorded with its candle and evidence. The API serves setups with their history and checklist, the live channels publish each transition, and `domain` has a position-size calculator. All of it is hypothetical analysis; nothing places an order. Phases 1–5 (Foundations, Market data, Technical analysis, SMC structure and liquidity, SMC points of interest) are accepted. See the [Phase 6 acceptance report](docs/phase-6/acceptance-report.md), the [Phase 5 report](docs/phase-5/acceptance-report.md) and the [implementation plan](docs/phase-0/08-implementation-plan.md).
 
 ## Quick start
 
@@ -98,6 +98,7 @@ Workspace packages are consumed from source through the `@cip/source` export con
 - [Phase 3 acceptance report](docs/phase-3/acceptance-report.md)
 - [Phase 4 acceptance report](docs/phase-4/acceptance-report.md)
 - [Phase 5 acceptance report](docs/phase-5/acceptance-report.md)
+- [Phase 6 acceptance report](docs/phase-6/acceptance-report.md)
 - [Desktop app](apps/desktop/README.md)
 
 The platform is for analysis and education. It holds no exchange API keys, implements no trading, and never presents analysis as a guaranteed prediction.

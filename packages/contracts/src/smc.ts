@@ -2,6 +2,7 @@ import { z } from 'zod';
 import { RunRefSchema } from './analysis.js';
 import { TsSchema, UuidSchema } from './common.js';
 import { DecimalSchema, TimeframeSchema } from './market.js';
+import { CHECKLIST_ITEM_NAMES, PATTERN_NAMES } from './smc-params.js';
 
 /**
  * SMC detections (API contracts §3 "Indicators and SMC", data model §5.1, rulebook §2–§3). Prices
@@ -181,6 +182,165 @@ export const ZoneStatusChangeSchema = z.object({
 export type ZoneStatusChange = z.infer<typeof ZoneStatusChangeSchema>;
 
 /** `GET /smc/{instrumentId}/overlay`: everything a chart needs in one call. */
+// ── Setups (rulebook §6–§8, data model §5.2) ──────────────────────────────────────────────────
+
+export const PatternSchema = z.enum(PATTERN_NAMES);
+export type Pattern = z.infer<typeof PatternSchema>;
+export const SETUP_STATES = ['forming', 'triggered', 'confirmed', 'entry_active', 'resolved'] as const;
+export const SetupStateSchema = z.enum(SETUP_STATES);
+export type SetupState = z.infer<typeof SetupStateSchema>;
+/** Rulebook §6.1's five, and `expired` for a setup that ended before it ever confirmed (§14). */
+export const SETUP_RESOLUTIONS = [
+  'target_reached',
+  'invalidated',
+  'expired_no_entry',
+  'expired_open',
+  'ambiguous',
+  'expired',
+] as const;
+export const SetupResolutionSchema = z.enum(SETUP_RESOLUTIONS);
+export type SetupResolution = z.infer<typeof SetupResolutionSchema>;
+export const ChecklistItemSchema = z.enum(CHECKLIST_ITEM_NAMES);
+export type ChecklistItem = z.infer<typeof ChecklistItemSchema>;
+/** REQUIREMENTS §3.7: shown wherever setup levels appear. */
+export const SETUP_DISCLAIMER = 'Educational analysis — not financial advice' as const;
+/** Rulebook §6.1 UI labels: forming and triggered setups are only being watched. */
+export const SETUP_LABELS = {
+  forming: 'Watching',
+  triggered: 'Watching',
+  confirmed: 'Confirmed',
+  entry_active: 'Entry reached',
+  resolved: 'Resolved',
+} as const satisfies Record<SetupState, string>;
+
+/** A setup as lists and the `setups` channels carry it (API contracts §4 SetupSummary). */
+export const SetupSummarySchema = z.object({
+  id: UuidSchema,
+  instrumentId: UuidSchema,
+  runId: UuidSchema,
+  pattern: PatternSchema,
+  /** Pattern 1: `A` (both sweeps on one side) or `B` (one on each); null otherwise. */
+  variant: z.enum(['A', 'B']).nullable(),
+  direction: Direction,
+  contextTf: TimeframeSchema,
+  setupTf: TimeframeSchema,
+  state: SetupStateSchema,
+  resolution: SetupResolutionSchema.nullable(),
+  displayLabel: z.enum(['Watching', 'Confirmed', 'Entry reached', 'Resolved']),
+  /** Hypothetical levels (§6.1): entry at the entry zone's proximal edge; R:R on T1. */
+  levels: z.object({
+    entry: DecimalSchema.nullable(),
+    invalidation: DecimalSchema.nullable(),
+    target1: DecimalSchema.nullable(),
+    target2: DecimalSchema.nullable(),
+    rr: z.number().nullable(),
+  }),
+  /** Σ weight × credit of the latest checklist evaluation, 0–100 (can end in .5). */
+  score: z.number(),
+  mandatoryPassed: z.boolean(),
+  /** Rulebook §7 quality flags (`underlying_closed`, `liquidity_unverified`, `low_liquidity`, `data_gap`). */
+  qualityFlags: z.array(z.string()),
+  /** The run's flags on its latest transition: `warmup`, `late_detection`. */
+  flags: FlagsSchema,
+  /** Decision times: when it started forming, its latest transition, its resolution. */
+  createdAt: TsSchema,
+  updatedAt: TsSchema,
+  resolvedAt: TsSchema.nullable(),
+  disclaimer: z.literal(SETUP_DISCLAIMER),
+});
+export type SetupSummary = z.infer<typeof SetupSummarySchema>;
+
+export const ChecklistResultSchema = z.object({
+  item: ChecklistItemSchema,
+  credit: z.union([z.literal(0), z.literal(0.5), z.literal(1)]),
+  weight: z.number().int(),
+  mandatory: z.boolean(),
+  evidence: z.record(z.string(), z.unknown()),
+});
+export type ChecklistResult = z.infer<typeof ChecklistResultSchema>;
+
+export const SetupTransitionSchema = z.object({
+  from: SetupStateSchema.nullable(),
+  to: SetupStateSchema,
+  reason: z.string(),
+  /** The deciding candle's open time, and its close (when the transition was decided). */
+  candleTime: TsSchema,
+  decidedAt: TsSchema,
+  /** Wall clock when the analyzer stored it; `late` when that was more than 120 s after decidedAt. */
+  processedAt: TsSchema,
+  late: z.boolean(),
+  evidence: z.record(z.string(), z.unknown()),
+});
+export type SetupTransition = z.infer<typeof SetupTransitionSchema>;
+
+export const SetupOutcomeSchema = z.object({
+  result: SetupResolutionSchema,
+  entryTouchedAt: TsSchema.nullable(),
+  resolvedAt: TsSchema,
+  mfeR: z.number().nullable(),
+  maeR: z.number().nullable(),
+  barsHeld: z.number().int().nullable(),
+  /** `1m` when 1m candles decided the order of events inside one setup candle. */
+  resolvedWithTf: z.literal('1m').nullable(),
+});
+export type SetupOutcome = z.infer<typeof SetupOutcomeSchema>;
+
+const TargetRefSchema = z.object({ kind: z.enum(['level', 'zone']), id: UuidSchema, price: DecimalSchema });
+
+/** `GET /setups/{id}`: the summary with its history, checklist, outcome and what it refers to. */
+export const SetupDetailSchema = SetupSummarySchema.extend({
+  transitions: z.array(SetupTransitionSchema),
+  /** The checklist as evaluated at the latest state, and at each state the setup reached. */
+  checklist: z.array(ChecklistResultSchema),
+  checklistByState: z.partialRecord(SetupStateSchema, z.array(ChecklistResultSchema)),
+  outcome: SetupOutcomeSchema.nullable(),
+  targets: z.object({ target1: TargetRefSchema.nullable(), target2: TargetRefSchema.nullable() }),
+  refs: z.object({
+    sweeps: z.array(SweepSchema),
+    /** The sweep-anchored MSS (§6.1), and the engine's structure event at its break if there is one. */
+    mss: z
+      .object({
+        anchorId: UuidSchema,
+        anchorPrice: DecimalSchema,
+        breakCandleTime: TsSchema,
+        displacement: z.object({ from: TsSchema, to: TsSchema, bodyAtr: z.number() }).nullable(),
+        structureEvent: StructureEventSchema.nullable(),
+      })
+      .nullable(),
+    entryZone: PoiZoneSchema.nullable(),
+    levels: z.array(LiquidityLevelSchema),
+    range: TradingRangeSchema.nullable(),
+    poi: PoiZoneSchema.nullable(),
+  }),
+});
+export type SetupDetail = z.infer<typeof SetupDetailSchema>;
+
+const ms = z.coerce.number().int().nonnegative();
+const list = <T extends z.ZodType>(item: T) =>
+  z.preprocess((v) => (typeof v === 'string' ? v.split(',').filter(Boolean) : v), z.array(item).min(1));
+
+/**
+ * `GET /setups`: newest change first. Without `runId`, each instrument's live run (else its
+ * latest); `from`/`to` bound the latest transition's decision time.
+ */
+export const SetupsQuerySchema = z.strictObject({
+  instrumentId: UuidSchema.optional(),
+  pattern: list(PatternSchema).optional(),
+  direction: Direction.optional(),
+  state: list(SetupStateSchema).optional(),
+  minScore: z.coerce.number().min(0).max(100).optional(),
+  from: ms.optional(),
+  to: ms.optional(),
+  runId: UuidSchema.optional(),
+  cursor: z.string().min(1).optional(),
+  limit: z.coerce.number().int().min(1).max(1000).default(100),
+});
+export type SetupsQuery = z.infer<typeof SetupsQuerySchema>;
+
+/** `setup.transition` on `setups` and `setups:{instrumentId}`: the setup after it, and the transition. */
+export const SetupTransitionMessageSchema = SetupSummarySchema.extend({ transition: SetupTransitionSchema });
+export type SetupTransitionMessage = z.infer<typeof SetupTransitionMessageSchema>;
+
 export const ChartOverlaySchema = z.object({
   instrumentId: UuidSchema,
   tf: TimeframeSchema,
@@ -192,14 +352,13 @@ export const ChartOverlaySchema = z.object({
   levels: z.array(LiquidityLevelSchema),
   sweeps: z.array(SweepSchema),
   zones: z.array(PoiZoneSchema),
-  /** Setups arrive in Phase 6: empty until then. */
-  setups: z.array(z.unknown()),
+  /** The run's setups on this setup timeframe that were alive in the window (Phase 6). */
+  setups: z.array(SetupSummarySchema),
   /** Gold-market closures in the window (gold instruments only). */
   closures: z.array(z.object({ from: TsSchema, to: TsSchema, reason: z.string() })),
 });
 export type ChartOverlay = z.infer<typeof ChartOverlaySchema>;
 
-const ms = z.coerce.number().int().nonnegative();
 /** `?tf&from&to&runId&limit` for the SMC list endpoints; by default the latest `limit`. */
 export const SmcQuerySchema = z.strictObject({
   tf: TimeframeSchema,
@@ -212,10 +371,6 @@ export type SmcQuery = z.infer<typeof SmcQuerySchema>;
 
 export const SwingsQuerySchema = SmcQuerySchema.extend({ level: Level.optional() });
 export type SwingsQuery = z.infer<typeof SwingsQuerySchema>;
-
-/** A comma-separated query value as a list. */
-const list = <T extends z.ZodType>(item: T) =>
-  z.preprocess((v) => (typeof v === 'string' ? v.split(',').filter(Boolean) : v), z.array(item).min(1));
 
 /**
  * `GET /smc/{instrumentId}/levels?tf&status&types&runId`: levels a `tf` chart can show (origin

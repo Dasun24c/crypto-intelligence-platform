@@ -4,9 +4,12 @@
  * the labelling page) live in the same folders and are never touched.
  */
 import { existsSync, mkdirSync, readdirSync, readFileSync, unlinkSync, writeFileSync } from 'node:fs';
+import { checklistCases } from './cases-checklist.ts';
 import { goldCases } from './cases-gold.ts';
 import { levelCases } from './cases-levels.ts';
+import { patternCases } from './cases-patterns.ts';
 import { rangeCases } from './cases-ranges.ts';
+import { setupCases } from './cases-setups.ts';
 import { structureCases } from './cases-structure.ts';
 import { sweepCases } from './cases-sweeps.ts';
 import { zoneCases } from './cases-zones.ts';
@@ -22,6 +25,9 @@ const cases: Case[] = [
   ...sweepCases,
   ...goldCases,
   ...zoneCases,
+  ...patternCases,
+  ...setupCases,
+  ...checklistCases,
 ];
 
 function toJson(c: Case): unknown {
@@ -86,7 +92,10 @@ function toJson(c: Case): unknown {
         to: new Date(x.to).toISOString(),
         reason: x.reason,
       })),
-      economicEvents: [],
+      economicEvents:
+        c.economicEvents === null
+          ? null
+          : (c.economicEvents ?? []).map((e) => ({ ...e, at: new Date(e.at).toISOString() })),
     },
     expected: c.expected.map((e) => exp(e, true)),
     notExpected: (c.notExpected ?? []).map((e) => exp(e, false)),

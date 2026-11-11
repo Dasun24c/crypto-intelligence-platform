@@ -26,6 +26,7 @@ import {
 } from './params.js';
 import { fromUnits, midpoint, toUnits, unitsToNumber } from './price.js';
 import { Ring, type RingState } from './ring.js';
+import { type BreakRef, type EngineView, type Setup, SetupBook, type SweepRec } from './setups.js';
 import { contiguous, restoreSlots, type Slot, type SlotTuple, snapshotSlots } from './slot.js';
 import {
   applyBreak,
@@ -78,6 +79,8 @@ interface Pending {
   index: number;
   t: number;
   extreme: number;
+  /** Slot index of the latest candle at the extreme (the start of a reversal leg, §6.1). */
+  extremeIndex: number;
   /** Base volume traded beyond the level so far (rulebook §3.5). */
   volume: number;
   unverified: boolean;
@@ -120,6 +123,10 @@ interface TfState {
   pending: Pending[];
   /** Breach candles of recent sweeps on this timeframe, for `sweptLiquidityAtOrigin` (§4.1). */
   recentSweeps: { side: Side; index: number }[];
+  /** Sweeps confirmed in the last ZONE_HORIZON candles, for the patterns (§6). */
+  sweepLog: SweepRec[];
+  /** Setup timeframes: each candle's quote volume, 30 days of them, for `low_liquidity` (§7). */
+  qv: Ring<number | null> | null;
   week: Acc | null;
   month: Acc | null;
   sessions: Partial<Record<SessionName, Acc>>;
@@ -135,14 +142,16 @@ interface Minute {
   gap: boolean;
 }
 
-interface TfSnapshot extends Omit<TfState, 'ring' | 'atr'> {
+interface TfSnapshot extends Omit<TfState, 'ring' | 'atr' | 'qv'> {
   ring: RingState<SlotTuple>;
   atr: AtrState;
+  qv: RingState<number | null> | null;
 }
 
 /** The engine's whole state as plain JSON (architecture §7 checkpoints). */
 export interface EngineSnapshot {
-  v: 2;
+  /** 4: Phase 6 adds the setups (3 was their first shape, without transition evidence state). */
+  v: 4;
   ruleset: string;
   /** The configuration it was built with; a restore must use the same. */
   config: string;
@@ -151,6 +160,7 @@ export interface EngineSnapshot {
   tfs: TfSnapshot[];
   levels: Level[];
   zones: Zone[];
+  setups: Setup[];
   minutes: { origin: number | null; ring: RingState<Minute> };
 }
 
@@ -176,6 +186,8 @@ interface Found {
 
 const NO_CONTEXT: StepContext = { closures: [] };
 const HOUR_MS = 3_600_000;
+/** §7 low_liquidity compares with 30 days of setup candles. */
+const QV_DAYS = 30;
 const short = (level: StructureLevel) => (level === 'internal' ? 'int' : 'ext');
 const sideCode = (side: Side) => (side === 'buy_side' ? 'b' : 's');
 const isTimeframe = (v: unknown): v is Timeframe =>
@@ -210,7 +222,7 @@ export function volumeBeyond(m: Pick<Minute, 'l' | 'h' | 'p'>, price: number, bu
  *
  * At each boundary the longest timeframe is evaluated first; within a timeframe the rules run in
  * the rulebook's order: swings, structure (with displacement), ranges, liquidity levels, sweeps,
- * points of interest.
+ * points of interest, and on setup timeframes the patterns, checklist and outcomes (`setups.ts`).
  */
 export class SmcEngine {
   readonly params: SmcParams;
@@ -226,12 +238,14 @@ export class SmcEngine {
   private levels = new Map<string, Level>();
   /** Live zones, and ended ones until their keys cannot recur (ZONE_HORIZON). */
   private zones = new Map<string, Zone>();
+  private readonly book: SetupBook;
   private minuteOrigin: number | null = null;
   private minutes: Ring<Minute>;
 
   private events: SmcEvent[] = [];
   private context: StepContext = NO_CONTEXT;
   private weekendCache: { from: StepContext; list: { start: number; end: number }[] } | null = null;
+  private readonly view: EngineView;
 
   constructor(config: EngineConfig) {
     validateSmcParams(config.params);
@@ -243,6 +257,36 @@ export class SmcEngine {
     this.sessionWindows = this.params.sessions.map((s) => ({ name: s.name, ...sessionHours(s) }));
     this.minuteSpan = Math.max(1, ...[...this.rules.sweeps].map((tf) => TF_MS[tf] / MINUTE_MS));
     this.minutes = new Ring<Minute>(this.minuteSpan);
+    this.book = new SetupBook(this.params);
+    // The setups read the engine's state through this view (rulebook order: they run last). The
+    // getters go through arrow functions, which keep `this`; `restore` replaces the level and zone
+    // maps, so they are read on every access.
+    const read = {
+      time: () => this.time!,
+      levels: () => this.levels,
+      zones: () => this.zones,
+      events: () => this.context.economicEvents ?? null,
+    };
+    this.view = {
+      params: this.params,
+      tick: this.tick,
+      get time() {
+        return read.time();
+      },
+      tf: (tf) => this.tfs.get(tf),
+      get levels() {
+        return read.levels();
+      },
+      get zones() {
+        return read.zones();
+      },
+      minute: (t) => this.minute(t),
+      get economicEvents() {
+        return read.events();
+      },
+      breakBuffer: (s) => this.breakBuffer(s),
+      emitSetup: (tf, key, data) => this.emit('setup_transition', tf, key, data),
+    };
   }
 
   /** The last boundary processed, or null before the first. */
@@ -263,6 +307,11 @@ export class SmcEngine {
   /** Live zones (not invalidated, not expired) in creation order (a copy), for inspection and tests. */
   liveZones(): Zone[] {
     return [...this.zones.values()].filter(isLive).map((z) => structuredClone(z));
+  }
+
+  /** Live setups (not resolved), for inspection and tests. */
+  liveSetups(): Setup[] {
+    return this.book.list();
   }
 
   /** The current trend on a timeframe, or null when structure does not run there. */
@@ -328,6 +377,10 @@ export class SmcEngine {
       range: null,
       pending: [],
       recentSweeps: [],
+      sweepLog: [],
+      qv: this.rules.ranges.has(tf)
+        ? new Ring<number | null>(Math.floor((QV_DAYS * DAY_MS) / TF_MS[tf]))
+        : null,
       week: null,
       month: null,
       sessions: {},
@@ -360,6 +413,8 @@ export class SmcEngine {
       slot = { t: openTime, o, h, l, c, atr, gap: candle.quality === 'partial', uc: candle.underlyingClosed };
     }
     const n = st.ring.push(slot);
+    // Quote volume (volume × close) of setup-timeframe candles, for §7 low_liquidity.
+    st.qv?.push(candle === null || slot.gap ? null : Number(candle.volume) * unitsToNumber(slot.c));
 
     if (slot.gap) {
       if (!st.inGap) this.gapMarker(st, slot);
@@ -370,7 +425,8 @@ export class SmcEngine {
 
     let found: Found[] = [];
     let breaks: DisplacedBreak[] = [];
-    if (!slot.gap && st.internal) ({ found, breaks } = this.structure(st, slot, n));
+    let all: BreakRef[] = [];
+    if (!slot.gap && st.internal) ({ found, breaks, all } = this.structure(st, slot, n));
     if (!slot.gap && this.rules.ranges.has(tf)) this.ranges(st, slot, n);
     if (found.length) this.levelsFromSwings(st, found);
     const hasData = candle !== null;
@@ -382,6 +438,8 @@ export class SmcEngine {
     if (!slot.gap && this.rules.sweeps.has(tf)) this.sweeps(st, slot, n);
     // Points of interest run on the structure timeframes; a missing or partial candle is not evaluated.
     if (!slot.gap && st.internal) this.pointsOfInterest(st, slot, n, breaks);
+    // §5–§8: patterns, checklist and outcomes on the setup timeframes, last.
+    if (!slot.gap && this.rules.ranges.has(tf)) this.book.run(this.view, st, slot, n, all);
   }
 
   private takeMinute(openTime: number, candle: EngineCandle | null): void {
@@ -418,6 +476,7 @@ export class SmcEngine {
   private gapMarker(st: TfState, slot: Slot): void {
     const dropped = st.pending.map((p) => p.level);
     st.pending = [];
+    this.book.gap(st.tf);
     this.emit('gap_marker', st.tf, `gm:${st.tf}:${slot.t}`, {
       from: slot.t,
       droppedBreaches: dropped,
@@ -469,8 +528,13 @@ export class SmcEngine {
     return s.atr === null ? null : Math.max(buffer * s.atr, this.tick);
   }
 
-  private structure(st: TfState, s: Slot, n: number): { found: Found[]; breaks: DisplacedBreak[] } {
+  private structure(
+    st: TfState,
+    s: Slot,
+    n: number,
+  ): { found: Found[]; breaks: DisplacedBreak[]; all: BreakRef[] } {
     const breaks: DisplacedBreak[] = [];
+    const all: BreakRef[] = [];
     const found = [
       ...this.swingsAt(st, n, this.params.swings.internalOrder, 'internal'),
       ...this.swingsAt(st, n, this.params.swings.externalOrder, 'external'),
@@ -506,6 +570,7 @@ export class SmcEngine {
       const type = b.type === 'choch' && d ? 'mss' : b.type;
       const key = `st:${st.tf}:${short(level)}:${type}:${s.t}`;
       if (d) breaks.push({ key, direction: b.direction, legStart: b.anchor.leg.index });
+      all.push({ key, direction: b.direction, level });
       this.emit('structure', st.tf, key, {
         level,
         type,
@@ -526,7 +591,7 @@ export class SmcEngine {
       });
       applyBreak(ss, b, s, n, eps);
     }
-    return { found, breaks };
+    return { found, breaks, all };
   }
 
   // ── §2.4 Trading ranges ─────────────────────────────────────────────────────────────────────
@@ -930,7 +995,11 @@ export class SmcEngine {
     for (const p of st.pending) {
       const lvl = this.levels.get(p.level);
       if (!lvl || lvl.status !== 'active') continue;
-      p.extreme = lvl.side === 'buy_side' ? Math.max(p.extreme, s.h) : Math.min(p.extreme, s.l);
+      // Ties go to the later candle: a reversal leg starts where price was last at its extreme.
+      if (lvl.side === 'buy_side' ? s.h >= p.extreme : s.l <= p.extreme) {
+        p.extreme = lvl.side === 'buy_side' ? s.h : s.l;
+        p.extremeIndex = n;
+      }
       this.addVolume(p, lvl, s, tf);
       resolved.add(lvl.key);
       if (closedBack(lvl)) confirmed.push({ p, lvl, kind: 'false_breakout' });
@@ -953,6 +1022,7 @@ export class SmcEngine {
         index: n,
         t: s.t,
         extreme: buy ? s.h : s.l,
+        extremeIndex: n,
         volume: 0,
         unverified: false,
       };
@@ -1004,6 +1074,23 @@ export class SmcEngine {
       }
       const key = `sp:${tf}:${lvl.key}:${p.t}`;
       g.sweeps.push(key);
+      st.sweepLog.push({
+        key,
+        level: lvl.key,
+        levelType: lvl.type,
+        levelTf: lvl.tf,
+        levelPrice: lvl.price,
+        touches: lvl.touches,
+        side: lvl.side,
+        extreme: p.extreme,
+        extremeIndex: p.extremeIndex,
+        breachIndex: p.index,
+        confirmIndex: st.ring.next - 1,
+        close: s.c,
+        atr,
+        flags: [...flags],
+        extremeLevel: levelKey(tf, 'sweep_extreme', lvl.side, time),
+      });
       this.emit('sweep', tf, key, {
         level: lvl.key,
         group: g.key,
@@ -1030,6 +1117,7 @@ export class SmcEngine {
     // Only sweeps that could precede a leg the next order block starts from are needed.
     const oldest = st.ring.next - 1 - ZONE_HORIZON;
     st.recentSweeps = st.recentSweeps.filter((x) => x.index >= oldest);
+    st.sweepLog = st.sweepLog.filter((x) => x.confirmIndex >= oldest);
   }
 
   // ── §4 Points of interest ───────────────────────────────────────────────────────────────────
@@ -1156,11 +1244,16 @@ export class SmcEngine {
   snapshot(): EngineSnapshot {
     const tfs: TfSnapshot[] = [];
     for (const st of this.tfs.values()) {
-      const { ring, atr, ...rest } = st;
-      tfs.push({ ...structuredClone(rest), ring: snapshotSlots(ring), atr: atr.snapshot() });
+      const { ring, atr, qv, ...rest } = st;
+      tfs.push({
+        ...structuredClone(rest),
+        ring: snapshotSlots(ring),
+        atr: atr.snapshot(),
+        qv: qv ? structuredClone(qv.snapshot()) : null,
+      });
     }
     return {
-      v: 2,
+      v: 4,
       ruleset: RULESET_VERSION,
       config: this.configJson,
       time: this.time,
@@ -1168,6 +1261,7 @@ export class SmcEngine {
       tfs,
       levels: [...this.levels.values()].map((l) => structuredClone(l)),
       zones: [...this.zones.values()].map((z) => structuredClone(z)),
+      setups: this.book.snapshot(),
       minutes: { origin: this.minuteOrigin, ring: structuredClone(this.minutes.snapshot()) },
     };
   }
@@ -1175,22 +1269,24 @@ export class SmcEngine {
   /** An engine that continues exactly where `snapshot` was taken. The configuration must match. */
   static restore(snapshot: EngineSnapshot, config: EngineConfig): SmcEngine {
     const engine = new SmcEngine(config);
-    if (snapshot.v !== 2) throw new RangeError(`unknown checkpoint format ${String(snapshot.v)}`);
+    if (snapshot.v !== 4) throw new RangeError(`unknown checkpoint format ${String(snapshot.v)}`);
     if (snapshot.ruleset !== RULESET_VERSION || snapshot.config !== engine.configJson)
       throw new RangeError('the checkpoint was taken with other rules, parameters or tick');
     engine.time = snapshot.time;
     engine.seq = snapshot.seq;
     for (const t of snapshot.tfs) {
-      const { ring, atr, ...rest } = structuredClone(t);
+      const { ring, atr, qv, ...rest } = structuredClone(t);
       const st: TfState = {
         ...rest,
         ring: restoreSlots(ring),
         atr: new Atr(engine.params.atrPeriod).restore(atr),
+        qv: qv ? Ring.restore(qv) : null,
       };
       engine.tfs.set(t.tf, st);
     }
     engine.levels = new Map(snapshot.levels.map((l) => [l.key, structuredClone(l)]));
     engine.zones = new Map(snapshot.zones.map((z) => [z.key, structuredClone(z)]));
+    engine.book.restore(snapshot.setups);
     engine.minuteOrigin = snapshot.minutes.origin;
     engine.minutes = Ring.restore(structuredClone(snapshot.minutes.ring));
     return engine;

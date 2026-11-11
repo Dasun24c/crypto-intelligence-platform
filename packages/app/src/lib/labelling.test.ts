@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import type { ChartOverlay, PoiZone } from '@cip/contracts';
+import type { ChartOverlay, PoiZone, SetupSummary } from '@cip/contracts';
 import { BTC_BINANCE, candle, PAXG_BINANCE, run } from '../test/fixtures.js';
 import {
   buildFixture,
@@ -177,6 +177,58 @@ describe('fixture labelling', () => {
       tf: '15m',
       at: new Date(T + M15).toISOString(),
       data: { type: 'fvg', direction: 'bullish' },
+    });
+  });
+
+  it('offers setups: when each started forming, and its latest state (Phase 6)', () => {
+    const setup: SetupSummary = {
+      id: id(30),
+      instrumentId: BTC_BINANCE.id,
+      runId: id(1),
+      pattern: 'double_liquidity_trap',
+      variant: 'A',
+      direction: 'bearish',
+      contextTf: '1h',
+      setupTf: '15m',
+      state: 'resolved',
+      resolution: 'target_reached',
+      displayLabel: 'Resolved',
+      levels: { entry: '98.2', invalidation: '102.48', target1: '96', target2: null, rr: 0.514 },
+      score: 62.5,
+      mandatoryPassed: true,
+      qualityFlags: [],
+      flags: [],
+      createdAt: T + M15,
+      updatedAt: T + 12 * M15,
+      resolvedAt: T + 12 * M15,
+      disclaimer: 'Educational analysis — not financial advice',
+    };
+    const only = {
+      ...overlay,
+      swings: [],
+      structure: [],
+      ranges: [],
+      levels: [],
+      sweeps: [],
+      zones: [],
+      setups: [setup],
+    };
+    const c = candidatesFrom(only, T, T + 20 * M15);
+    expect(c.map((x) => [x.expectation.type, x.summary])).toEqual([
+      ['setup_transition', 'Pattern 1 A bearish forming'],
+      ['setup_transition', 'Pattern 1 A bearish resolved (target reached)'],
+    ]);
+    expect(c[1]!.expectation).toEqual({
+      type: 'setup_transition',
+      tf: '15m',
+      at: new Date(T + 12 * M15).toISOString(),
+      data: { pattern: 'double_liquidity_trap', direction: 'bearish', to: 'resolved' },
+    });
+    expect(manualCandidate('Pattern 3 confirmed bullish', '5m', T, 4).expectation).toEqual({
+      type: 'setup_transition',
+      tf: '5m',
+      at: new Date(T + 300_000).toISOString(),
+      data: { pattern: 'htf_order_block', direction: 'bullish', to: 'confirmed' },
     });
   });
 
