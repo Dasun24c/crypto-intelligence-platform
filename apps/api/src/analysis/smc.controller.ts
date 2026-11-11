@@ -3,6 +3,7 @@ import { z } from 'zod';
 import {
   type ChartOverlay,
   type LevelsQuery,
+  type PoiZone,
   LevelsQuerySchema,
   type LiquidityLevel,
   type SmcQuery,
@@ -13,6 +14,8 @@ import {
   type SwingsQuery,
   SwingsQuerySchema,
   type TradingRange,
+  type ZonesQuery,
+  ZonesQuerySchema,
 } from '@cip/contracts';
 import { TF_MS } from '@cip/domain';
 import { Access } from '../common/access.js';
@@ -76,12 +79,13 @@ export class SmcController {
         setups: [],
         closures,
       };
-    const [swings, structure, ranges, levels, sweeps] = await Promise.all([
+    const [swings, structure, ranges, levels, sweeps, zones] = await Promise.all([
       this.smc.swings(run.id, q.tf, w),
       this.smc.structure(run.id, q.tf, w),
       this.smc.ranges(run.id, q.tf, w),
       this.smc.levels(run.id, q.tf, w),
       this.smc.sweeps(run.id, q.tf, w),
+      this.smc.zones(run.id, q.tf, w),
     ]);
     return {
       instrumentId: id,
@@ -92,7 +96,7 @@ export class SmcController {
       ranges,
       levels,
       sweeps,
-      zones: [],
+      zones,
       setups: [],
       closures,
     };
@@ -141,5 +145,14 @@ export class SmcController {
   ): Promise<Sweep[]> {
     const run = await this.runOf(id, q.runId);
     return run ? this.smc.sweeps(run.id, q.tf, SmcController.window(q)) : [];
+  }
+
+  @Get(':instrumentId/zones')
+  async zones(
+    @Param('instrumentId', IdPipe) id: string,
+    @Query(new ZodPipe(ZonesQuerySchema)) q: ZonesQuery,
+  ): Promise<PoiZone[]> {
+    const run = await this.runOf(id, q.runId);
+    return run ? this.smc.zones(run.id, q.tf, { limit: q.limit, status: q.status, types: q.types }) : [];
   }
 }

@@ -2,7 +2,7 @@ import { createHash } from 'node:crypto';
 import { type Kysely, sql, type Transaction } from 'kysely';
 import type { Database, NewIndicatorValue } from '@cip/db';
 import { digestLine, type SmcEvent } from '@cip/smc-engine';
-import { eventRow, type LevelChange, project, type RunInfo } from './smc-rows.js';
+import { eventRow, type LevelChange, project, type RunInfo, type ZoneChange } from './smc-rows.js';
 
 /** A former lease holder found a newer epoch on the run: it must stop writing (architecture §6). */
 export class LeaseLost extends Error {
@@ -119,6 +119,8 @@ export class SmcStore {
     await insert('analysis.trading_ranges', p.ranges);
     await insert('analysis.liquidity_levels', p.levels);
     await insert('analysis.sweeps', p.sweeps);
+    // After structure events (an order block refers to its break), in creation order (links point back).
+    await insert('analysis.poi_zones', p.zones);
     for (const [id, end] of p.rangeEnds)
       await tx
         .updateTable('analysis.trading_ranges')
@@ -126,6 +128,33 @@ export class SmcStore {
         .where('id', '=', id)
         .execute();
     await this.updateLevels(tx, p.levelChanges);
+    await this.updateZones(tx, p.zoneChanges);
+    for (const [id, linked] of p.zoneLinks)
+      await tx
+        .updateTable('analysis.poi_zones')
+        .set({ linked_zone_id: id })
+        .where('id', '=', linked)
+        .where('linked_zone_id', 'is', null)
+        .execute();
+  }
+
+  /** One statement for all of a batch's zone changes: each carries the zone's whole state. */
+  private async updateZones(tx: Transaction<Database>, changes: Map<string, ZoneChange>): Promise<void> {
+    const list = [...changes];
+    for (let i = 0; i < list.length; i += CHUNK) {
+      const rows = list
+        .slice(i, i + CHUNK)
+        .map(
+          ([id, c]) =>
+            sql`(${id}::uuid, ${c.status}::text, ${c.fill_pct}::numeric, ${c.first_touch_at}::timestamptz, ${c.status_changed_at}::timestamptz)`,
+        );
+      await sql`
+        UPDATE analysis.poi_zones AS z SET
+          status = v.status, fill_pct = v.fill_pct, first_touch_at = v.first_touch_at,
+          status_changed_at = v.status_changed_at
+        FROM (VALUES ${sql.join(rows)}) AS v (id, status, fill_pct, first_touch_at, status_changed_at)
+        WHERE z.id = v.id`.execute(tx);
+    }
   }
 
   /** One statement for all of a batch's level changes, each merged in event order. */

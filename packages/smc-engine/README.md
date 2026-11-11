@@ -1,6 +1,6 @@
 # @cip/smc-engine
 
-The SMC rulebook ([docs/phase-0/07-smc-rulebook.md](../../docs/phase-0/07-smc-rulebook.md), v0.1, `RULESET_VERSION` 0.1.0) as a deterministic, event-sourced reducer ([ADR 004](../../docs/adr/004-smc-engine-event-sourced-reducer.md), [ADR 017](../../docs/adr/017-smc-runtime-boundaries-ids-digests-replays.md)). Phase 4 implements §2 (swings, structure, displacement, ranges), §3 (liquidity levels, sweeps, false breakouts, breakouts, thin-book wicks, gold-market closures) and §9 (gap markers).
+The SMC rulebook ([docs/phase-0/07-smc-rulebook.md](../../docs/phase-0/07-smc-rulebook.md), v0.1, `RULESET_VERSION` 0.2.0) as a deterministic, event-sourced reducer ([ADR 004](../../docs/adr/004-smc-engine-event-sourced-reducer.md), [ADR 017](../../docs/adr/017-smc-runtime-boundaries-ids-digests-replays.md)). Phase 4 implemented §2 (swings, structure, displacement, ranges), §3 (liquidity levels, sweeps, false breakouts, breakouts, thin-book wicks, gold-market closures) and §9 (gap markers); Phase 5 adds §4 (order blocks, fair value gaps, supply and demand zones, their touches, fills, invalidation and location).
 
 The package is pure: no clock, no randomness, no I/O. It depends only on `@cip/domain` and `@cip/indicators` (for ATR); digests and gzip are left to the analyzer.
 
@@ -13,8 +13,8 @@ const state = engine.snapshot(); // plain JSON; SmcEngine.restore(state, config)
 ```
 
 - **One step per boundary**: `candles` are the closed candles of every timeframe closing at `time` (1m micro profiles included); `missing` names timeframes whose candle is missing for good. Every timeframe that has started must appear at each of its boundaries.
-- **Order**: the 1m profiles are taken in first, then each timeframe is evaluated from the longest down, each in the rulebook's rule order (swings, structure with displacement, ranges, levels, sweeps), then expiries.
-- **Events** (`SmcEvent`): `swing_confirmed`, `structure`, `range_detected`, `range_ended`, `level_created`, `level_status`, `sweep`, `gap_marker`. Each has a per-run `seq`, the deciding timeframe and close time, and a natural key the same in every run (`digestLine` makes the run digest from them).
+- **Order**: the 1m profiles are taken in first, then each timeframe is evaluated from the longest down, each in the rulebook's rule order (swings, structure with displacement, ranges, levels, sweeps, points of interest), then expiries.
+- **Events** (`SmcEvent`): `swing_confirmed`, `structure`, `range_detected`, `range_ended`, `level_created`, `level_status`, `sweep`, `zone_created`, `zone_status`, `gap_marker`. Each has a per-run `seq`, the deciding timeframe and close time, and a natural key the same in every run (`digestLine` makes the run digest from them).
 - **Prices** are decimal strings in and out; inside, whole numbers of 10⁻⁸, so "a tick beyond" is exact.
 
 ## Parameters
@@ -36,12 +36,18 @@ These are the engine's choices; the rulebook's [implementation notes](../../docs
 | Displacement | The strongest qualifying run in the breaking leg (largest body in ATR). `createdFvg` counts FVGs completed by the break candle. |
 | Equal highs/lows | A new swing joins the nearest active level in tolerance; otherwise it pairs with the most recent earlier swing that qualifies. |
 | Thin book | Volume beyond the level is summed per sweep-timeframe candle over its 1m profiles; a missing minute or profile makes it `liquidity_unverified`. |
+| Zones: where and when | On the structure timeframes, evaluated from the candle after the one that creates them; missing or partial candles are not evaluated. |
+| Zone edges and fills | Bullish zones are approached from above (top = proximal edge). A touch at the edge counts (0 %). The fill is the deepest penetration, floored to 0.01 % and exact; 100 only at the far edge. A filled zone is tracked until a close beyond its far edge invalidates it, or it expires. |
+| Order blocks | The leg-start candle and the 4 before it; a cluster of at most 3 same-colour candles; the break within 10 candles of the leg start; one zone per set of candles (the internal break when both break together). |
+| Supply and demand | The base ends right before the departure, or one candle earlier; at most its last 4 small candles; the departure is a displacement ending at the current candle that travels 2 ATR beyond the base. |
+| Linking | An order block and a supply/demand zone link when their overlap exceeds half of the smaller height. |
 
 ## Tests
 
-- `golden.test.ts`: the fixtures in `fixtures/<concept>/` (rulebook §12): labelled detections, §13 invariants, and prefix and checkpoint stability at every cut point (criteria 4.1, 4.2). `pnpm fixtures` regenerates the synthetic ones from `scripts/fixtures/` (hand-designed patterns whose answers are worked out from the rulebook; bearish twins are exact mirror images).
+- `golden.test.ts`: the 182 fixtures in `fixtures/<concept>/` (rulebook §12): labelled detections, §13 invariants, and prefix and checkpoint stability at every cut point (criteria 4.1, 4.2, 5.1–5.3). `pnpm fixtures` regenerates the synthetic ones from `scripts/fixtures/` (hand-designed patterns whose answers are worked out from the rulebook; bearish twins are exact mirror images).
 - `property.test.ts`: fast-check, 1,000 random markets with gaps and partial candles: no repainting, exact checkpoint continuation, invariants.
-- `realdata.test.ts`: 34 days of Binance BTCUSDT (Phase 3's reference data): every rule fires, invariants hold, step p95 well under 2 ms (criterion 4.6).
+- `realdata.test.ts`: 34 days of Binance BTCUSDT (Phase 3's reference data): every rule fires, every zone kind and status occurs, invariants hold, step p95 well under 2 ms (criterion 4.6).
+- `zones.test.ts`: the zone rules at their boundaries (minimum gap, search windows, base and departure, exact fills).
 - `units.test.ts`: prices, canonical JSON, parameters, inputs, the thin-book volume.
 
 The test files run one after another (`fileParallelism: false`): each is CPU-bound for 20–30 s, and run side by side they left other packages' Vitest workers no room to start within Vitest's fixed 60 s during `pnpm verify`.

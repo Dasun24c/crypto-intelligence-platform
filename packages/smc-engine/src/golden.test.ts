@@ -27,7 +27,11 @@ function cuts(n: number, seed: number): number[] {
   return out;
 }
 
-/** Rulebook §2–§3 concepts, each needing 3 bullish, 3 bearish and 3 negative fixtures (§12). */
+/**
+ * Rulebook §2–§4 concepts, each needing 3 bullish, 3 bearish and 3 negative fixtures (§12). For §4
+ * (criteria 5.1 and 5.2): order blocks, FVGs, supply/demand, and the zones' fills and statuses and
+ * their location.
+ */
 const CONCEPTS = [
   'swings',
   'structure-bos',
@@ -43,6 +47,11 @@ const CONCEPTS = [
   'false-breakouts',
   'breakouts',
   'thin-book',
+  'order-blocks',
+  'fair-value-gaps',
+  'supply-demand',
+  'zone-fills',
+  'zone-location',
 ];
 
 describe('golden fixtures', () => {

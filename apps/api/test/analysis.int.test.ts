@@ -120,7 +120,7 @@ describe('indicator endpoints', () => {
       id: RUN,
       status: 'running',
       from: FROM,
-      profile: { name: 'crypto-majors', version: 2 },
+      profile: { name: 'crypto-majors', version: 3 },
     });
     expect(body.params?.ema).toEqual({ fast: 20, mid: 50, slow: 200 });
     expect(body.points).toEqual([0, 1, 2, 3, 4].map(point));

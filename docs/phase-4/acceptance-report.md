@@ -2,7 +2,7 @@
 
 | | |
 |---|---|
-| Status | **Built; awaiting your acceptance.** All seven criteria are met; 4.1 with synthetic fixtures only, since recorded ones need a second person to review them. Not committed |
+| Status | **Accepted 2026-11-11** (you asked to start Phase 5), with these items carried forward: the review of rulebook §14 notes I1–I13; recorded fixtures reviewed by a second person (4.1 is met with synthetic fixtures only); a 7-day replay of purely live time; the first start's serial warm-up; and the Phase 3 and Phase 2 items. Committed as 91fee02 and pushed |
 | Date | 2026-11-11 |
 | Scope | [Implementation plan, Phase 4](../phase-0/08-implementation-plan.md#phase-4--smc-structure-and-liquidity) |
 | Evidence | This machine (Windows 11, Docker Desktop, Node.js 26.13.0); the local Compose stack streaming live public data from Binance and Coinbase, 2026-11-11 07:14–08:32 UTC; nine new live runs (ruleset `indicators-1+smc-0.1.0`) |

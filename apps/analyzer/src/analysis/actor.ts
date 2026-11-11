@@ -112,7 +112,7 @@ export function analysisParams(params: unknown): { indicators: IndicatorParams; 
   const parsed = ProfileParamsSchema.safeParse(params);
   if (!parsed.success)
     throw new Error(`invalid settings: ${parsed.error.issues.map((i) => i.message).join('; ')}`);
-  if (!parsed.data.smc) throw new Error('the profile has no SMC settings (version 2 or later is needed)');
+  if (!parsed.data.smc) throw new Error('the profile has no SMC settings (version 3 or later is needed)');
   const smc = parsed.data.smc;
   validateSmcParams(smc);
   return { indicators: parsed.data.indicators, smc };

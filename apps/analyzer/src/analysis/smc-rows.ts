@@ -49,6 +49,14 @@ export interface LevelChange {
   status_changed_at?: Date | null;
 }
 
+/** A zone's state after its latest change in a batch (each `zone_status` event carries all of it). */
+export interface ZoneChange {
+  status: string;
+  fill_pct: number;
+  first_touch_at: Date | null;
+  status_changed_at: Date | null;
+}
+
 /** The projection writes for a batch of new events, in an order that keeps foreign keys valid. */
 export interface Projection {
   swings: Record<string, unknown>[];
@@ -56,8 +64,12 @@ export interface Projection {
   ranges: Record<string, unknown>[];
   levels: Record<string, unknown>[];
   sweeps: Record<string, unknown>[];
+  zones: Record<string, unknown>[];
   rangeEnds: Map<string, { ended_at: Date; end_reason: string }>;
   levelChanges: Map<string, LevelChange>;
+  zoneChanges: Map<string, ZoneChange>;
+  /** [zone id, the zone it links to]: the linked zone links back unless it already links elsewhere. */
+  zoneLinks: [string, string][];
 }
 
 export function project(info: RunInfo, events: readonly SmcEvent[], now: number): Projection {
@@ -67,8 +79,11 @@ export function project(info: RunInfo, events: readonly SmcEvent[], now: number)
     ranges: [],
     levels: [],
     sweeps: [],
+    zones: [],
     rangeEnds: new Map(),
     levelChanges: new Map(),
+    zoneChanges: new Map(),
+    zoneLinks: [],
   };
   const id = (key: string) => entityId(info.runId, key);
   const base = (e: SmcEvent) => ({
@@ -166,6 +181,36 @@ export function project(info: RunInfo, events: readonly SmcEvent[], now: number)
           flags: flags(e.data.flags),
         });
         change(id(e.data.level), { sweep_count: e.data.levelSweepCount, status: e.data.levelStatus });
+        break;
+      case 'zone_created':
+        p.zones.push({
+          ...base(e),
+          timeframe: e.tf,
+          type: e.data.type,
+          direction: e.data.direction,
+          top: e.data.top,
+          bottom: e.data.bottom,
+          origin_from: new Date(e.data.originFrom),
+          origin_to: new Date(e.data.originTo),
+          known_at: new Date(e.data.knownAt),
+          htf: e.data.htf,
+          location: e.data.location,
+          structure_event_id: e.data.structureEvent === null ? null : id(e.data.structureEvent),
+          linked_zone_id: e.data.linkedZone === null ? null : id(e.data.linkedZone),
+          swept_liquidity_at_origin: e.data.sweptLiquidityAtOrigin,
+          status: e.data.status,
+          fill_pct: e.data.fillPct,
+          flags: flags(e.data.flags),
+        });
+        if (e.data.linkedZone !== null) p.zoneLinks.push([id(e.key), id(e.data.linkedZone)]);
+        break;
+      case 'zone_status':
+        p.zoneChanges.set(id(e.key), {
+          status: e.data.status,
+          fill_pct: e.data.fillPct,
+          first_touch_at: e.data.firstTouchAt === null ? null : new Date(e.data.firstTouchAt),
+          status_changed_at: e.data.statusChangedAt === null ? null : new Date(e.data.statusChangedAt),
+        });
         break;
       case 'gap_marker':
         break;
@@ -288,6 +333,44 @@ export function toMessage(info: RunInfo, e: SmcEvent, now: number): SmcEventMess
           confirmedAt: e.data.confirmedCandleTime + TF_MS[e.tf],
           notionalBeyondUsd: e.data.notionalBeyondUsd,
           flags: flags(e.data.flags),
+        },
+      };
+    case 'zone_created':
+      return {
+        ...head,
+        type: 'zone.created',
+        data: {
+          id: id(e.key),
+          tf: e.tf,
+          type: e.data.type,
+          direction: e.data.direction,
+          top: e.data.top,
+          bottom: e.data.bottom,
+          originFrom: e.data.originFrom,
+          originTo: e.data.originTo,
+          knownAt: e.data.knownAt,
+          htf: e.data.htf,
+          location: e.data.location,
+          status: e.data.status,
+          fillPct: e.data.fillPct,
+          firstTouchAt: null,
+          statusChangedAt: null,
+          structureEventId: e.data.structureEvent === null ? null : id(e.data.structureEvent),
+          linkedZoneId: e.data.linkedZone === null ? null : id(e.data.linkedZone),
+          sweptLiquidityAtOrigin: e.data.sweptLiquidityAtOrigin,
+          flags: flags(e.data.flags),
+        },
+      };
+    case 'zone_status':
+      return {
+        ...head,
+        type: 'zone.status',
+        data: {
+          id: id(e.key),
+          status: e.data.status,
+          fillPct: e.data.fillPct,
+          firstTouchAt: e.data.firstTouchAt,
+          statusChangedAt: e.data.statusChangedAt,
         },
       };
     case 'gap_marker':

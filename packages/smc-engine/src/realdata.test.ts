@@ -24,6 +24,8 @@ const kinds = (events: readonly SmcEvent[]) => {
     if (e.type === 'level_created') seen.add(`level:${e.data.type}`);
     if (e.type === 'sweep') seen.add(`sweep:${e.data.kind}`);
     if (e.type === 'level_status') seen.add(`status:${e.data.reason}`);
+    if (e.type === 'zone_created') seen.add(`zone:${e.data.type}:${e.data.direction}`);
+    if (e.type === 'zone_status') seen.add(`zone:${e.data.status}`);
   }
   return seen;
 };
@@ -58,6 +60,23 @@ describe('the engine on 34 days of BTCUSDT', () => {
       expect(seen, k).toContain(k);
   });
 
+  it('finds every kind of point of interest, and every zone status (Phase 5)', () => {
+    const seen = kinds(full);
+    for (const k of [
+      'zone:order_block:bullish',
+      'zone:order_block:bearish',
+      'zone:fvg:bullish',
+      'zone:fvg:bearish',
+      'zone:demand:bullish',
+      'zone:supply:bearish',
+      'zone:partially_filled',
+      'zone:filled',
+      'zone:invalidated',
+      'zone:expired',
+    ])
+      expect(seen, k).toContain(k);
+  });
+
   it('keeps the rulebook §13 invariants', () => {
     expect(invariantViolations(full, BTC.tick)).toEqual([]);
   });
@@ -87,7 +106,8 @@ describe('the engine on 34 days of BTCUSDT', () => {
     expect(() => SmcEngine.restore(snapshot, { params: GOLD_SMC_PARAMS, tick: '0.01' })).toThrow(
       /other rules/,
     );
-    expect(() => SmcEngine.restore({ ...snapshot, v: 2 as 1 }, BTC)).toThrow(/format/);
+    // A Phase 4 checkpoint (format 1, no zones) cannot continue a 0.2.0 run.
+    expect(() => SmcEngine.restore({ ...snapshot, v: 1 as 2 }, BTC)).toThrow(/format/);
   });
 
   it('steps in well under 2 ms at the 95th percentile', () => {

@@ -26,7 +26,14 @@ export const SmcParamsSchema = z.strictObject({
     legBodyAtr: positive,
     legCandleBodyRatio: ratio,
   }),
+  orderBlocks: z.strictObject({
+    lookback: count(1),
+    maxClusterCandles: count(1),
+    breakWithinBars: count(1),
+    zoneMode: z.enum(['wick', 'body']),
+  }),
   fvg: z.strictObject({ minSizeAtr: atLeastZero }),
+  supplyDemand: z.strictObject({ baseMaxCandles: count(1), baseBodyAtr: positive, departureAtr: positive }),
   ranges: z.strictObject({
     lookback: count(3),
     maxHeightAtr: positive,
@@ -55,6 +62,9 @@ export const SmcParamsSchema = z.strictObject({
     equalCandles: count(1),
     swingCandles: count(1),
     sweepExtremeCandles: count(1),
+    fvgCandles: count(1),
+    orderBlockCandles: count(1),
+    supplyDemandCandles: count(1),
   }),
 });
 export type SmcParamsDto = z.infer<typeof SmcParamsSchema>;

@@ -134,6 +134,8 @@ const LEVEL_PAIRS: [string, string][] = [
   ['range_high', 'range_low'],
   ['weekend_high', 'weekend_low'],
   ['swing_high', 'swing_low'],
+  // Zone types (§4.3): a demand zone's mirror image is a supply zone.
+  ['demand', 'supply'],
 ];
 const LEVEL_MIRROR = new Map<string, string>(
   LEVEL_PAIRS.flatMap(([a, b]) => [
@@ -142,7 +144,16 @@ const LEVEL_MIRROR = new Map<string, string>(
   ]),
 );
 const PRICE_FIELDS = new Set(['price', 'breakPrice', 'levelPrice', 'extremePrice', 'equilibrium']);
-const KEY_FIELDS = new Set(['key', 'level', 'brokenSwing', 'group', 'sourceRefs', 'droppedBreaches']);
+const KEY_FIELDS = new Set([
+  'key',
+  'level',
+  'brokenSwing',
+  'group',
+  'sourceRefs',
+  'droppedBreaches',
+  'linkedZone',
+  'structureEvent',
+]);
 
 /** Entity keys carry the side: `lv:4h:swing_low:s:…` ↔ `lv:4h:swing_high:b:…`, `sw:…:h:…` ↔ `…:l:…`. */
 export function mirrorKey(key: string): string {
@@ -160,6 +171,11 @@ export function mirrorKey(key: string): string {
       const level = p.slice(2, 7).join(':');
       return [p[0], p[1], mirrorKey(level), ...p.slice(7)].join(':');
     }
+    case 'zn':
+      // zn:{tf}:{type}:{bu|be}:{origin}
+      return [p[0], p[1], LEVEL_MIRROR.get(p[2]!) ?? p[2], p[3] === 'bu' ? 'be' : 'bu', ...p.slice(4)].join(
+        ':',
+      );
     default:
       return key;
   }
@@ -182,6 +198,9 @@ export function mirrorFields(o: Record<string, unknown>, m: number): Record<stri
   for (const [k, v] of Object.entries(o)) {
     if ((k === 'high' || k === 'low') && typeof v === 'string')
       out[k === 'high' ? 'low' : 'high'] = fmt(2 * m - Number(v));
+    // A zone's edges swap: the mirror of its top is the new bottom.
+    else if ((k === 'top' || k === 'bottom') && typeof v === 'string')
+      out[k === 'top' ? 'bottom' : 'top'] = fmt(2 * m - Number(v));
     else if (k === 'type' && typeof v === 'string') out[k] = LEVEL_MIRROR.get(v) ?? v;
     else if (k === 'notionalBeyondUsd' && typeof v === 'string' && typeof o.levelPrice === 'string')
       // Notional = volume beyond × level price: the volume stays, the price is mirrored.
@@ -268,6 +287,10 @@ export const keys = {
   level: (tf: Tf, type: string, side: 'buy_side' | 'sell_side', knownAt: number) =>
     `lv:${tf}:${type}:${side === 'buy_side' ? 'b' : 's'}:${knownAt}`,
   range: (tf: Tf, detectedAt: number) => `rg:${tf}:${detectedAt}`,
+  zone: (tf: Tf, type: string, direction: 'bullish' | 'bearish', originFrom: number) =>
+    `zn:${tf}:${type}:${direction === 'bullish' ? 'bu' : 'be'}:${originFrom}`,
+  structure: (tf: Tf, level: 'internal' | 'external', type: string, breakOpen: number) =>
+    `st:${tf}:${level === 'internal' ? 'int' : 'ext'}:${type}:${breakOpen}`,
 };
 
 /** Candles of a timeframe `factor` times longer: complete groups only (a group with a hole is null). */

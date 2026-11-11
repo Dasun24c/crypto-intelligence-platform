@@ -88,7 +88,8 @@ export class AnalysisRepository {
         ? await query.orderBy('open_time').limit(q.limit).execute()
         : (await query.orderBy('open_time', 'desc').limit(q.limit).execute()).reverse();
     const from = run.from_time.getTime();
-    const params = ProfileParamsSchema.safeParse(run.params);
+    // Only the indicator settings: a profile from an earlier version lacks newer SMC settings.
+    const params = ProfileParamsSchema.pick({ indicators: true }).safeParse(run.params);
     return {
       instrumentId,
       tf,

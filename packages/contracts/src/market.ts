@@ -395,6 +395,8 @@ export type MarketMessageType =
   | 'level.created'
   | 'level.status'
   | 'sweep'
+  | 'zone.created'
+  | 'zone.status'
   | 'health.update';
 
 /** A stored or live candle in its wire form (structural, so this package stays dependency-free). */

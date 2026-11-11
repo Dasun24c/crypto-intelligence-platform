@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import type { ChartOverlay } from '@cip/contracts';
+import type { ChartOverlay, PoiZone } from '@cip/contracts';
 import { BTC_BINANCE, candle, PAXG_BINANCE, run } from '../test/fixtures.js';
 import {
   buildFixture,
@@ -129,6 +129,55 @@ describe('fixture labelling', () => {
       data: { level: 'external', type: 'bos', direction: 'bullish', breakPrice: '105' },
     });
     expect(c.find((x) => x.expectation.type === 'level_created')!.expectation.tf).toBe('1h');
+  });
+
+  it('offers zones: when each was created, and its latest change', () => {
+    const zone: PoiZone = {
+      id: id(20),
+      tf: '1h',
+      type: 'order_block',
+      direction: 'bearish',
+      top: '108.5',
+      bottom: '106',
+      originFrom: T,
+      originTo: T + 2 * M15,
+      knownAt: T + 4 * M15,
+      htf: true,
+      location: 'none',
+      status: 'partially_filled',
+      fillPct: 40,
+      firstTouchAt: T + 9 * M15,
+      statusChangedAt: T + 9 * M15,
+      structureEventId: null,
+      linkedZoneId: null,
+      sweptLiquidityAtOrigin: false,
+      flags: [],
+    };
+    const only = { ...overlay, swings: [], structure: [], ranges: [], levels: [], sweeps: [], zones: [zone] };
+    const c = candidatesFrom(only, T, T + 20 * M15);
+    expect(c.map((x) => [x.expectation.type, x.summary])).toEqual([
+      ['zone_created', 'bearish order block 106–108.5 (1h)'],
+      ['zone_status', 'bearish order block 106–108.5 (1h) partially filled (40 %)'],
+    ]);
+    expect(c[1]!.expectation).toEqual({
+      type: 'zone_status',
+      tf: '1h',
+      at: new Date(T + 9 * M15).toISOString(),
+      data: { status: 'partially_filled', fillPct: 40 },
+    });
+    // An untouched zone offers only its creation.
+    const fresh = candidatesFrom(
+      { ...only, zones: [{ ...zone, status: 'untouched', statusChangedAt: null }] },
+      T,
+      T + 20 * M15,
+    );
+    expect(fresh.map((x) => x.expectation.type)).toEqual(['zone_created']);
+    expect(manualCandidate('FVG bullish', '15m', T, 3).expectation).toEqual({
+      type: 'zone_created',
+      tf: '15m',
+      at: new Date(T + M15).toISOString(),
+      data: { type: 'fvg', direction: 'bullish' },
+    });
   });
 
   it('adds a missed detection at a candle: a swing by its candle, others at its close', () => {

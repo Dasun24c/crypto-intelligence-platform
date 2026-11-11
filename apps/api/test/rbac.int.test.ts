@@ -145,6 +145,12 @@ const ENDPOINTS: Endpoint[] = [
     policy: 'dashboards.view',
     route: '/api/v1/smc/:instrumentId/sweeps',
   },
+  {
+    method: 'GET',
+    path: `/api/v1/smc/${NOBODY}/zones?tf=1h`,
+    policy: 'dashboards.view',
+    route: '/api/v1/smc/:instrumentId/zones',
+  },
   // An empty body fails validation (400) after the guard.
   { method: 'POST', path: '/api/v1/replays', policy: 'replays.run', body: {} },
   {

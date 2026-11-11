@@ -22,6 +22,7 @@ import {
   sessionHours,
   type SmcParams,
   validateSmcParams,
+  ZONE_HORIZON,
 } from './params.js';
 import { fromUnits, midpoint, toUnits, unitsToNumber } from './price.js';
 import { Ring, type RingState } from './ring.js';
@@ -48,7 +49,22 @@ import type {
   StepContext,
   StepInput,
   StructureLevel,
+  ZoneStatusData,
+  ZoneType,
 } from './types.js';
+import {
+  fillPct,
+  findFvg,
+  findOrderBlock,
+  findSupplyDemand,
+  type FoundZone,
+  isLive,
+  locateZone,
+  overlapShare,
+  updateZone,
+  type Zone,
+  zoneKey,
+} from './zones.js';
 
 export interface EngineConfig {
   params: SmcParams;
@@ -102,6 +118,8 @@ interface TfState {
   lows: SwingRef[];
   range: RangeState | null;
   pending: Pending[];
+  /** Breach candles of recent sweeps on this timeframe, for `sweptLiquidityAtOrigin` (§4.1). */
+  recentSweeps: { side: Side; index: number }[];
   week: Acc | null;
   month: Acc | null;
   sessions: Partial<Record<SessionName, Acc>>;
@@ -124,7 +142,7 @@ interface TfSnapshot extends Omit<TfState, 'ring' | 'atr'> {
 
 /** The engine's whole state as plain JSON (architecture §7 checkpoints). */
 export interface EngineSnapshot {
-  v: 1;
+  v: 2;
   ruleset: string;
   /** The configuration it was built with; a restore must use the same. */
   config: string;
@@ -132,8 +150,21 @@ export interface EngineSnapshot {
   seq: number;
   tfs: TfSnapshot[];
   levels: Level[];
+  zones: Zone[];
   minutes: { origin: number | null; ring: RingState<Minute> };
 }
+
+/** A structure break whose leg contains displacement: it can leave an order block (§4.1). */
+interface DisplacedBreak {
+  key: string;
+  direction: 'bullish' | 'bearish';
+  legStart: number;
+}
+
+/** §4.1: a sweep this many candles before the leg, up to its start, makes `sweptLiquidityAtOrigin`. */
+const SWEPT_LIQUIDITY_BARS = 10;
+/** §4.1: order blocks on these timeframes are flagged `htf`. */
+const HTF: ReadonlySet<Timeframe> = new Set<Timeframe>(['1h', '4h', '1d']);
 
 interface Found {
   kind: 'high' | 'low';
@@ -172,13 +203,14 @@ export function volumeBeyond(m: Pick<Minute, 'l' | 'h' | 'p'>, price: number, bu
 }
 
 /**
- * The SMC rulebook (v0.1, §2–§3 and §9) as a deterministic reducer (ADR 004). It takes closed
+ * The SMC rulebook (v0.1, §2–§4 and §9) as a deterministic reducer (ADR 004). It takes closed
  * candles one boundary at a time and returns the confirmed detections they cause. It reads no
  * clock, uses no randomness and does no I/O, so the same candles always give the same events, and
  * {@link snapshot}/{@link restore} continue a run exactly where it stopped.
  *
  * At each boundary the longest timeframe is evaluated first; within a timeframe the rules run in
- * the rulebook's order: swings, structure (with displacement), ranges, liquidity levels, sweeps.
+ * the rulebook's order: swings, structure (with displacement), ranges, liquidity levels, sweeps,
+ * points of interest.
  */
 export class SmcEngine {
   readonly params: SmcParams;
@@ -192,6 +224,8 @@ export class SmcEngine {
   private seq = 0;
   private readonly tfs = new Map<Timeframe, TfState>();
   private levels = new Map<string, Level>();
+  /** Live zones, and ended ones until their keys cannot recur (ZONE_HORIZON). */
+  private zones = new Map<string, Zone>();
   private minuteOrigin: number | null = null;
   private minutes: Ring<Minute>;
 
@@ -224,6 +258,11 @@ export class SmcEngine {
   /** Active levels in creation order (a copy), for inspection and tests. */
   activeLevels(): Level[] {
     return [...this.levels.values()].filter((l) => l.status === 'active').map((l) => structuredClone(l));
+  }
+
+  /** Live zones (not invalidated, not expired) in creation order (a copy), for inspection and tests. */
+  liveZones(): Zone[] {
+    return [...this.zones.values()].filter(isLive).map((z) => structuredClone(z));
   }
 
   /** The current trend on a timeframe, or null when structure does not run there. */
@@ -288,6 +327,7 @@ export class SmcEngine {
       lows: [],
       range: null,
       pending: [],
+      recentSweeps: [],
       week: null,
       month: null,
       sessions: {},
@@ -329,7 +369,8 @@ export class SmcEngine {
     }
 
     let found: Found[] = [];
-    if (!slot.gap && st.internal) found = this.structure(st, slot, n);
+    let breaks: DisplacedBreak[] = [];
+    if (!slot.gap && st.internal) ({ found, breaks } = this.structure(st, slot, n));
     if (!slot.gap && this.rules.ranges.has(tf)) this.ranges(st, slot, n);
     if (found.length) this.levelsFromSwings(st, found);
     const hasData = candle !== null;
@@ -339,6 +380,8 @@ export class SmcEngine {
       this.weekend(st, slot, hasData);
     }
     if (!slot.gap && this.rules.sweeps.has(tf)) this.sweeps(st, slot, n);
+    // Points of interest run on the structure timeframes; a missing or partial candle is not evaluated.
+    if (!slot.gap && st.internal) this.pointsOfInterest(st, slot, n, breaks);
   }
 
   private takeMinute(openTime: number, candle: EngineCandle | null): void {
@@ -426,7 +469,8 @@ export class SmcEngine {
     return s.atr === null ? null : Math.max(buffer * s.atr, this.tick);
   }
 
-  private structure(st: TfState, s: Slot, n: number): Found[] {
+  private structure(st: TfState, s: Slot, n: number): { found: Found[]; breaks: DisplacedBreak[] } {
+    const breaks: DisplacedBreak[] = [];
     const found = [
       ...this.swingsAt(st, n, this.params.swings.internalOrder, 'internal'),
       ...this.swingsAt(st, n, this.params.swings.externalOrder, 'external'),
@@ -460,7 +504,9 @@ export class SmcEngine {
       if (!b) continue;
       const d = findDisplacement(st.ring, b.direction, b.anchor.leg.index, n, this.params.displacement);
       const type = b.type === 'choch' && d ? 'mss' : b.type;
-      this.emit('structure', st.tf, `st:${st.tf}:${short(level)}:${type}:${s.t}`, {
+      const key = `st:${st.tf}:${short(level)}:${type}:${s.t}`;
+      if (d) breaks.push({ key, direction: b.direction, legStart: b.anchor.leg.index });
+      this.emit('structure', st.tf, key, {
         level,
         type,
         direction: b.direction,
@@ -480,7 +526,7 @@ export class SmcEngine {
       });
       applyBreak(ss, b, s, n, eps);
     }
-    return found;
+    return { found, breaks };
   }
 
   // ── §2.4 Trading ranges ─────────────────────────────────────────────────────────────────────
@@ -838,6 +884,15 @@ export class SmcEngine {
       if (lvl.status === 'active' && lvl.expiresAt !== null && lvl.expiresAt <= time)
         this.setStatus(lvl, 'expired', 'expired');
     for (const [key, lvl] of this.levels) if (lvl.status !== 'active') this.levels.delete(key);
+    for (const z of this.zones.values())
+      if (isLive(z) && z.expiresAt <= time) {
+        z.status = 'expired';
+        z.statusChangedAt = time;
+        this.zoneStatus(z, 'expired');
+      }
+    // An ended zone is kept while a break or departure could still find its candles again.
+    for (const [key, z] of this.zones)
+      if (!isLive(z) && z.originFrom < time - 2 * ZONE_HORIZON * TF_MS[z.tf]) this.zones.delete(key);
   }
 
   // ── §3.4 Sweeps and §3.5 thin-book wicks ────────────────────────────────────────────────────
@@ -938,6 +993,7 @@ export class SmcEngine {
       }
       if (s.uc) flags.push('underlying_closed');
       lvl.sweepCount++;
+      st.recentSweeps.push({ side: lvl.side, index: p.index });
       let swept = false;
       if (lvl.range === null) {
         lvl.consumed.push(tf);
@@ -971,6 +1027,127 @@ export class SmcEngine {
         sourceRefs: g.sweeps,
         expiresAt: time + this.params.expiry.sweepExtremeCandles * TF_MS[tf],
       });
+    // Only sweeps that could precede a leg the next order block starts from are needed.
+    const oldest = st.ring.next - 1 - ZONE_HORIZON;
+    st.recentSweeps = st.recentSweeps.filter((x) => x.index >= oldest);
+  }
+
+  // ── §4 Points of interest ───────────────────────────────────────────────────────────────────
+
+  /**
+   * At the close of candle `n` on a structure timeframe: the live zones of that timeframe take the
+   * candle (§4.4), then new zones are created in the rulebook's order: order blocks of this
+   * candle's displaced breaks (§4.1), the FVG it completes (§4.2), the supply or demand zone its
+   * departure leaves (§4.3). A zone is evaluated from the candle after it is created.
+   */
+  private pointsOfInterest(st: TfState, s: Slot, n: number, breaks: DisplacedBreak[]): void {
+    const time = this.time!;
+    for (const z of this.zones.values()) {
+      if (z.tf !== st.tf || !isLive(z)) continue;
+      const reason = updateZone(z, s, time);
+      if (reason) this.zoneStatus(z, reason);
+    }
+    const ob = this.params.orderBlocks;
+    for (const b of breaks) {
+      if (n - b.legStart > ob.breakWithinBars) continue;
+      const found = findOrderBlock(st.ring, b.direction, b.legStart, ob);
+      if (!found) continue;
+      const side: Side = b.direction === 'bearish' ? 'buy_side' : 'sell_side';
+      const swept = st.recentSweeps.some(
+        (x) => x.side === side && x.index <= b.legStart && x.index > b.legStart - SWEPT_LIQUIDITY_BARS,
+      );
+      this.createZone(st, s, 'order_block', found, b.key, swept);
+    }
+    const fvg = findFvg(st.ring, n, this.params.fvg.minSizeAtr);
+    if (fvg) this.createZone(st, s, 'fvg', fvg, null, false);
+    const sd = findSupplyDemand(st.ring, n, this.params.displacement, this.params.supplyDemand);
+    if (sd) this.createZone(st, s, sd.direction === 'bullish' ? 'demand' : 'supply', sd, null, false);
+  }
+
+  private createZone(
+    st: TfState,
+    s: Slot,
+    type: ZoneType,
+    f: FoundZone,
+    structureEvent: string | null,
+    sweptLiquidityAtOrigin: boolean,
+  ): void {
+    const tf = st.tf;
+    const originFrom = st.ring.get(f.from)!.t;
+    const key = zoneKey(tf, type, f.direction, originFrom);
+    // One zone per origin: a later break or departure that finds the same candles adds nothing.
+    if (this.zones.has(key)) return;
+    const e = this.params.expiry;
+    const lifetime =
+      type === 'fvg' ? e.fvgCandles : type === 'order_block' ? e.orderBlockCandles : e.supplyDemandCandles;
+    const time = this.time!;
+    const z: Zone = {
+      key,
+      tf,
+      type,
+      direction: f.direction,
+      top: f.top,
+      bottom: f.bottom,
+      originFrom,
+      originTo: st.ring.get(f.to)!.t,
+      knownAt: time,
+      htf: type === 'order_block' && HTF.has(tf),
+      location: locateZone(f.top, f.bottom, st.range),
+      structureEvent,
+      linkedZone: type === 'fvg' ? null : this.overlapping(tf, type, f),
+      sweptLiquidityAtOrigin,
+      status: 'untouched',
+      depth: 0,
+      firstTouchAt: null,
+      statusChangedAt: null,
+      flags: s.uc ? ['underlying_closed'] : [],
+      expiresAt: time + lifetime * TF_MS[tf],
+    };
+    this.zones.set(key, z);
+    this.emit('zone_created', tf, key, {
+      type,
+      direction: z.direction,
+      top: fromUnits(z.top),
+      bottom: fromUnits(z.bottom),
+      originFrom: z.originFrom,
+      originTo: z.originTo,
+      knownAt: time,
+      htf: z.htf,
+      location: z.location,
+      structureEvent,
+      linkedZone: z.linkedZone,
+      sweptLiquidityAtOrigin,
+      status: 'untouched',
+      fillPct: 0,
+      flags: [...z.flags],
+    });
+  }
+
+  /**
+   * §4.3: a live zone of the other kind (an order block for a supply/demand zone, and the reverse)
+   * on the same timeframe and in the same direction, overlapping the new zone by more than half of
+   * the smaller height. The largest overlap wins; ties go to the most recent.
+   */
+  private overlapping(tf: Timeframe, type: ZoneType, f: FoundZone): string | null {
+    const wantOb = type !== 'order_block';
+    let best: { key: string; share: number } | null = null;
+    for (const z of this.zones.values()) {
+      if (z.tf !== tf || z.direction !== f.direction || !isLive(z)) continue;
+      if ((z.type === 'order_block') !== wantOb || z.type === 'fvg') continue;
+      const share = overlapShare(z, f);
+      if (share > 0.5 && (!best || share >= best.share)) best = { key: z.key, share };
+    }
+    return best?.key ?? null;
+  }
+
+  private zoneStatus(z: Zone, reason: ZoneStatusData['reason']): void {
+    this.emit('zone_status', z.tf, z.key, {
+      status: z.status,
+      fillPct: fillPct(z),
+      firstTouchAt: z.firstTouchAt,
+      statusChangedAt: z.statusChangedAt,
+      reason,
+    });
   }
 
   // ── Checkpoints ─────────────────────────────────────────────────────────────────────────────
@@ -983,13 +1160,14 @@ export class SmcEngine {
       tfs.push({ ...structuredClone(rest), ring: snapshotSlots(ring), atr: atr.snapshot() });
     }
     return {
-      v: 1,
+      v: 2,
       ruleset: RULESET_VERSION,
       config: this.configJson,
       time: this.time,
       seq: this.seq,
       tfs,
       levels: [...this.levels.values()].map((l) => structuredClone(l)),
+      zones: [...this.zones.values()].map((z) => structuredClone(z)),
       minutes: { origin: this.minuteOrigin, ring: structuredClone(this.minutes.snapshot()) },
     };
   }
@@ -997,7 +1175,7 @@ export class SmcEngine {
   /** An engine that continues exactly where `snapshot` was taken. The configuration must match. */
   static restore(snapshot: EngineSnapshot, config: EngineConfig): SmcEngine {
     const engine = new SmcEngine(config);
-    if (snapshot.v !== 1) throw new RangeError(`unknown checkpoint format ${String(snapshot.v)}`);
+    if (snapshot.v !== 2) throw new RangeError(`unknown checkpoint format ${String(snapshot.v)}`);
     if (snapshot.ruleset !== RULESET_VERSION || snapshot.config !== engine.configJson)
       throw new RangeError('the checkpoint was taken with other rules, parameters or tick');
     engine.time = snapshot.time;
@@ -1012,6 +1190,7 @@ export class SmcEngine {
       engine.tfs.set(t.tf, st);
     }
     engine.levels = new Map(snapshot.levels.map((l) => [l.key, structuredClone(l)]));
+    engine.zones = new Map(snapshot.zones.map((z) => [z.key, structuredClone(z)]));
     engine.minuteOrigin = snapshot.minutes.origin;
     engine.minutes = Ring.restore(structuredClone(snapshot.minutes.ring));
     return engine;
