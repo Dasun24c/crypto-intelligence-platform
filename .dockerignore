@@ -13,5 +13,9 @@ docs
 # Dev-only reference data (ADR 012): never in an image.
 tools/reference-data
 packages/indicators/fixtures
+# The SMC engine's golden fixtures, their builder and test helpers: CI only.
+packages/smc-engine/fixtures
+packages/smc-engine/scripts
+packages/smc-engine/test
 *.md
 !packages/**/README.md

@@ -13,6 +13,7 @@ import { AdminAuditPage } from './pages/admin-audit.js';
 import { AdminInstrumentsPage } from './pages/admin-instruments.js';
 import { AdminUsersPage } from './pages/admin-users.js';
 import { HomePage } from './pages/home.js';
+import { LabellingPage } from './pages/labelling.js';
 import { MarketActivityPage } from './pages/market-activity.js';
 import { ProfilePage } from './pages/profile.js';
 import { SystemHealthPage } from './pages/system-health.js';
@@ -96,6 +97,13 @@ const routeTree = rootRoute.addChildren([
     path: '/admin/audit',
     beforeLoad: requireCapability('audit.view'),
     component: AdminAuditPage,
+  }),
+  // Development only: the page itself checks Platform.devTools.
+  createRoute({
+    getParentRoute: () => rootRoute,
+    path: '/dev/labelling',
+    beforeLoad: requireCapability('fixtures.label'),
+    component: LabellingPage,
   }),
 ]);
 

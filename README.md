@@ -2,7 +2,7 @@
 
 Real-time monitoring and analysis of crypto markets, and of gold through the PAXG token: market data from Binance and Coinbase, technical indicators, Smart Money Concepts detection, AI analysis with Grok, alerts, and a web and desktop app.
 
-**Status:** Phase 3 (Technical analysis) is built and awaiting acceptance: RSI, MACD, EMA, ATR, VWAP, volume anomalies and the indicator trend, computed live by the analyzer for every pair and timeframe (RSI, MACD, EMA and ATR bit-identical to TA-Lib 0.8.3), served by the API and a live channel, and shown on the Technical Analysis page. Phases 1 (Foundations) and 2 (Market data) are accepted. See the [Phase 3 acceptance report](docs/phase-3/acceptance-report.md), the [Phase 2 report](docs/phase-2/acceptance-report.md) and the [implementation plan](docs/phase-0/08-implementation-plan.md).
+**Status:** Phase 4 (SMC structure and liquidity) is built and awaiting acceptance. The SMC engine detects swings, BOS, CHOCH, MSS, displacement, trading ranges, every liquidity level type, sweeps, false breakouts and breakouts, with gold-market and thin-book flags. It runs live for every pair in the analyzer, with checkpoints, lease fencing and replays that reproduce a live run's digest, and the API serves it with a live channel. Phases 1–3 (Foundations, Market data, Technical analysis) are accepted. See the [Phase 4 acceptance report](docs/phase-4/acceptance-report.md), the [Phase 3 report](docs/phase-3/acceptance-report.md) and the [implementation plan](docs/phase-0/08-implementation-plan.md).
 
 ## Quick start
 
@@ -45,6 +45,12 @@ COMPOSE_FILE=compose.yaml:infra/docker/compose.replay.yaml docker compose -p cip
 | `docker compose exec jobs node apps/jobs/dist/cli.js consistency [YYYY-MM-DD]` | Compares a UTC day's stored candles with the venues' REST candles (default: yesterday; it also runs nightly) |
 | `node tools/recorder/record.mjs --venue binance --symbols BTCUSDT --seconds 130 --out file.jsonl` | Records public venue messages for tests and the replay venue |
 
+| Analysis command | Effect |
+|---|---|
+| `node scripts/analysis-latency.mjs [redis://localhost:16379] [minutes]` | Candle close → published latency of indicator points (p95 ≤ 1 s) and SMC detections (p95 ≤ 2 s) |
+| `docker compose exec analyzer node apps/analyzer/dist/cli.js replay <instrumentId> <from> <to>` | Replays a stored period (ISO times or epoch ms) and compares its digest with the live run's ([ADR 017](docs/adr/017-smc-runtime-boundaries-ids-digests-replays.md)) |
+| `docker compose exec analyzer node apps/analyzer/dist/cli.js digest <runId> <from> <to>` | Prints a run's digest over a period |
+
 ## Development
 
 Install pnpm 12 (`corepack enable` with Node 24 or earlier, or the [standalone installer](https://pnpm.io/installation)). Then:
@@ -72,7 +78,8 @@ pnpm downloads Node.js 26.13.0 for this project (`devEngines` in `package.json`)
 apps/        api, ingestor, analyzer, jobs (NestJS); web (Vite); desktop (Tauri 2)
 packages/    contracts (zod), db (migrations, Kysely), observability, app (React), ui (design system), config,
              domain (candles, decimals, closures), exchange-adapters (venues, replay), market-data (books, candles, detection),
-             indicators (RSI, MACD, EMA, ATR, VWAP, volume anomaly, trend; checked against TA-Lib)
+             indicators (RSI, MACD, EMA, ATR, VWAP, volume anomaly, trend; checked against TA-Lib),
+             smc-engine (the SMC rulebook as a deterministic reducer; golden fixtures, property tests)
 tools/       recorder for venue messages; reference-data (TA-Lib datasets, dev-only Python)
 infra/docker Dockerfile, Compose stack, Caddyfile, dev secret generation
 e2e/         Playwright smoke tests
@@ -89,6 +96,7 @@ Workspace packages are consumed from source through the `@cip/source` export con
 - [Phase 1 acceptance report](docs/phase-1/acceptance-report.md)
 - [Phase 2 acceptance report](docs/phase-2/acceptance-report.md)
 - [Phase 3 acceptance report](docs/phase-3/acceptance-report.md)
+- [Phase 4 acceptance report](docs/phase-4/acceptance-report.md)
 - [Desktop app](apps/desktop/README.md)
 
 The platform is for analysis and education. It holds no exchange API keys, implements no trading, and never presents analysis as a guaranteed prediction.

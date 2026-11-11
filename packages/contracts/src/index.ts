@@ -6,3 +6,5 @@ export * from './admin.js';
 export * from './system.js';
 export * from './market.js';
 export * from './analysis.js';
+export * from './smc-params.js';
+export * from './smc.js';

@@ -1,12 +1,12 @@
 import { floorTo, TF_MS, type Timeframe } from '@cip/domain';
 import { assertPeriod, type Bar } from './bar.js';
-import { Atr, atr } from './atr.js';
-import { Ema, ema } from './ema.js';
-import { Macd, macd, macdLookback } from './macd.js';
-import { Rsi, rsi } from './rsi.js';
+import { Atr, type AtrState, atr } from './atr.js';
+import { Ema, type EmaState, ema } from './ema.js';
+import { Macd, type MacdState, macd, macdLookback } from './macd.js';
+import { Rsi, type RsiState, rsi } from './rsi.js';
 import { classifyTrend, type Trend } from './trend.js';
-import { isVolumeAnomaly, VolumeZ, volumeZ } from './volume.js';
-import { DAY_MS, Vwap, vwap } from './vwap.js';
+import { isVolumeAnomaly, VolumeZ, type VolumeZState, volumeZ } from './volume.js';
+import { DAY_MS, Vwap, type VwapState, vwap } from './vwap.js';
 
 /** Indicator settings, part of an instrument profile (data model §4: `instrument_profiles.params`). */
 export interface IndicatorParams {
@@ -99,9 +99,25 @@ function checkOrder(tf: Timeframe, previous: number | null, openTime: number): v
     );
 }
 
+/** An {@link IndicatorSeries}'s state, for checkpoints (architecture §7): plain JSON. */
+export interface IndicatorSeriesState {
+  timeframe: Timeframe;
+  last: number | null;
+  midHistory: (number | null)[];
+  rsi: RsiState;
+  macd: MacdState;
+  emaFast: EmaState;
+  emaMid: EmaState;
+  emaSlow: EmaState;
+  atr: AtrState;
+  vwap: VwapState | null;
+  volume: VolumeZState;
+}
+
 /**
  * Every indicator for one instrument and timeframe, one closed candle at a time (the analyzer's
- * form). Candles must be consecutive: the analyzer pauses on a gap instead of skipping it.
+ * form). Candles must be consecutive: the analyzer pauses on a gap instead of skipping it, and
+ * steps over one only when it can never be repaired ({@link resumeAfterGap}).
  * Gives exactly the values {@link computeIndicators} gives for the same candles (criterion 3.4).
  */
 export class IndicatorSeries {
@@ -135,6 +151,56 @@ export class IndicatorSeries {
   /** Open time of the last candle taken, or null before the first. */
   get lastOpenTime(): number | null {
     return this.last;
+  }
+
+  /**
+   * Accepts `openTime` as the next candle although candles before it are missing: an unrepairable
+   * gap (ADR 005). The indicators carry on across it as if the candles were consecutive, which is
+   * also what TA-Lib computes over the stored series.
+   */
+  resumeAfterGap(openTime: number): void {
+    if (floorTo(openTime, this.timeframe) !== openTime)
+      throw new RangeError(`candle at ${openTime} is not aligned to ${this.timeframe}`);
+    if (this.last !== null && openTime <= this.last)
+      throw new RangeError(`cannot resume at ${openTime}: candles up to ${this.last} are already taken`);
+    if (this.last !== null) this.last = openTime - TF_MS[this.timeframe];
+  }
+
+  snapshot(): IndicatorSeriesState {
+    return {
+      timeframe: this.timeframe,
+      last: this.last,
+      midHistory: [...this.midHistory],
+      rsi: this.rsi.snapshot(),
+      macd: this.macd.snapshot(),
+      emaFast: this.emaFast.snapshot(),
+      emaMid: this.emaMid.snapshot(),
+      emaSlow: this.emaSlow.snapshot(),
+      atr: this.atr.snapshot(),
+      vwap: this.vwap?.snapshot() ?? null,
+      volume: this.volume.snapshot(),
+    };
+  }
+
+  /** A series that continues from `state`, which must come from a series with the same settings. */
+  static restore(
+    state: IndicatorSeriesState,
+    params: IndicatorParams = DEFAULT_INDICATOR_PARAMS,
+  ): IndicatorSeries {
+    const s = new IndicatorSeries(state.timeframe, params);
+    if ((state.vwap === null) !== (s.vwap === null))
+      throw new RangeError('the VWAP state does not match the timeframe');
+    s.last = state.last;
+    s.midHistory.push(...state.midHistory);
+    s.rsi.restore(state.rsi);
+    s.macd.restore(state.macd);
+    s.emaFast.restore(state.emaFast);
+    s.emaMid.restore(state.emaMid);
+    s.emaSlow.restore(state.emaSlow);
+    s.atr.restore(state.atr);
+    if (state.vwap) s.vwap!.restore(state.vwap);
+    s.volume.restore(state.volume);
+    return s;
   }
 
   next(bar: Bar): IndicatorValues {

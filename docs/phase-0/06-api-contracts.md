@@ -93,6 +93,20 @@ Roles: **V** viewer, **A** analyst, **Ad** admin. Every endpoint needs authentic
 > - **`IndicatorPoint`**: `{ t, rsi, macd, macdSignal, macdHist, emaFast, emaMid, emaSlow, vwap, atr, volumeZ, volumeAnomaly, trend, trendStrength, warmup }`. Values are null during each indicator's own warm-up. `warmup` is true for candles before the run's start.
 > - **Schemas**: all in `packages/contracts/src/analysis.ts`.
 
+> **As implemented in Phase 4.** The SMC endpoints read one run: the instrument's open live run (else its latest), or the run named by an optional `runId` (for example a replay's). An instrument never analysed gives empty lists and `run: null`.
+>
+> - **Windows**: swings, structure, ranges and sweeps take `from`, `to` and `limit` (default 1,000, at most 5,000). With `from` a list gives the first `limit` from there; without it, the latest `limit`.
+>   - Swings are windowed by their candle, structure by its break candle, sweeps by their confirming candle.
+>   - Ranges give what was alive in the window: detected by `to` and not ended before `from`.
+> - **Levels**: `?tf` shows levels whose origin timeframe is `tf` or longer. `status` (comma-separated, default `active`) and `types` filter them; `/levels` takes no window. The overlay's levels are those known by its end and still active at its start.
+> - **Overlay**: `GET /smc/{id}/overlay?tf` covers the latest 300 candles of `tf` unless `from`/`to` are given. Its shape is `{ instrumentId, tf, run, swings, structure, ranges, levels, sweeps, zones, setups, closures }`.
+>   - `zones` and `setups` stay empty until Phases 5 and 6.
+>   - `closures` lists the gold-market closures in the window (gold instruments only).
+> - **Times**: candle times (`candleTime`, `breakCandleTime`, `windowStart`, `breachAt`) are open times. Decision times (`confirmedAt`, `detectedAt`, `knownAt`, `endedAt`, `statusChangedAt`) are the close of the deciding candle.
+> - **Flags**: `flags` holds the engine's flags (`deep`, `thin_book`, `liquidity_unverified`, `underlying_closed`, `data_gap`) and the run's: `warmup` (decided before the run started) and `late_detection` (decided more than 120 s after its candle closed).
+> - **Not yet**: `/smc/{id}/zones` arrives with Phase 5.
+> - **Schemas**: all in `packages/contracts/src/smc.ts`.
+
 ### Setups and replays
 
 | Method | Path | Role | Returns |
@@ -102,6 +116,17 @@ Roles: **V** viewer, **A** analyst, **Ad** admin. Every endpoint needs authentic
 | GET | `/setups/stats?groupBy&from&to` | V | `SetupStats` (groupBy: pattern, variant, direction, tfPair, instrument, session) |
 | POST | `/replays` | A | `{instrumentId, from, to, profileVersion?}` → `202 {runId}` |
 | GET | `/replays/{runId}` | V | `ReplayStatus`, including the digest comparison with the live run where the periods overlap |
+
+> **As implemented in Phase 4** ([ADR 017](../adr/017-smc-runtime-boundaries-ids-digests-replays.md)). The setup endpoints arrive with Phase 6.
+>
+> - **`POST /replays`**: the body is `{ instrumentId, from, to }`, at most 31 days, ending in the past. It returns `202 { runId }` and puts a job on the `replay` queue, which the analyzer takes one at a time. `profileVersion` is not accepted.
+>   - The replay uses the profile and series origins of the live run that covers the period (see ADR 017), else the instrument's current profile.
+>   - It answers 429 when the user already has two replays waiting or running.
+>   - It needs the `replays.run` capability and writes the audit entry `replay.requested`.
+> - **`ReplayStatus`**: `{ runId, instrumentId, status, from, to, digest, events, comparison, error }`, with `status` one of `queued`, `running`, `completed` or `failed`.
+>   - Once completed, `comparison` holds `{ liveRunId, from, to, liveEvents, replayEvents, liveDigest, replayDigest, equal }`. The live run is the one the replay copied.
+>   - The digests cover the events decided in (`from`, `to`].
+>   - `comparison` is `null` when no live run covered the period.
 
 ### Calendar, AI, alerts, whales
 
@@ -360,6 +385,16 @@ interface ActivityPulse { ts: Ts; kind: 'pattern' | 'sweep' | 'mss' | 'ai_comple
 > - **Source**: it is read from the `an:events` stream, which the analyzer writes. Its `seq` is that stream's entry id, so it is compared only with other `indicators:` seqs.
 > - **Message**: `indicators.closed` carries `{ instrumentId, tf, runId, point: IndicatorPoint }`, once for each candle the analyzer stores for the first time. Warm-up points and values recomputed after a restart are not sent.
 > - **Snapshot**: when a resync cannot replay, the snapshot is `{ series: IndicatorSeries }` holding the latest 500 points.
+
+> **As implemented in Phase 4.** The `smc:{instrumentId}` channel works as follows:
+>
+> - **Source**: it is read from `an:events`, like `indicators:`.
+> - **Message types**: `swing.confirmed`, `structure`, `range.detected`, `range.ended`, `level.created`, `level.status` and `sweep`. `zone.*` arrives with Phase 5.
+> - **Message data**: the entity in its REST form. Two types carry only what changed:
+>   - `level.status` carries `{ id, status, price, touches, sweepCount, statusChangedAt }`, to merge into the level with that id.
+>   - `range.ended` carries `{ id, endedAt, endReason }`.
+> - **What is sent**: each detection once, when the live run first stores it. Warm-up detections and those recomputed after a restart are not sent. A new lease holder first publishes what a dead holder stored but did not publish.
+> - **Snapshot**: `{ run, levels, ranges }`, holding the live run's active levels and ranges. History comes from `GET /smc/{id}/overlay`.
 
 ### 5.4 Sequencing and resync
 

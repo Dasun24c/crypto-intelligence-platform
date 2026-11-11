@@ -43,6 +43,11 @@ export default defineConfig(
     rules: { '@typescript-eslint/consistent-type-imports': 'off' },
   },
   {
+    // Development scripts (fixture builders) report what they wrote.
+    files: ['packages/*/scripts/**/*.ts'],
+    rules: { 'no-console': 'off' },
+  },
+  {
     files: ['**/*.{js,mjs,cjs}'],
     extends: [tseslint.configs.disableTypeChecked],
     languageOptions: { globals: globals.node },

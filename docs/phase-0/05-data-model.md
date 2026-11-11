@@ -667,6 +667,21 @@ CREATE TABLE ops.system_events (                        -- hypertable on ts
 > - **Grants**: svc_analyzer and svc_jobs may INSERT and UPDATE runs and INSERT values; all four services may read them.
 > - **-0**: node-postgres sends -0 as 0, but the indicators never produce -0.
 
+> **As implemented in Phase 4** (migration 0007; [ADR 017](../adr/017-smc-runtime-boundaries-ids-digests-replays.md)):
+>
+> - **Tables**: `analysis.engine_checkpoints`, `analysis.detection_events` and the five §5.1 projections Phase 4 fills (`swing_points`, `structure_events`, `trading_ranges`, `liquidity_levels`, `sweeps`) are as above, with these differences:
+>   - CHECK lists on `detection_events.timeframe` and `type`. The types are the eight the engine emits: `swing_confirmed`, `structure`, `range_detected`, `range_ended`, `level_created`, `level_status`, `sweep`, `gap_marker`.
+>   - A query index on each table, led by `run_id`.
+>   - `liquidity_levels.source_ref` holds the natural keys of what a level came from (swings, a range, sweeps), not row ids.
+>   - `poi_zones` and `setups` arrive in Phases 5 and 6.
+> - **`detection_events.payload`**: the engine's event as emitted, `{key, data}`. `key` is the natural key (for example `lv:1d:pdh:b:<knownAt>`), the same in every run. The run digest is computed from these rows. `entity_id` is the projection row's id.
+> - **Ids**: every projection id is derived from the run id and the natural key (UUIDv7-shaped, ADR 017). A restart writes the same rows; a replay writes its own.
+> - **Times**: candle columns in the projections (`candle_time`, `break_candle_time`, `breach_candle_time`, `confirmed_candle_time`, `window_start`) are candle open times. `confirmed_at`, `known_at`, `detected_at`, `ended_at`, `status_changed_at` and `detection_events.candle_time` are decision times: the close of the deciding candle.
+> - **Flags**: the engine's (`deep`, `thin_book`, `liquidity_unverified`, `underlying_closed`, `data_gap`) and the run's (`warmup`, `late_detection`). Only the engine's are in the event log and the digest.
+> - **`detection_runs.source_run_id`**: a new nullable column. On a replay, it names the live run whose series origins and profile the replay copied, the run whose digest it must reproduce. A CHECK keeps it null on live runs.
+> - **Profiles**: version 2 of `crypto-majors` and `gold` adds `params.smc` (rulebook §10), and every instrument moves to it.
+> - **Grants**: all three services may read the new tables; only svc_analyzer may INSERT and UPDATE them. Replays run in the analyzer (ADR 017), so svc_jobs does not write them.
+
 ## 8. Hypertables, columnstore and retention
 
 | Table | Chunk interval | Columnstore after | Retention | Estimated rows/day (9 pairs) |

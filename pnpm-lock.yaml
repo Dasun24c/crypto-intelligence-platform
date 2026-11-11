@@ -317,6 +317,9 @@ catalogs:
     express:
       specifier: 5.3.0
       version: 5.3.0
+    fast-check:
+      specifier: 4.10.2
+      version: 4.10.2
     globals:
       specifier: 17.14.0
       version: 17.14.0
@@ -478,6 +481,9 @@ importers:
       '@cip/observability':
         specifier: workspace:*
         version: link:../../packages/observability
+      '@cip/smc-engine':
+        specifier: workspace:*
+        version: link:../../packages/smc-engine
       '@nestjs/common':
         specifier: 'catalog:'
         version: 12.4.0(reflect-metadata@0.2.2)(rxjs@7.8.2)(supports-color@7.2.0)
@@ -487,6 +493,9 @@ importers:
       '@opentelemetry/api':
         specifier: 'catalog:'
         version: 1.10.0
+      bullmq:
+        specifier: 'catalog:'
+        version: 6.7.2(ioredis@6.0.0(supports-color@7.2.0))(pg@8.23.1)
       ioredis:
         specifier: 'catalog:'
         version: 6.0.0(supports-color@7.2.0)
@@ -563,6 +572,9 @@ importers:
       '@cip/observability':
         specifier: workspace:*
         version: link:../../packages/observability
+      '@cip/smc-engine':
+        specifier: workspace:*
+        version: link:../../packages/smc-engine
       '@nestjs/common':
         specifier: 'catalog:'
         version: 12.4.0(reflect-metadata@0.2.2)(rxjs@7.8.2)(supports-color@7.2.0)
@@ -578,6 +590,9 @@ importers:
       '@opentelemetry/api':
         specifier: 'catalog:'
         version: 1.10.0
+      bullmq:
+        specifier: 'catalog:'
+        version: 6.7.2(ioredis@6.0.0(supports-color@7.2.0))(pg@8.23.1)
       cookie-parser:
         specifier: 'catalog:'
         version: 1.4.7
@@ -1056,6 +1071,9 @@ importers:
       '@cip/config':
         specifier: workspace:*
         version: link:../config
+      '@cip/smc-engine':
+        specifier: workspace:*
+        version: link:../smc-engine
       '@swc/cli':
         specifier: 'catalog:'
         version: 0.8.2(@swc/core@1.16.22)(supports-color@7.2.0)
@@ -1268,6 +1286,40 @@ importers:
       testcontainers:
         specifier: 'catalog:'
         version: 12.2.1(bare-buffer@3.7.1)(supports-color@7.2.0)
+      vitest:
+        specifier: 'catalog:'
+        version: 5.1.0(@opentelemetry/api@1.10.0)(@types/node@26.6.6)(@vitest/coverage-v8@5.1.0)(jsdom@31.0.0)(vite@8.3.6(@types/node@26.6.6)(jiti@2.7.0)(yaml@2.9.1))
+
+  packages/smc-engine:
+    dependencies:
+      '@cip/domain':
+        specifier: workspace:*
+        version: link:../domain
+      '@cip/indicators':
+        specifier: workspace:*
+        version: link:../indicators
+    devDependencies:
+      '@cip/config':
+        specifier: workspace:*
+        version: link:../config
+      '@swc/cli':
+        specifier: 'catalog:'
+        version: 0.8.2(@swc/core@1.16.22)(supports-color@7.2.0)
+      '@swc/core':
+        specifier: 'catalog:'
+        version: 1.16.22
+      '@types/node':
+        specifier: 'catalog:'
+        version: 26.6.6
+      '@typescript/native':
+        specifier: 'catalog:'
+        version: typescript@7.0.2
+      '@vitest/coverage-v8':
+        specifier: 'catalog:'
+        version: 5.1.0(vitest@5.1.0)
+      fast-check:
+        specifier: 'catalog:'
+        version: 4.10.2
       vitest:
         specifier: 'catalog:'
         version: 5.1.0(@opentelemetry/api@1.10.0)(@types/node@26.6.6)(@vitest/coverage-v8@5.1.0)(jsdom@31.0.0)(vite@8.3.6(@types/node@26.6.6)(jiti@2.7.0)(yaml@2.9.1))
@@ -4437,6 +4489,10 @@ packages:
     resolution: {integrity: sha512-yblEwXAbGv1VQDmow7s38W77hzAgJAO50ztBLMcUyUBfxv1HC+LGwtiEN+Co6LtlqT/5uwVOxsD4TNIilWhwdQ==}
     engines: {node: '>=4'}
 
+  fast-check@4.10.2:
+    resolution: {integrity: sha512-iK2f+YrcmoeGqk6fA0ea2bptcu/itMIm4NfEozq6N25+aG6h7s5HZbB/k1aV7b5w5sFLMCbbtRUsTVR+BgC3xw==}
+    engines: {node: '>=12.17.0'}
+
   fast-copy@4.3.1:
     resolution: {integrity: sha512-CRzQaTFOFUs6PuhsAq7lk9Zqr995soJBcFNZlfJS/5keTSl1awREV9dZW4xS2nX4pWbhIIR0xp4h+J8PQxCkvg==}
 
@@ -5454,6 +5510,9 @@ packages:
   punycode@2.3.1:
     resolution: {integrity: sha512-vYt7UD1U9Wg6138shLtLOvdAu+8DsC/ilFtEVHcH+wydcSpNE20AfSOduf6MkRFahL5FY7X1oU7nKVZFtfq8Fg==}
     engines: {node: '>=6'}
+
+  pure-rand@8.4.2:
+    resolution: {integrity: sha512-vvuOGgcuPJAirlHvuQw1TrOiw7ptaIXXmIbNuiNOY6lNGJJH49PQ1Kj4nd783nPdQhQdicgOjVI2yI/9BD6/Ng==}
 
   qified@0.10.1:
     resolution: {integrity: sha512-+Owyggi9IxT1ePKGafcI87ubSmxol6smwJ+RAHDQlx9+9cPwFWDiKFFCPuWhr9ignlGpZ9vDQLw67N4dcTVFEA==}
@@ -9277,6 +9336,10 @@ snapshots:
       ext-list: 2.2.2
       sort-keys-length: 1.0.1
 
+  fast-check@4.10.2:
+    dependencies:
+      pure-rand: 8.4.2
+
   fast-copy@4.3.1: {}
 
   fast-deep-equal@3.1.3: {}
@@ -10100,6 +10163,8 @@ snapshots:
       once: 1.4.0
 
   punycode@2.3.1: {}
+
+  pure-rand@8.4.2: {}
 
   qified@0.10.1:
     dependencies:

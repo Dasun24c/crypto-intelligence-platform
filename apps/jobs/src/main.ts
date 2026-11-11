@@ -9,6 +9,9 @@ import { loadJobsConfig } from './config.js';
 import { CONSISTENCY_CHECK, CONSISTENCY_PATTERN, checkConsistency, previousDay } from './consistency.js';
 import { gapRepairer, HOLE_SWEEP, HOLE_SWEEP_EVERY_MS, sweepHoles } from './gap-repairs.js';
 import { Maintenance } from './maintenance.js';
+
+/** The jobs service is degraded while 10 or more maintenance jobs failed within this window. */
+const RECENT_FAILURES_MS = 60 * 60_000;
 import {
   GENERATE_CLOSURES,
   GENERATE_CLOSURES_EVERY_MS,
@@ -121,14 +124,16 @@ async function main(): Promise<void> {
 
     return {
       async probe() {
-        const [m, b] = await Promise.all([
+        const [m, b, recent] = await Promise.all([
           maintenance.counts(),
           backfillQueue.getJobCounts('waiting', 'active', 'delayed', 'failed'),
+          // Failed jobs are kept for inspection however old: only the last hour's say how it is now.
+          maintenance.failedSince(Date.now() - RECENT_FAILURES_MS),
         ]);
         const running = maintenance.worker.isRunning() && backfill.isRunning();
         return {
-          status: running && (m.failed ?? 0) < 10 ? 'ok' : 'degraded',
-          detail: `${running ? 'workers running' : 'a worker stopped'}; backfill: ${b.waiting ?? 0} waiting, ${b.active ?? 0} active, ${b.failed ?? 0} failed; maintenance: ${m.delayed ?? 0} scheduled`,
+          status: running && recent < 10 ? 'ok' : 'degraded',
+          detail: `${running ? 'workers running' : 'a worker stopped'}; backfill: ${b.waiting ?? 0} waiting, ${b.active ?? 0} active, ${b.failed ?? 0} failed; maintenance: ${m.delayed ?? 0} scheduled, ${recent} failed in the last hour`,
         };
       },
       readiness: () => checkDependencies({ database: () => pingDb(pool), redis: () => redis.ping() }),

@@ -6,6 +6,7 @@ import { migrateToLatest } from './migrator.js';
 import { LAUNCH_PROFILE_IDS, launchProfileFor } from './profiles.js';
 import { verifyAuditChain } from './audit.js';
 import type { Database } from './types.js';
+import { CRYPTO_MAJORS_SMC_PARAMS, GOLD_SMC_PARAMS } from '@cip/smc-engine';
 
 const ownerUrl = inject('dbOwnerUrl');
 const roleUrls = inject('dbRoleUrls');
@@ -52,6 +53,7 @@ describe('migrations', () => {
       '0004_service_roles_and_grants',
       '0005_market_schema',
       '0006_analysis_indicators',
+      '0007_analysis_smc',
     ]);
     const again = await migrateToLatest(owner);
     expect(again.error).toBeUndefined();
@@ -157,6 +159,7 @@ describe('market schema (migration 0005)', () => {
       SELECT hypertable_schema || '.' || hypertable_name AS name FROM timescaledb_information.hypertables ORDER BY 1
     `.execute(owner);
     expect(hypertables.map((h) => h.name)).toEqual([
+      'analysis.detection_events',
       'analysis.indicator_values',
       'market.candles',
       'market.cross_venue_spreads',
@@ -284,11 +287,19 @@ describe('analysis schema (migration 0006)', () => {
       .selectFrom('market.instrument_profiles')
       .select(['id', 'name', 'version', 'params', 'params_hash'])
       .orderBy('name')
+      .orderBy('version')
       .execute();
+    // Version 1 (0006) holds the indicators; version 2 (0007) adds the SMC settings and is current.
     expect(profiles.map((p) => [p.id, p.name, p.version])).toEqual([
-      [LAUNCH_PROFILE_IDS['crypto-majors'], 'crypto-majors', 1],
-      [LAUNCH_PROFILE_IDS.gold, 'gold', 1],
+      ['019a6f00-0000-7000-8000-000000000201', 'crypto-majors', 1],
+      [LAUNCH_PROFILE_IDS['crypto-majors'], 'crypto-majors', 2],
+      ['019a6f00-0000-7000-8000-000000000202', 'gold', 1],
+      [LAUNCH_PROFILE_IDS.gold, 'gold', 2],
     ]);
+    // The SMC settings are exactly the engine's launch defaults (rulebook §10).
+    const smc = (id: string) => (profiles.find((p) => p.id === id)!.params as { smc: unknown }).smc;
+    expect(smc(LAUNCH_PROFILE_IDS['crypto-majors'])).toEqual(CRYPTO_MAJORS_SMC_PARAMS);
+    expect(smc(LAUNCH_PROFILE_IDS.gold)).toEqual(GOLD_SMC_PARAMS);
     for (const p of profiles) {
       const { rows } = await sql<{ hash: string }>`
         SELECT encode(sha256(convert_to(params::text, 'UTF8')), 'hex') AS hash

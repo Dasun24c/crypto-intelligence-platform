@@ -53,6 +53,14 @@ export function rsi(values: readonly number[], period: number): Series {
 }
 
 /** The streaming form of {@link rsi}: the same arithmetic in the same order, one input at a time. */
+/** An {@link Rsi}'s state, for checkpoints. */
+export interface RsiState {
+  seen: number;
+  prevValue: number;
+  gain: number;
+  loss: number;
+}
+
 export class Rsi {
   private readonly inverse: number;
   private seen = 0;
@@ -85,5 +93,17 @@ export class Rsi {
     this.loss *= this.inverse;
     this.gain *= this.inverse;
     return rsiOf(this.gain, this.loss);
+  }
+
+  snapshot(): RsiState {
+    return { seen: this.seen, prevValue: this.prevValue, gain: this.gain, loss: this.loss };
+  }
+
+  restore(state: RsiState): this {
+    this.seen = state.seen;
+    this.prevValue = state.prevValue;
+    this.gain = state.gain;
+    this.loss = state.loss;
+    return this;
   }
 }

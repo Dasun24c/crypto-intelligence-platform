@@ -54,6 +54,14 @@ export function atr(
   return out;
 }
 
+/** An {@link Atr}'s state, for checkpoints. */
+export interface AtrState {
+  seen: number;
+  prevClose: number;
+  sum: number;
+  value: number | null;
+}
+
 /** The streaming form of {@link atr}: the same arithmetic in the same order, one candle at a time. */
 export class Atr {
   private readonly alpha: number;
@@ -85,5 +93,22 @@ export class Atr {
     if (index < this.period) return null;
     this.value = this.sum / this.period;
     return this.value;
+  }
+
+  /** The latest ATR, or null during the warm-up. */
+  get current(): number | null {
+    return this.value;
+  }
+
+  snapshot(): AtrState {
+    return { seen: this.seen, prevClose: this.prevClose, sum: this.sum, value: this.value };
+  }
+
+  restore(state: AtrState): this {
+    this.seen = state.seen;
+    this.prevClose = state.prevClose;
+    this.sum = state.sum;
+    this.value = state.value;
+    return this;
   }
 }

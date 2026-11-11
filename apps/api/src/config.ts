@@ -25,6 +25,11 @@ export const ApiEnvSchema = z.object({
   OPS_PORT: PortSchema.default(9464),
   DATABASE_URL: z.url(),
   REDIS_URL: z.url(),
+  /** Key prefix for every BullMQ queue (`POST /replays` adds to `replay`). */
+  QUEUE_PREFIX: z
+    .string()
+    .regex(/^[a-z][a-z0-9-]*$/)
+    .default('cip'),
   AUTH_ISSUER: z.string().min(1).default('cip'),
   /** Ed25519 private key, PKCS#8 PEM. */
   AUTH_JWT_PRIVATE_KEY: z.string().includes('PRIVATE KEY'),

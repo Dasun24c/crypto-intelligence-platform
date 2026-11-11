@@ -33,4 +33,9 @@ export interface Platform {
   openExternal(url: string): Promise<void>;
   /** Calls back after the machine wakes or the network comes back; returns an unsubscribe function. */
   onSleepWake(callback: () => void): () => void;
+  /**
+   * Development tools such as the fixture labelling page (rulebook §12): on in the web dev server,
+   * or in a build made with CIP_PUBLIC_DEV_TOOLS=true; never in production builds.
+   */
+  devTools?: boolean;
 }

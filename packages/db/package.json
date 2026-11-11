@@ -38,6 +38,7 @@
   },
   "devDependencies": {
     "@cip/config": "workspace:*",
+    "@cip/smc-engine": "workspace:*",
     "@swc/cli": "catalog:",
     "@swc/core": "catalog:",
     "@testcontainers/postgresql": "catalog:",

@@ -2,7 +2,7 @@
 
 | | |
 |---|---|
-| Status | **Built; awaiting your review.** All five criteria are met. For 3.5 you decided on 2026-11-11 that latency is measured from the moment a candle is final in the platform |
+| Status | **Accepted 2026-11-11** (you asked to start Phase 4), with these items carried forward: the indicator trend rule and the volume-anomaly threshold keep my defaults until you decide; the Phase 2 items (decisions 1 and 2, the soak and chaos tests, the first CI run) are still open. All five criteria were met; for 3.5 you decided on 2026-11-11 that latency is measured from the moment a candle is final in the platform |
 | Date | 2026-11-10 |
 | Scope | [Implementation plan, Phase 3](../phase-0/08-implementation-plan.md#phase-3--technical-analysis) |
 | Evidence | This machine (Windows 11, Docker Desktop, Node.js 26.13.0); TA-Lib 0.8.3 (official wheel, Python 3.14.5); the local Compose stack streaming live public data from Binance and Coinbase, 2026-11-10 13:50–15:56 UTC |

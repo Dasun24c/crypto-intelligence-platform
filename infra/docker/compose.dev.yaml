@@ -164,6 +164,9 @@ services:
       context: ../..
       dockerfile: infra/docker/Dockerfile
       target: web
+      args:
+        # The development stack includes the development tools (fixture labelling, rulebook §12).
+        CIP_PUBLIC_DEV_TOOLS: ${CIP_PUBLIC_DEV_TOOLS:-true}
     environment:
       SITE_ADDRESS: ':8080'
     ports:

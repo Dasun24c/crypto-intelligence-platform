@@ -61,6 +61,13 @@ export function ema(values: readonly number[], period: number, seedAt = period -
 }
 
 /** The streaming form of {@link ema}: the same arithmetic in the same order, one input at a time. */
+/** An {@link Ema}'s state, for checkpoints: plain JSON. */
+export interface EmaState {
+  seen: number;
+  value: number | null;
+  window: number[];
+}
+
 export class Ema {
   private readonly weights: EmaWeights;
   /** The latest n inputs, kept only until the seed. */
@@ -91,5 +98,18 @@ export class Ema {
     this.value = sum / this.period;
     this.window.length = 0;
     return this.value;
+  }
+
+  snapshot(): EmaState {
+    return { seen: this.seen, value: this.value, window: [...this.window] };
+  }
+
+  /** Continues from a {@link snapshot} taken with the same period and seed. */
+  restore(state: EmaState): this {
+    this.seen = state.seen;
+    this.value = state.value;
+    this.window.length = 0;
+    this.window.push(...state.window);
+    return this;
   }
 }

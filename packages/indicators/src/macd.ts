@@ -1,5 +1,5 @@
 import { assertPeriod, emptySeries, type Series } from './bar.js';
-import { Ema, ema } from './ema.js';
+import { Ema, type EmaState, ema } from './ema.js';
 
 export interface MacdPoint {
   macd: number;
@@ -63,6 +63,13 @@ export function macd(
 }
 
 /** The streaming form of {@link macd}: the same arithmetic in the same order, one input at a time. */
+/** A {@link Macd}'s state, for checkpoints. */
+export interface MacdState {
+  fast: EmaState;
+  slow: EmaState;
+  signal: EmaState;
+}
+
 export class Macd {
   private readonly fastEma: Ema;
   private readonly slowEma: Ema;
@@ -88,5 +95,20 @@ export class Macd {
     const sig = this.signalEma.next(line);
     if (sig === null) return null;
     return { macd: line, signal: sig, hist: line - sig };
+  }
+
+  snapshot(): MacdState {
+    return {
+      fast: this.fastEma.snapshot(),
+      slow: this.slowEma.snapshot(),
+      signal: this.signalEma.snapshot(),
+    };
+  }
+
+  restore(state: MacdState): this {
+    this.fastEma.restore(state.fast);
+    this.slowEma.restore(state.slow);
+    this.signalEma.restore(state.signal);
+    return this;
   }
 }

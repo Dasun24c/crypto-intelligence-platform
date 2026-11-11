@@ -4,7 +4,12 @@ import { afterAll, beforeAll, describe, expect, inject, it, vi } from 'vitest';
 import { type AnalysisStatus, analysisStatusKey, IndicatorsClosedEventSchema } from '@cip/contracts';
 import { candleToRow, createDb, LAUNCH_PROFILE_IDS } from '@cip/db';
 import { type Candle, floorTo, HISTORY_CANDLES, TF_MS, TIMEFRAMES, type Timeframe } from '@cip/domain';
-import { computeIndicators, DEFAULT_INDICATOR_PARAMS, type IndicatorValues } from '@cip/indicators';
+import {
+  computeIndicators,
+  DEFAULT_INDICATOR_PARAMS,
+  IndicatorSeries,
+  type IndicatorValues,
+} from '@cip/indicators';
 import { createLogger } from '@cip/observability';
 import { HISTORY_GRACE_MS, RULESET_VERSION } from '../src/analysis/actor.ts';
 import { Analyzer, candleStream } from '../src/analysis/analyzer.ts';
@@ -17,7 +22,7 @@ const MIN = 60_000;
 const owner = createDb({ connectionString: inject('dbOwnerUrl'), max: 2 });
 const db = createDb({ connectionString: inject('dbRoleUrls').svc_analyzer, max: 4 });
 const redis = new Redis(inject('redisUrl'));
-const log = createLogger({ service: 'analyzer', instance: 'test', level: 'silent' });
+const log = createLogger({ service: 'analyzer', instance: 'test', level: 'error' });
 const clock = { now: FROM + 30_000 };
 const analyzers: Analyzer[] = [];
 
@@ -54,11 +59,14 @@ function minuteLike(
   tf: Timeframe,
   openTime: number,
   o: number,
-  h: number,
-  l: number,
+  h0: number,
+  l0: number,
   c: number,
   v: number,
 ): Candle {
+  // A venue's candle always spans its open and close.
+  const h = Math.max(h0, o, c);
+  const l = Math.min(l0, o, c);
   return {
     timeframe: tf,
     openTime,
@@ -126,13 +134,27 @@ async function status(instrumentId: string): Promise<AnalysisStatus> {
   return JSON.parse((await redis.get(analysisStatusKey(instrumentId)))!) as AnalysisStatus;
 }
 
+/** Published indicator points (an:events also carries SMC detections, entry type `smc`). */
 async function events() {
   const entries = await redis.xrange('an:events', '-', '+');
-  return entries.map(([id, fields]) => ({
-    id,
-    type: fields[1],
-    data: IndicatorsClosedEventSchema.parse(JSON.parse(fields[3]!)),
-  }));
+  return entries
+    .filter(([, fields]) => fields[1] === 'indicators.closed')
+    .map(([id, fields]) => ({
+      id,
+      type: fields[1],
+      data: IndicatorsClosedEventSchema.parse(JSON.parse(fields[3]!)),
+    }))
+    .filter((e) => e.data.instrumentId === SOL || e.data.instrumentId === ETH_CB);
+}
+
+/** The run's event log (detection_events), oldest first. */
+async function eventLog(runId: string) {
+  return owner
+    .selectFrom('analysis.detection_events')
+    .select(['seq', 'type', 'timeframe', 'candle_time', 'payload'])
+    .where('run_id', '=', runId)
+    .orderBy('seq')
+    .execute();
 }
 
 beforeAll(async () => {
@@ -140,6 +162,11 @@ beforeAll(async () => {
     .updateTable('market.instruments')
     .set({ enabled: false })
     .where('id', 'not in', [SOL, ETH_CB])
+    .execute();
+  await owner
+    .updateTable('market.instruments')
+    .set({ enabled: true })
+    .where('id', 'in', [SOL, ETH_CB])
     .execute();
   for (const [n, tf] of TIMEFRAMES.entries()) {
     const candles = series(tf, floorTo(FROM, tf) - HISTORY_CANDLES * TF_MS[tf], HISTORY_CANDLES, 7 + n);
@@ -182,9 +209,12 @@ describe('analyzer runs (Phase 3)', () => {
     const waiting = await status(ETH_CB);
     expect(waiting).toMatchObject({ status: 'warming_up', paused: true, pauseReason: 'warming_up' });
     expect(waiting.detail).toContain('1m: waiting for history');
+    // The probe reports the engine's step p95 over the boundaries just stepped (criterion 4.6).
     expect(a.probe()).toEqual({
       status: 'ok',
-      detail: 'analysing 2 instruments: 1 warming up, 0 paused on a data gap',
+      detail: expect.stringMatching(
+        /^analysing 2 instruments: 1 warming up, 0 paused on a data gap; SMC step p95 \d+\.\d\d ms over the last \d+$/,
+      ) as string,
     });
   });
 
@@ -253,62 +283,95 @@ describe('analyzer runs (Phase 3)', () => {
     expect(await status(SOL)).toMatchObject({ paused: false, lagSec: 0 });
   });
 
-  it('waits on a partial aggregate whose missing minutes can still be repaired, then takes it complete', async () => {
+  it('waits at a missing minute; once the gap is given up, steps over it with a gap marker and takes the partial candle', async () => {
     const a = analyzers[0]!;
-    const one = history.get('1m')!;
-    // 12:00–12:02 are stored; 12:03 and 12:04 are not, so the 5m candle at 12:00 is partial.
+    // 12:03 and 12:04 are missing, 12:05 arrived; the 5m candle at 12:00 was built partial from 12:00–12:02.
+    const later = minuteLike('1m', FROM + 5 * MIN, 151, 151.4, 150.8, 151.2, 5);
     const partial = minuteLike('5m', FROM, 150, 151.2, 149, 151, 19);
-    await store([{ ...partial, quality: 'partial' }]);
-    await redis.xadd(candleStream(SOL), '*', 'boundary', String(FROM + 5 * MIN), 'tfs', '1m,5m');
+    await store([later, { ...partial, quality: 'partial' }]);
+    const gapId = '019a6f00-0000-7000-8000-00000000a002';
+    await owner
+      .insertInto('market.data_gaps')
+      .values({
+        id: gapId,
+        instrument_id: SOL,
+        stream: 'kline',
+        gap_start: new Date(FROM + 3 * MIN),
+        gap_end: new Date(FROM + 5 * MIN),
+        detected_at: new Date(),
+        detected_by: 'sequence',
+        status: 'open',
+      })
+      .execute();
+    await redis.xadd(candleStream(SOL), '*', 'boundary', String(FROM + 6 * MIN), 'tfs', '1m,5m');
     await vi.waitFor(
       async () => {
         await a.tick();
-        expect((await status(SOL)).detail).toBe(
-          '5m: 2026-11-10 12:00 is missing minutes (waiting for repair)',
-        );
+        expect((await status(SOL)).detail).toBe('1m: missing 2026-11-10 12:03 (backfill running)');
       },
       { timeout: 5_000, interval: 50 },
     );
+    // Strictly in order: the whole instrument waits, the 5m candle too (ADR 005).
     expect((await events()).filter((e) => e.data.tf === '5m')).toEqual([]);
 
-    // The repair stores the minutes and rebuilds the 5m candle complete; the analyzer then takes it.
-    const repaired = [3, 4].map((i) => minuteLike('1m', FROM + i * MIN, 151, 151.2, 150.9, 151, 2));
-    await store(repaired);
-    one.push(...repaired);
-    const complete = minuteLike('5m', FROM, 150, 151.2, 149, 151, 21);
+    // The venue has nothing for those minutes: the gap is given up. The analyzer steps over it.
     await owner
-      .updateTable('market.candles')
-      .set({ quality: 'complete', volume: complete.volume })
-      .where('instrument_id', '=', SOL)
-      .where('timeframe', '=', '5m')
-      .where('open_time', '=', new Date(FROM))
+      .updateTable('market.data_gaps')
+      .set({ status: 'unrepairable' })
+      .where('id', '=', gapId)
       .execute();
-    history.get('5m')!.push(complete);
-    await redis.xadd(candleStream(SOL), '*', 'boundary', String(FROM + 5 * MIN), 'tfs', 'backfill');
-    await vi.waitFor(async () => expect((await events()).filter((e) => e.data.tf === '5m')).toHaveLength(1), {
-      timeout: 5_000,
-      interval: 20,
-    });
+    await redis.xadd(candleStream(SOL), '*', 'boundary', String(FROM + 6 * MIN), 'tfs', 'backfill');
+    await vi.waitFor(
+      async () => expect((await events()).map((e) => e.data.point.t)).toContain(FROM + 5 * MIN),
+      {
+        timeout: 5_000,
+        interval: 20,
+      },
+    );
+    // The partial 5m candle is final now, and its indicators are what the series gives for it.
+    history.get('5m')!.push({ ...partial, quality: 'partial' });
     const [five] = (await events()).filter((e) => e.data.tf === '5m');
     expect(five!.data.point).toEqual({
       ...asPoint(computeIndicators(history.get('5m')!, '5m').at(-1)!),
       warmup: false,
     });
-    // 12:03 and 12:04 on 1m, and the 5m candle: six points published so far.
-    await vi.waitFor(async () => expect(await events()).toHaveLength(6), { timeout: 5_000, interval: 20 });
+    // The 1m series carries on across the gap as if the candles were consecutive.
+    const series1m = new IndicatorSeries('1m');
+    for (const c of history.get('1m')!) series1m.next(c);
+    series1m.resumeAfterGap(later.openTime);
+    const last = (await events()).filter((e) => e.data.tf === '1m').at(-1)!;
+    expect(last.data.point).toEqual({ ...asPoint(series1m.next(later)), warmup: false });
+    history.get('1m')!.push(later);
+    // The engine got a gap marker for the missing minutes and for the partial candle.
+    const run = await openRun(SOL);
+    const markers = (await eventLog(run.id)).filter((e) => e.type === 'gap_marker');
+    expect(markers.map((m) => [m.timeframe, (m.payload as { data: { from: number } }).data.from])).toEqual(
+      expect.arrayContaining([
+        ['1m', FROM + 3 * MIN],
+        ['5m', FROM],
+      ]),
+    );
     await a.tick();
     expect(await status(SOL)).toMatchObject({ paused: false });
   });
 
-  it('after a restart, recomputes the same values from the run start and publishes nothing again', async () => {
+  it('after a restart, resumes from its checkpoint with the same values and publishes nothing again', async () => {
     const run = await openRun(SOL);
     const before = await valuesOf(run.id, '1m');
+    const published = (await events()).length;
     await analyzers[0]!.stop();
+    const checkpoint = await owner
+      .selectFrom('analysis.engine_checkpoints')
+      .selectAll()
+      .where('run_id', '=', run.id)
+      .executeTakeFirstOrThrow();
+    // The shutdown checkpoint is at the last boundary processed (12:06).
+    expect(checkpoint.last_boundary.getTime()).toBe(FROM + 6 * MIN);
     const b = analyzer('b');
     await b.start();
     expect((await openRun(SOL)).id).toBe(run.id);
     expect(await valuesOf(run.id, '1m')).toEqual(before);
-    expect(await events()).toHaveLength(6);
+    expect((await events()).length).toBe(published);
   });
 
   it('runs each instrument on one instance only; a standby takes over when the lease is released', async () => {
@@ -316,20 +379,30 @@ describe('analyzer runs (Phase 3)', () => {
     await c.start();
     expect(c.instrumentIds).toEqual([]);
     expect(c.probe()).toEqual({ status: 'ok', detail: 'standby: no instrument leases held' });
+    const published = (await events()).length;
     await analyzers[1]!.stop();
     await c.tick();
     expect(c.instrumentIds.sort()).toEqual([SOL, ETH_CB].sort());
-    expect(await events()).toHaveLength(6);
+    expect((await events()).length).toBe(published);
   });
 
   it('supersedes the open run when the profile changes, and warms a new one up', async () => {
     const c = analyzers[2]!;
     const old = await openRun(SOL);
     const v2 = '019a6f00-0000-7000-8000-0000000002a1';
-    const params = { indicators: { ...DEFAULT_INDICATOR_PARAMS, rsi: { period: 21 } } };
+    // Version 3: the launch profile's settings with RSI 21.
+    const { params: current } = await owner
+      .selectFrom('market.instrument_profiles')
+      .select('params')
+      .where('id', '=', LAUNCH_PROFILE_IDS['crypto-majors'])
+      .executeTakeFirstOrThrow();
+    const params = {
+      ...(current as object),
+      indicators: { ...DEFAULT_INDICATOR_PARAMS, rsi: { period: 21 } },
+    };
     await sql`
       INSERT INTO market.instrument_profiles (id, name, version, params, params_hash)
-      SELECT ${v2}::uuid, 'crypto-majors', 2, p, encode(sha256(convert_to(p::text, 'UTF8')), 'hex')
+      SELECT ${v2}::uuid, 'crypto-majors', 3, p, encode(sha256(convert_to(p::text, 'UTF8')), 'hex')
       FROM (SELECT ${JSON.stringify(params)}::jsonb AS p) AS x
     `.execute(owner);
     await owner.updateTable('market.instruments').set({ profile_id: v2 }).where('id', '=', SOL).execute();

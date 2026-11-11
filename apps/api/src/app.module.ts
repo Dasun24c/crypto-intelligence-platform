@@ -23,6 +23,10 @@ import { MarketController } from './market/market.controller.js';
 import { AnalysisController } from './analysis/analysis.controller.js';
 import { AnalysisRepository } from './analysis/analysis.repository.js';
 import { AnalysisStatusService } from './analysis/analysis-status.service.js';
+import { ReplayController } from './analysis/replay.controller.js';
+import { ReplayService } from './analysis/replay.service.js';
+import { SmcController } from './analysis/smc.controller.js';
+import { SmcRepository } from './analysis/smc.repository.js';
 import { MarketRepository } from './market/market.repository.js';
 import { publicVenueDirectory, VENUE_DIRECTORY, type VenueDirectory } from './market/venue-directory.js';
 import { MeController } from './me/me.controller.js';
@@ -68,6 +72,8 @@ export class AppModule {
         AdminClosuresController,
         MarketController,
         AnalysisController,
+        SmcController,
+        ReplayController,
         SystemController,
         ProbesController,
       ],
@@ -106,6 +112,8 @@ export class AppModule {
         MarketRepository,
         AnalysisRepository,
         AnalysisStatusService,
+        SmcRepository,
+        ReplayService,
         LiveGateway,
       ],
     };

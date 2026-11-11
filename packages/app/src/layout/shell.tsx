@@ -7,6 +7,7 @@ import {
   LayoutDashboard,
   LogOut,
   ScrollText,
+  Tags,
   UserCircle,
   Users,
   Wifi,
@@ -23,6 +24,8 @@ interface NavItem {
   label: string;
   icon: ComponentType<{ className?: string }>;
   capability?: Capability;
+  /** Development tools only (Platform.devTools). */
+  dev?: boolean;
 }
 
 const NAV: NavItem[] = [
@@ -34,6 +37,7 @@ const NAV: NavItem[] = [
   { to: '/admin/users', label: 'Users', icon: Users, capability: 'users.manage' },
   { to: '/admin/audit', label: 'Audit log', icon: ScrollText, capability: 'audit.view' },
   { to: '/profile', label: 'Profile', icon: UserCircle },
+  { to: '/dev/labelling', label: 'Fixture labelling', icon: Tags, capability: 'fixtures.label', dev: true },
 ];
 
 function subscribeOnline(callback: () => void) {
@@ -66,7 +70,11 @@ export function Shell() {
       <nav aria-label="Main" className="flex w-56 shrink-0 flex-col border-r border-border bg-surface">
         <div className="px-4 py-4 text-sm font-semibold tracking-wide">Crypto Intelligence</div>
         <ul className="flex-1 space-y-0.5 px-2">
-          {NAV.filter((item) => !item.capability || can(user.role, item.capability)).map((item) => (
+          {NAV.filter(
+            (item) =>
+              (!item.capability || can(user.role, item.capability)) &&
+              (!item.dev || session.platform.devTools),
+          ).map((item) => (
             <li key={item.to}>
               <Link
                 to={item.to}

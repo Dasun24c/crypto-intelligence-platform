@@ -9,3 +9,5 @@ packages/db/src/generated/
 docs/
 REQUIREMENTS.md
 *.md
+# Generated golden fixtures (packages/smc-engine/scripts/fixtures): one candle per line, not Prettier style
+packages/smc-engine/fixtures/

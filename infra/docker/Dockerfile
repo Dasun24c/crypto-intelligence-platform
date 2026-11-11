@@ -20,12 +20,14 @@ COPY pnpm-lock.yaml pnpm-workspace.yaml package.json ./
 RUN --mount=type=cache,id=pnpm-store,target=/pnpm/store --mount=type=cache,id=pnpm-cache,target=/root/.cache/pnpm pnpm fetch --store-dir /pnpm/store
 
 FROM fetch AS build
+# Development tools in the web build (fixture labelling): only when asked for (compose.dev.yaml).
+ARG CIP_PUBLIC_DEV_TOOLS=false
 COPY . .
 RUN --mount=type=cache,id=pnpm-store,target=/pnpm/store --mount=type=cache,id=pnpm-cache,target=/root/.cache/pnpm \
     pnpm install --offline --frozen-lockfile --store-dir /pnpm/store \
       --filter "./packages/*" --filter "./apps/{api,ingestor,analyzer,jobs,web}"
-RUN pnpm --filter "./packages/{contracts,observability,db,domain,exchange-adapters,market-data,indicators}" --filter "./apps/{api,ingestor,analyzer,jobs}" run build \
- && pnpm --filter @cip/web run build
+RUN pnpm --filter "./packages/{contracts,observability,db,domain,exchange-adapters,market-data,indicators,smc-engine}" --filter "./apps/{api,ingestor,analyzer,jobs}" run build \
+ && CIP_PUBLIC_DEV_TOOLS=$CIP_PUBLIC_DEV_TOOLS pnpm --filter @cip/web run build
 
 # Production dependencies only, for the server packages. This stage starts clean: `pnpm fetch` fills
 # node_modules/.pnpm with every package (dev tools included), so inheriting from it would ship them.
@@ -52,6 +54,7 @@ COPY --from=build --chown=node:node /repo/packages/domain/dist ./packages/domain
 COPY --from=build --chown=node:node /repo/packages/exchange-adapters/dist ./packages/exchange-adapters/dist
 COPY --from=build --chown=node:node /repo/packages/market-data/dist ./packages/market-data/dist
 COPY --from=build --chown=node:node /repo/packages/indicators/dist ./packages/indicators/dist
+COPY --from=build --chown=node:node /repo/packages/smc-engine/dist ./packages/smc-engine/dist
 COPY --from=build --chown=node:node /repo/apps/api/dist ./apps/api/dist
 COPY --from=build --chown=node:node /repo/apps/ingestor/dist ./apps/ingestor/dist
 COPY --from=build --chown=node:node /repo/apps/analyzer/dist ./apps/analyzer/dist

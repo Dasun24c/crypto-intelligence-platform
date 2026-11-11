@@ -394,3 +394,23 @@ Fixtures live in `packages/smc-engine/fixtures/<concept>/<case>.json`:
 - **Replay equals live**: replaying a stored period reproduces the live run's event digest exactly.
 - **Invariants**: no transition out of `resolved`; no event refers to a candle after the one being processed; prices respect the instrument tick.
 - **Performance**: p95 `step` time ≤ 2 ms per candle for one instrument with all rules enabled, on the reference CI runner.
+
+## 14. Implementation notes (ruleset 0.1.0)
+
+> **Added in Phase 4, for review.** Building the engine (`packages/smc-engine`) needed answers the rules above do not give. These are the choices made, each a candidate judgement call like J1–J10; changing any of them is a new `rulesetVersion`.
+
+| # | Question | The engine's answer | Why |
+|---|---|---|---|
+| I1 | §3.4 evaluates sweeps on several timeframes, and a sweep "sets the level's status to swept". Whose sweep counts? | A level's status is decided on its **home** timeframe: the longest sweep timeframe not longer than its origin (a 1d level's is 4h). Shorter sweep timeframes record their own sweeps of it, and stop evaluating it, without changing its status. | Otherwise a 5m wick would use up a 1h level before the 15m setup timeframe could see it sweep, and patterns on (4h, 15m) would rarely get sweeps. |
+| I2 | Which timeframes get swings and structure (§2.1–§2.2 say "per TF")? | 5m, 15m, 1h, 4h and 1d (`structureTimeframes`, a profile setting). Not 1m. | 1m levels would never be evaluated (no sweep timeframe is that short), and 1m structure is noise for the patterns. |
+| I3 | Origin timeframe of period, session and weekend levels | Day, week, month and weekend levels: 1d. Session levels: 1h, built from 1h candles (sessions are whole UTC hours). | It decides which timeframes evaluate them (I1). |
+| I4 | What a partial candle (minutes missing for good) is | A gap: no swing window, displacement leg or range window spans it, and pending breaches on its timeframe are dropped (§9). Its prices still feed ATR and the period and session levels, which are then flagged `data_gap`. A range active on its timeframe ends with `data_gap`. | Its high, low and close are incomplete; §9 already treats missing candles this way. |
+| I5 | What happens to a range's high and low when the range ends | The side it broke out of becomes `broken`, the other `expired`; both `expired` when it expires or a gap ends it. While the range is active, the sweep rule's "broken" does not apply to them: only the range's own breakout rule ends them. | §3.4 rule 7 keeps them active while the range is; it says nothing about after. |
+| I6 | Lifetimes §3.3 does not list | Sweep extremes: 300 candles of their timeframe. Weekend levels: until the next closure's levels replace them, at most 7 days ("the latest gold-market closure"). Candle counts are applied as that many candle durations. | Without a lifetime they would accumulate for ever. |
+| I7 | Which gold closures make weekend levels | Weekend and holiday closures, merged when they touch; not the daily one-hour breaks. | The levels are named for the weekend; an hour-long break is not a liquidity event. |
+| I8 | How an MSS is recorded | Once, as `mss` (a CHOCH with displacement), not also as `choch`. | One structure event per break. |
+| I9 | Which displacement a break records when its leg has several | The strongest (largest body in ATR; ties to the earliest). `createdFvg` counts FVGs whose third candle is the break candle or earlier. | The FVG after a break-candle displacement is not known at the break; recording it later would change a published event. |
+| I10 | The breaking leg's start for a BOS (§2.2 defines it for a CHOCH) | The opposite extreme after the broken swing's candle (for a bullish BOS, the lowest low since the swing high). Ties go to the most recent candle. | The mirror of the CHOCH definition. |
+| I11 | A swing that matches several equal highs | It joins the nearest active level within tolerance; if none, it pairs with the most recent earlier swing that qualifies. | Each swing makes or touches at most one level. |
+| I12 | Thin-book window when a sweep confirms on a later candle | The 1m profiles of every candle from the breach to the confirmation, summed as each candle closes; one missing minute or profile makes the result unknown (`liquidity_unverified`). | §3.5 as written, done incrementally. |
+| I13 | When a level is first evaluated | From the first candle that opens at or after the level became known. | A candle already open when the level appeared mixes earlier trading in. |

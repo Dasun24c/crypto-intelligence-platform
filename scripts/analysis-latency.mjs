@@ -1,7 +1,8 @@
 #!/usr/bin/env node
-// Criterion 3.5 / NFR-02: how soon indicator values are published after a candle closes.
+// Criteria 3.5 and 4.6 / NFR-02: how soon indicator values (≤ 1 s p95) and SMC detections
+// (≤ 2 s p95) are published after a candle closes.
 //
-// For every `indicators.closed` entry on `an:events` in the window, it measures:
+// For every `indicators.closed` and `smc` entry on `an:events` in the window, it measures:
 //   - wake-up → published: from the ingestor's `md:candles:{id}` entry announcing the final candle
 //     to the analyzer's `an:events` entry. Both are Redis stream ids (Redis server clock, ms).
 //   - boundary → published: from the candle's close boundary (venue time) to the `an:events` entry,
@@ -115,7 +116,7 @@ const clock = await redisClockOffset(redis);
 
 const published = (await redis.command('XRANGE', 'an:events', String(start), '+')).map(([id, f]) => {
   const { type, data } = fields(f);
-  return { id, type, ...JSON.parse(data) };
+  return { ...JSON.parse(data), id, stream: type };
 });
 const wakeups = new Map(); // instrumentId → Map(boundary → { ms, tfs })
 for (const instrumentId of new Set(published.map((p) => p.instrumentId))) {
@@ -136,17 +137,26 @@ const wake = [];
 const boundary = [];
 const byTf = {};
 const byInstrument = {};
+const smcWake = [];
+const smcBoundary = [];
 let untimed = 0;
 for (const p of published) {
-  if (p.type !== 'indicators.closed') continue;
-  const close = p.point.t + TF_MS[p.tf];
+  const smc = p.stream === 'smc';
+  if (p.stream !== 'indicators.closed' && !smc) continue;
+  // An SMC detection is decided at a boundary (`time`); any timeframe's wake-up for it counts.
+  const close = smc ? p.time : p.point.t + TF_MS[p.tf];
   const w = wakeups.get(p.instrumentId)?.get(close);
-  if (!w || !w.tfs.includes(p.tf)) {
+  if (!w || (!smc && !w.tfs.includes(p.tf))) {
     untimed++;
     continue;
   }
   const a = idMs(p.id) - w.ms;
   const b = Math.round(idMs(p.id) - clock.offset - close);
+  if (smc) {
+    smcWake.push(a);
+    smcBoundary.push(b);
+    continue;
+  }
   wake.push(a);
   boundary.push(b);
   (byTf[p.tf] ??= []).push(a);
@@ -163,5 +173,8 @@ for (const [tf, v] of Object.entries(byTf)) console.log(`  ${tf.padEnd(3)} ${sta
 console.log(`boundary → published: ${stats(boundary)}`);
 // Per instrument: Coinbase candles close 2 s after the boundary (late-trade grace), Binance ones at once.
 for (const [id, v] of Object.entries(byInstrument)) console.log(`  ${id} ${stats(v)}`);
-const p95 = [...wake].sort((x, y) => x - y)[Math.ceil(0.95 * wake.length) - 1];
-process.exitCode = wake.length > 0 && p95 <= 1000 ? 0 : 1;
+console.log(`SMC wake-up → published:  ${stats(smcWake)}`);
+console.log(`SMC boundary → published: ${stats(smcBoundary)}`);
+const p95 = (v) => [...v].sort((x, y) => x - y)[Math.ceil(0.95 * v.length) - 1];
+process.exitCode =
+  wake.length > 0 && p95(wake) <= 1000 && (smcWake.length === 0 || p95(smcWake) <= 2000) ? 0 : 1;

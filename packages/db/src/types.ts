@@ -88,6 +88,13 @@ export interface Database {
   'market.data_gaps': DataGapsTable;
   'analysis.detection_runs': DetectionRunsTable;
   'analysis.indicator_values': IndicatorValuesTable;
+  'analysis.engine_checkpoints': EngineCheckpointsTable;
+  'analysis.detection_events': DetectionEventsTable;
+  'analysis.swing_points': SwingPointsTable;
+  'analysis.structure_events': StructureEventsTable;
+  'analysis.trading_ranges': TradingRangesTable;
+  'analysis.liquidity_levels': LiquidityLevelsTable;
+  'analysis.sweeps': SweepsTable;
 }
 
 // ---------------------------------------------------------------- market (data model §4)
@@ -293,6 +300,8 @@ export interface DetectionRunsTable {
   result_digest: string | null;
   started_at: Generated<Date>;
   finished_at: Date | null;
+  /** For a replay, the live run it copied its origins and profile from (ADR 017). */
+  source_run_id: ColumnType<string | null, string | null | undefined, string | null>;
 }
 
 /** double precision columns come back from node-postgres as numbers, exactly as stored. */
@@ -316,6 +325,122 @@ export interface IndicatorValuesTable {
   trend_strength: number | null;
 }
 
+type SmcTimeframe = '1m' | '5m' | '15m' | '1h' | '4h' | '1d';
+
+export interface EngineCheckpointsTable {
+  run_id: string;
+  last_boundary: Date;
+  /** bigint: a string from node-postgres. */
+  lease_epoch: ColumnType<string, string | number, string | number>;
+  state: Buffer;
+  updated_at: Generated<Date>;
+}
+
+export interface DetectionEventsTable {
+  run_id: string;
+  /** bigint: a string from node-postgres. */
+  seq: ColumnType<string, string | number, never>;
+  candle_time: Date;
+  instrument_id: string;
+  timeframe: SmcTimeframe;
+  type:
+    | 'swing_confirmed'
+    | 'structure'
+    | 'range_detected'
+    | 'range_ended'
+    | 'level_created'
+    | 'level_status'
+    | 'sweep'
+    | 'gap_marker';
+  entity_id: string | null;
+  payload: ColumnType<unknown, string, never>;
+}
+
+export interface SwingPointsTable {
+  id: string;
+  run_id: string;
+  instrument_id: string;
+  timeframe: SmcTimeframe;
+  kind: 'high' | 'low';
+  structure_level: 'internal' | 'external';
+  price: string;
+  candle_time: Date;
+  confirmed_at: Date;
+  flags: ColumnType<string[], string[] | undefined, string[]>;
+}
+
+export interface StructureEventsTable {
+  id: string;
+  run_id: string;
+  instrument_id: string;
+  timeframe: SmcTimeframe;
+  structure_level: 'internal' | 'external';
+  type: 'bos' | 'choch' | 'mss';
+  direction: 'bullish' | 'bearish';
+  broken_swing_id: string | null;
+  break_price: string;
+  break_candle_time: Date;
+  is_initial: ColumnType<boolean, boolean | undefined, boolean>;
+  displacement: ColumnType<unknown, string | null, string | null>;
+  flags: ColumnType<string[], string[] | undefined, string[]>;
+}
+
+export interface TradingRangesTable {
+  id: string;
+  run_id: string;
+  instrument_id: string;
+  timeframe: SmcTimeframe;
+  high: string;
+  low: string;
+  equilibrium: string;
+  window_start: Date;
+  detected_at: Date;
+  ended_at: Date | null;
+  end_reason: 'breakout_up' | 'breakout_down' | 'expired' | 'data_gap' | null;
+  flags: ColumnType<string[], string[] | undefined, string[]>;
+}
+
+export interface LiquidityLevelsTable {
+  id: string;
+  run_id: string;
+  instrument_id: string;
+  origin_timeframe: SmcTimeframe;
+  type: string;
+  side: 'buy_side' | 'sell_side';
+  price: string;
+  touches: ColumnType<number, number | undefined, number>;
+  session_name: 'asia' | 'london' | 'new_york' | null;
+  source_ref: ColumnType<unknown, string | null, string | null>;
+  location: ColumnType<
+    'internal' | 'external' | 'straddling' | 'none',
+    'internal' | 'external' | 'straddling' | 'none' | undefined,
+    'internal' | 'external' | 'straddling' | 'none'
+  >;
+  known_at: Date;
+  status: 'active' | 'swept' | 'broken' | 'expired';
+  status_changed_at: Date | null;
+  sweep_count: ColumnType<number, number | undefined, number>;
+  flags: ColumnType<string[], string[] | undefined, string[]>;
+}
+
+export interface SweepsTable {
+  id: string;
+  run_id: string;
+  instrument_id: string;
+  timeframe: SmcTimeframe;
+  level_id: string;
+  group_id: string;
+  kind: 'wick' | 'false_breakout';
+  side: 'buy_side' | 'sell_side';
+  level_price: string;
+  extreme_price: string;
+  penetration_atr: number;
+  breach_candle_time: Date;
+  confirmed_candle_time: Date;
+  notional_beyond_usd: string | null;
+  flags: ColumnType<string[], string[] | undefined, string[]>;
+}
+
 export type InstrumentRow = Selectable<InstrumentsTable>;
 export type CandleRow = Selectable<CandlesTable>;
 export type NewCandle = Insertable<CandlesTable>;
@@ -323,6 +448,14 @@ export type NewTrade = Insertable<TradesTable>;
 export type DataGapRow = Selectable<DataGapsTable>;
 export type DetectionRunRow = Selectable<DetectionRunsTable>;
 export type IndicatorValueRow = Selectable<IndicatorValuesTable>;
+export type EngineCheckpointRow = Selectable<EngineCheckpointsTable>;
+export type DetectionEventRow = Selectable<DetectionEventsTable>;
+export type NewDetectionEvent = Insertable<DetectionEventsTable>;
+export type SwingPointRow = Selectable<SwingPointsTable>;
+export type StructureEventRow = Selectable<StructureEventsTable>;
+export type TradingRangeRow = Selectable<TradingRangesTable>;
+export type LiquidityLevelRow = Selectable<LiquidityLevelsTable>;
+export type SweepRow = Selectable<SweepsTable>;
 export type NewIndicatorValue = Insertable<IndicatorValuesTable>;
 
 export type UserRow = Selectable<UsersTable>;

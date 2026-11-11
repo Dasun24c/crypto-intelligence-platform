@@ -1,6 +1,7 @@
 import { z } from 'zod';
 import { TsSchema, UuidSchema } from './common.js';
 import { TimeframeSchema } from './market.js';
+import { SmcParamsSchema } from './smc-params.js';
 
 /** Technical analysis: indicators and analysis runs (API contracts §3 "Analysis", §4, §5). */
 
@@ -24,8 +25,14 @@ export const IndicatorParamsSchema = z.strictObject({
 });
 export type IndicatorParams = z.infer<typeof IndicatorParamsSchema>;
 
-/** `market.instrument_profiles.params`. Later phases add their settings next to `indicators`. */
-export const ProfileParamsSchema = z.object({ indicators: IndicatorParamsSchema });
+/**
+ * `market.instrument_profiles.params`: indicator settings, and from version 2 of the launch
+ * profiles (Phase 4) the SMC settings. Later phases add theirs next to these.
+ */
+export const ProfileParamsSchema = z.object({
+  indicators: IndicatorParamsSchema,
+  smc: SmcParamsSchema.optional(),
+});
 export type ProfileParams = z.infer<typeof ProfileParamsSchema>;
 
 export const TrendSchema = z.enum(['bullish', 'bearish', 'neutral']);

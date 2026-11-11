@@ -54,6 +54,11 @@ export function vwap(bars: readonly Bar[]): Series {
   return out;
 }
 
+/** A {@link Vwap}'s state, for checkpoints: the day's exact sums as decimal strings. */
+export interface VwapState {
+  day: { index: number; anchored: boolean; priceVolume: string; volume: string } | null;
+}
+
 /** The streaming form of {@link vwap}. */
 export class Vwap {
   private day: Day | null = null;
@@ -63,5 +68,27 @@ export class Vwap {
     const r = step(this.day, bar);
     this.day = r.day;
     return r.value;
+  }
+
+  snapshot(): VwapState {
+    const d = this.day;
+    return {
+      day: d
+        ? {
+            index: d.index,
+            anchored: d.anchored,
+            priceVolume: d.priceVolume.toString(),
+            volume: d.volume.toString(),
+          }
+        : null,
+    };
+  }
+
+  restore(state: VwapState): this {
+    const d = state.day;
+    this.day = d
+      ? { index: d.index, anchored: d.anchored, priceVolume: dec(d.priceVolume), volume: dec(d.volume) }
+      : null;
+    return this;
   }
 }

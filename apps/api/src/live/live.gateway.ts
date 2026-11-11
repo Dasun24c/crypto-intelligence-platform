@@ -10,6 +10,7 @@ import {
   CONFIG_CHANNELS,
   type Envelope,
   isDurableChannel,
+  type SmcEventMessage,
   type SubscribeAck,
   SubscribeRequestSchema,
   TimeframeSchema,
@@ -19,6 +20,7 @@ import {
 } from '@cip/contracts';
 import type { Logger } from '@cip/observability';
 import { AnalysisRepository } from '../analysis/analysis.repository.js';
+import { SmcRepository } from '../analysis/smc.repository.js';
 import { TokenService } from '../auth/token.service.js';
 import type { AuthenticatedUser } from '../common/access.js';
 import { ProblemError } from '../common/problem.js';
@@ -36,7 +38,7 @@ const STREAMS = [MARKET_EVENTS, ANALYSIS_EVENTS_STREAM] as const;
 type DurableStream = (typeof STREAMS)[number];
 /** The stream a durable channel's messages come from. */
 export const streamOf = (ch: string): DurableStream =>
-  ch.startsWith('indicators:') ? ANALYSIS_EVENTS_STREAM : MARKET_EVENTS;
+  ch.startsWith('indicators:') || ch.startsWith('smc:') ? ANALYSIS_EVENTS_STREAM : MARKET_EVENTS;
 const MARKET_TYPES = new Set(['gap.opened', 'gap.closed', 'feed.status', 'wall.appeared', 'wall.ended']);
 const MAX_CHANNELS = 200;
 const MAX_REPLAY = 10_000;
@@ -95,6 +97,7 @@ export class LiveGateway implements OnApplicationBootstrap, OnApplicationShutdow
     private readonly market: MarketRepository,
     private readonly health: HealthService,
     private readonly analysis: AnalysisRepository,
+    private readonly smc: SmcRepository,
   ) {}
 
   onApplicationBootstrap(): void {
@@ -278,6 +281,11 @@ export class LiveGateway implements OnApplicationBootstrap, OnApplicationShutdow
     const [, id = '', tf] = ch.split(':');
     if (ch.startsWith('indicators:'))
       return { series: await this.analysis.series(id, TimeframeSchema.parse(tf), { limit: 500 }) };
+    if (ch.startsWith('smc:')) {
+      // The live run's active levels and ranges; history comes from GET /smc/{id}/overlay.
+      const run = await this.smc.run(id);
+      return { run, ...(run ? await this.smc.active(run.id) : { levels: [], ranges: [] }) };
+    }
     if (ch.startsWith('trades:'))
       return { largeTrades: (await this.market.largeTrades(id, { limit: 50 })).items };
     const now = this.clock();
@@ -386,6 +394,12 @@ export function toEnvelope(seq: string, fields: string[]): Envelope | null {
   const type = fields[1];
   const raw = fields[3];
   if (!type || !raw) return null;
+  if (type === 'smc') {
+    // An SMC detection: the message type and the entity in its API form (SmcEventMessage).
+    const m = JSON.parse(raw) as Partial<SmcEventMessage>;
+    if (typeof m.instrumentId !== 'string' || typeof m.type !== 'string') return null;
+    return { ch: `smc:${m.instrumentId}`, seq, ts: Number(seq.split('-')[0]), type: m.type, data: m.data };
+  }
   const data = JSON.parse(raw) as { instrumentId?: unknown; tf?: unknown };
   if (typeof data.instrumentId !== 'string') return null;
   const ch =

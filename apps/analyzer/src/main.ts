@@ -4,6 +4,9 @@ import type pg from 'pg';
 import { createDb } from '@cip/db';
 import { ConfigError, INSTANCE_ID, PinoNestLogger, runService } from '@cip/observability';
 import { Analyzer } from './analysis/analyzer.js';
+import { AnalysisRepository } from './analysis/repository.js';
+import { ReplayWorker } from './analysis/replay.js';
+import { SmcStore } from './analysis/smc-store.js';
 import { loadAnalyzerConfig } from './config.js';
 import { AnalyzerModule, AnalyzerStatus, PG_POOL } from './analyzer.module.js';
 
@@ -14,8 +17,9 @@ async function main(): Promise<void> {
       logger: new PinoNestLogger(log),
     });
     const status = app.get(AnalyzerStatus);
+    const db = createDb({ pool: app.get<pg.Pool>(PG_POOL) });
     const analyzer = new Analyzer({
-      db: createDb({ pool: app.get<pg.Pool>(PG_POOL) }),
+      db,
       redis,
       redisUrl: config.REDIS_URL,
       log,
@@ -23,10 +27,20 @@ async function main(): Promise<void> {
       instance: INSTANCE_ID,
     });
     await analyzer.start();
+    // Replays (ADR 017): the same engine on stored history, one at a time.
+    const replays = new ReplayWorker({
+      repo: new AnalysisRepository(db),
+      store: new SmcStore(db),
+      log,
+      redisUrl: config.REDIS_URL,
+      prefix: config.QUEUE_PREFIX,
+    });
+    replays.start();
     return {
       probe: () => analyzer.probe(),
       readiness: () => status.readiness(),
       stop: async () => {
+        await replays.stop();
         await analyzer.stop();
         await app.close();
       },

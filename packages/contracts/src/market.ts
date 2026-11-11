@@ -286,20 +286,26 @@ export const channels = {
   trades: (instrumentId: string) => `trades:${instrumentId}`,
   market: (instrumentId: string) => `market:${instrumentId}`,
   indicators: (instrumentId: string, tf: Tf) => `indicators:${instrumentId}:${tf}`,
+  smc: (instrumentId: string) => `smc:${instrumentId}`,
   systemHealth: 'system:health',
 } as const;
 
 const UUID = '[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}';
 export const CHANNEL_PATTERN = new RegExp(
-  `^(?:(?:ticker|book|trades|market):${UUID}|(?:candles|indicators):${UUID}:(?:1m|5m|15m|1h|4h|1d)|system:health)$`,
+  `^(?:(?:ticker|book|trades|market|smc):${UUID}|(?:candles|indicators):${UUID}:(?:1m|5m|15m|1h|4h|1d)|system:health)$`,
 );
 
 /**
  * Durable channels carry `seq` (the id of the stream entry behind the message: md:events for
- * trades and market, an:events for indicators) and can be replayed after a reconnect.
+ * trades and market, an:events for indicators and smc) and can be replayed after a reconnect.
  */
 export function isDurableChannel(channel: string): boolean {
-  return channel.startsWith('trades:') || channel.startsWith('market:') || channel.startsWith('indicators:');
+  return (
+    channel.startsWith('trades:') ||
+    channel.startsWith('market:') ||
+    channel.startsWith('indicators:') ||
+    channel.startsWith('smc:')
+  );
 }
 
 export const SubscribeRequestSchema = z.strictObject({
@@ -382,6 +388,13 @@ export type MarketMessageType =
   | 'wall.ended'
   | 'spread'
   | 'indicators.closed'
+  | 'swing.confirmed'
+  | 'structure'
+  | 'range.detected'
+  | 'range.ended'
+  | 'level.created'
+  | 'level.status'
+  | 'sweep'
   | 'health.update';
 
 /** A stored or live candle in its wire form (structural, so this package stays dependency-free). */

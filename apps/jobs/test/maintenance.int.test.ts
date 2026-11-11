@@ -125,6 +125,9 @@ describe('maintenance queue on Valkey', () => {
       expect(failedJobs).toContain('not-a-real-job');
       expect(completedJobs).toContain(PRUNE_REFRESH_TOKENS);
       expect(await maintenance.counts()).toMatchObject({ failed: expect.any(Number) });
+      // Health counts recent failures only: this one is recent; none finished in the future.
+      expect(await maintenance.failedSince(Date.now() - 60_000)).toBeGreaterThanOrEqual(1);
+      expect(await maintenance.failedSince(Date.now() + 60_000)).toBe(0);
     } finally {
       await events.close();
     }

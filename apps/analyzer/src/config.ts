@@ -11,6 +11,11 @@ export const AnalyzerEnvSchema = z.object({
   /** Connects as the least-privilege role `svc_analyzer` (data model §9). */
   DATABASE_URL: z.url(),
   REDIS_URL: z.url(),
+  /** Key prefix for every BullMQ queue (the analyzer takes replays from `replay`). */
+  QUEUE_PREFIX: z
+    .string()
+    .regex(/^[a-z][a-z0-9-]*$/)
+    .default('cip'),
   OTEL_EXPORTER_OTLP_ENDPOINT: z.url().optional(),
 });
 

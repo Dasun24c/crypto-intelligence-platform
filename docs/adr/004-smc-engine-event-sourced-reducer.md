@@ -2,7 +2,7 @@
 
 | | |
 |---|---|
-| Status | Accepted |
+| Status | Accepted (runtime details in [017](017-smc-runtime-boundaries-ids-digests-replays.md)) |
 | Date | 2026-11-10 |
 | Deciders | Project owner (Phase 0 approval) |
 | Related | [Architecture §7 Analysis pipeline](../phase-0/03-architecture.md#7-analysis-pipeline) · [SMC rulebook §1](../phase-0/07-smc-rulebook.md#1-conventions) · [SMC rulebook §13](../phase-0/07-smc-rulebook.md#13-test-obligations) · [Risks R08, R11](../phase-0/04-risks-and-dependencies.md#1-risk-register) · [ADR 005](005-analysis-pauses-at-data-gaps.md) |

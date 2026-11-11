@@ -55,6 +55,11 @@ export function isVolumeAnomaly(z: number | null, threshold: number): boolean | 
   return z === null ? null : z >= threshold;
 }
 
+/** A {@link VolumeZ}'s state, for checkpoints. */
+export interface VolumeZState {
+  history: number[];
+}
+
 /** The streaming form of {@link volumeZ}. */
 export class VolumeZ {
   private readonly history: number[] = [];
@@ -69,5 +74,15 @@ export class VolumeZ {
     this.history.push(volume);
     if (this.history.length > this.lookback) this.history.shift();
     return z;
+  }
+
+  snapshot(): VolumeZState {
+    return { history: [...this.history] };
+  }
+
+  restore(state: VolumeZState): this {
+    this.history.length = 0;
+    this.history.push(...state.history);
+    return this;
   }
 }

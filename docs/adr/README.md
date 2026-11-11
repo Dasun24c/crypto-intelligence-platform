@@ -20,3 +20,4 @@ An Architecture Decision Record (ADR) records one significant decision: the cont
 | [014](014-live-fan-out-without-socketio-adapter.md) | Live fan-out over Redis pub/sub and `md:events`, without the Socket.IO Redis adapter | Accepted | 2026-11-10 |
 | [015](015-replay-venue.md) | The replay venue plays recordings through the production adapters | Accepted | 2026-11-10 |
 | [016](016-indicators-match-ta-lib-fma-arithmetic.md) | Indicators match TA-Lib 0.8's arithmetic, fused multiply-add included | Accepted | 2026-11-10 |
+| [017](017-smc-runtime-boundaries-ids-digests-replays.md) | The SMC runtime steps boundaries, derives ids from natural keys, and runs replays in the analyzer | Accepted | 2026-11-11 |

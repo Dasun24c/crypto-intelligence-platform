@@ -65,6 +65,8 @@ export class Maintenance {
   readonly queue: Queue;
   readonly worker: Worker;
   private readonly connections: Redis[] = [];
+  /** The queue's connection, also used to count recent failures. */
+  private readonly redis: Redis;
 
   constructor(private readonly opts: MaintenanceOptions) {
     // BullMQ needs maxRetriesPerRequest: null for blocking worker connections.
@@ -73,7 +75,8 @@ export class Maintenance {
       this.connections.push(c);
       return c;
     };
-    this.queue = new Queue(MAINTENANCE_QUEUE, { connection: connection(), prefix: opts.prefix });
+    this.redis = connection();
+    this.queue = new Queue(MAINTENANCE_QUEUE, { connection: this.redis, prefix: opts.prefix });
     this.worker = new Worker(MAINTENANCE_QUEUE, (job) => this.process(job), {
       connection: connection(),
       prefix: opts.prefix,
@@ -134,6 +137,15 @@ export class Maintenance {
 
   async counts(): Promise<Record<string, number>> {
     return this.queue.getJobCounts('waiting', 'active', 'delayed', 'failed');
+  }
+
+  /**
+   * Jobs that failed at or after `since` (epoch ms). The failed set keeps up to 500 jobs for
+   * inspection, however old; health must look at recent failures only. BullMQ scores that set by
+   * the time each job finished.
+   */
+  async failedSince(since: number): Promise<number> {
+    return this.redis.zcount(this.queue.keys.failed!, since, '+inf');
   }
 
   async close(): Promise<void> {

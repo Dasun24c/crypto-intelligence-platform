@@ -142,9 +142,12 @@ const platform: Platform = {
 };
 
 /** A signed-in session whose live connection talks to a FakeLiveServer. */
-export async function signedIn(role: Role = 'viewer') {
+export async function signedIn(role: Role = 'viewer', opts: { devTools?: boolean } = {}) {
   const server = new FakeLiveServer();
-  const session = new Session(platform, { createSocket: server.create });
+  const session = new Session(
+    { ...platform, devTools: opts.devTools ?? false },
+    { createSocket: server.create },
+  );
   const user: UserSummary = { id: 'user-1', email: `${role}@cip.test`, displayName: 'Test User', role };
   await session.client.acceptSession({ accessToken: 'access-1', expiresAt: Date.now() + 900_000, user });
   session.store.setState({

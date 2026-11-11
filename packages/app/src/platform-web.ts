@@ -1,10 +1,11 @@
 import type { Platform } from './platform.js';
 
 /** The browser host: same-origin API, refresh token in an httpOnly cookie, Notification API. */
-export function createWebPlatform(appVersion: string): Platform {
+export function createWebPlatform(appVersion: string, opts: { devTools?: boolean } = {}): Platform {
   return {
     kind: 'web',
     appVersion,
+    devTools: opts.devTools ?? false,
     getServerUrl: () => Promise.resolve(''),
     secureStore: null,
     async notify({ title, body }) {

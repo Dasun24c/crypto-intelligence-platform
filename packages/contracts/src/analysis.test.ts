@@ -32,9 +32,12 @@ describe('analysis contracts', () => {
       { ...DEFAULTS, extra: true },
     ];
     for (const params of bad) expect(IndicatorParamsSchema.safeParse(params).success).toBe(false);
-    // A profile may carry other settings beside the indicators (later phases).
-    expect(ProfileParamsSchema.parse({ indicators: DEFAULTS, smc: { swingLength: 3 } }).indicators).toEqual(
+    // A profile may carry other settings beside the indicators (later phases); smc must be valid.
+    expect(ProfileParamsSchema.parse({ indicators: DEFAULTS, poi: { lookback: 5 } }).indicators).toEqual(
       DEFAULTS,
+    );
+    expect(ProfileParamsSchema.safeParse({ indicators: DEFAULTS, smc: { swingLength: 3 } }).success).toBe(
+      false,
     );
   });
 
