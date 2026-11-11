@@ -2,7 +2,7 @@
 
 Real-time monitoring and analysis of crypto markets, and of gold through the PAXG token: market data from Binance and Coinbase, technical indicators, Smart Money Concepts detection, AI analysis with Grok, alerts, and a web and desktop app.
 
-**Status:** Phase 2 (Market data) is built and awaiting acceptance: live trades, books, tickers and candles for nine pairs on Binance and Coinbase (public data only, no keys), gap detection and repair, the gold closure calendar and the PAXG cross-venue spread, large trades and walls, live WebSocket channels, and the Command Center, Market Activity and System Health views. Phase 1 (Foundations) is accepted. See the [Phase 2 acceptance report](docs/phase-2/acceptance-report.md), the [Phase 1 acceptance report](docs/phase-1/acceptance-report.md) and the [implementation plan](docs/phase-0/08-implementation-plan.md).
+**Status:** Phase 3 (Technical analysis) is built and awaiting acceptance: RSI, MACD, EMA, ATR, VWAP, volume anomalies and the indicator trend, computed live by the analyzer for every pair and timeframe (RSI, MACD, EMA and ATR bit-identical to TA-Lib 0.8.3), served by the API and a live channel, and shown on the Technical Analysis page. Phases 1 (Foundations) and 2 (Market data) are accepted. See the [Phase 3 acceptance report](docs/phase-3/acceptance-report.md), the [Phase 2 report](docs/phase-2/acceptance-report.md) and the [implementation plan](docs/phase-0/08-implementation-plan.md).
 
 ## Quick start
 
@@ -71,11 +71,12 @@ pnpm downloads Node.js 26.13.0 for this project (`devEngines` in `package.json`)
 ```
 apps/        api, ingestor, analyzer, jobs (NestJS); web (Vite); desktop (Tauri 2)
 packages/    contracts (zod), db (migrations, Kysely), observability, app (React), ui (design system), config,
-             domain (candles, decimals, closures), exchange-adapters (venues, replay), market-data (books, candles, detection)
-tools/       recorder for venue messages
+             domain (candles, decimals, closures), exchange-adapters (venues, replay), market-data (books, candles, detection),
+             indicators (RSI, MACD, EMA, ATR, VWAP, volume anomaly, trend; checked against TA-Lib)
+tools/       recorder for venue messages; reference-data (TA-Lib datasets, dev-only Python)
 infra/docker Dockerfile, Compose stack, Caddyfile, dev secret generation
 e2e/         Playwright smoke tests
-scripts/     CI guards: no exchange private endpoints, artefact scan
+scripts/     CI guards (no exchange private endpoints, artefact scan), live smoke test, analysis latency
 docs/        Phase 0 design, ADRs, phase acceptance reports
 ```
 
@@ -86,6 +87,8 @@ Workspace packages are consumed from source through the `@cip/source` export con
 - [Phase 0: analysis and design](docs/phase-0/README.md): requirements, feasibility, architecture, risks, data model, API contracts, SMC rulebook, implementation plan
 - [Architecture decision records](docs/adr/README.md)
 - [Phase 1 acceptance report](docs/phase-1/acceptance-report.md)
+- [Phase 2 acceptance report](docs/phase-2/acceptance-report.md)
+- [Phase 3 acceptance report](docs/phase-3/acceptance-report.md)
 - [Desktop app](apps/desktop/README.md)
 
 The platform is for analysis and education. It holds no exchange API keys, implements no trading, and never presents analysis as a guaranteed prediction.

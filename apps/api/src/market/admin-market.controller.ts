@@ -27,7 +27,7 @@ import {
   type UpdateInstrumentRequest,
   UpdateInstrumentRequestSchema,
 } from '@cip/contracts';
-import type { Database, InstrumentRow } from '@cip/db';
+import { type Database, type InstrumentRow, launchProfileFor } from '@cip/db';
 import { AuditService, type AuditEvent } from '../audit/audit.service.js';
 import { Access, type ApiRequest, clientIp, userAgent } from '../common/access.js';
 import { ProblemError } from '../common/problem.js';
@@ -108,7 +108,8 @@ export class AdminInstrumentsController {
             role: body.role,
             price_tick: pair.priceTick,
             qty_step: pair.qtyStep,
-            profile_id: null,
+            // Analysed from the start with its asset class's launch profile (migration 0006).
+            profile_id: launchProfileFor(body.assetClass),
             underlying_calendar_id: body.underlyingCalendar,
             is_primary_venue: body.isPrimaryVenue,
             store_raw_trades: body.storeRawTrades,

@@ -5,3 +5,4 @@ export * from './roles.js';
 export * from './audit.js';
 export * from './market.js';
 export * from './replay.js';
+export * from './profiles.js';

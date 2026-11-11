@@ -657,6 +657,16 @@ CREATE TABLE ops.system_events (                        -- hypertable on ts
 );
 ```
 
+> **As implemented in Phase 3** (migration 0006):
+>
+> - **Tables**: `analysis.detection_runs` and `analysis.indicator_values` are as above, plus an index `(instrument_id, started_at DESC)` on runs.
+> - **Run FK**: `indicator_values.run_id` references `detection_runs(id)`.
+> - **`series_origins`**: a new jsonb column on `detection_runs`. It maps each timeframe to the open time (epoch ms) of the candle the run's series starts at. It is set once, when the timeframe starts, so that what a run computes never depends on when it was restarted.
+> - **`params_hash`**: the SHA-256 of the profile's `params::text`. PostgreSQL prints jsonb keys in one canonical order, so equal settings hash the same.
+> - **Profiles**: version 1 of `crypto-majors` and `gold` is seeded with the indicator settings under `params.indicators`, and every instrument is assigned one by asset class. The SMC settings arrive as new versions.
+> - **Grants**: svc_analyzer and svc_jobs may INSERT and UPDATE runs and INSERT values; all four services may read them.
+> - **-0**: node-postgres sends -0 as 0, but the indicators never produce -0.
+
 ## 8. Hypertables, columnstore and retention
 
 | Table | Chunk interval | Columnstore after | Retention | Estimated rows/day (9 pairs) |

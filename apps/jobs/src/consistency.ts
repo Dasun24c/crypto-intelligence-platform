@@ -1,9 +1,10 @@
 import type { Redis } from 'ioredis';
 import type { Kysely } from 'kysely';
-import { floorTo, normalizeDecimal, TF_MS, type Timeframe } from '@cip/domain';
+import { floorTo, normalizeDecimal, REST_SETTLE_MS, TF_MS, type Timeframe } from '@cip/domain';
 import type { Database } from '@cip/db';
 import type { BinanceVenue, CoinbaseVenue, RestCandle } from '@cip/exchange-adapters';
 import type { Logger } from '@cip/observability';
+import { findHoles, type Hole } from './gap-repairs.js';
 
 export const CONSISTENCY_CHECK = 'consistency.check';
 /** Nightly, for the previous UTC day (00:20 UTC leaves backfills of the last minutes time to finish). */
@@ -61,6 +62,8 @@ export interface ConsistencyReport {
   checkedAt: number;
   ok: boolean;
   results: ConsistencyResult[];
+  /** 1m candles missing from our own history, whether or not the venue has them; each queued for repair. */
+  holes: (Hole & { symbol: string; repairQueued: boolean })[];
 }
 
 export interface ConsistencyDeps {
@@ -69,6 +72,8 @@ export interface ConsistencyDeps {
   log: Logger;
   venues: { binance: Pick<BinanceVenue, 'klines'>; coinbase: Pick<CoinbaseVenue, 'candles'> };
   now?: () => number;
+  /** Records a hole as a gap and queues its backfill (gap-repairs.ts); without it holes are only reported. */
+  repair?: (hole: Hole) => Promise<boolean>;
 }
 
 /** The previous UTC day. */
@@ -79,8 +84,12 @@ export function previousDay(now: number): { from: number; to: number } {
 
 export async function checkConsistency(
   deps: ConsistencyDeps,
-  range: { from: number; to: number },
+  requested: { from: number; to: number },
 ): Promise<ConsistencyReport> {
+  // A day that has not ended (checked on demand) is checked up to the last minute the venues have
+  // settled: they refuse ranges in the future, and the minute in progress has no final candle yet.
+  const now = deps.now?.() ?? Date.now();
+  const range = { from: requested.from, to: Math.min(requested.to, floorTo(now - REST_SETTLE_MS, '1m')) };
   const instruments = await deps.db
     .selectFrom('market.instruments')
     .select(['id', 'venue_id', 'venue_symbol'])
@@ -90,18 +99,24 @@ export async function checkConsistency(
     .orderBy('venue_symbol')
     .execute();
   const results: ConsistencyResult[] = [];
+  const holes: ConsistencyReport['holes'] = [];
   for (const inst of instruments) {
     const venue = inst.venue_id as 'binance' | 'coinbase';
     for (const { tf, granularity } of PLAN[venue]) {
       const venueRows = await fetchVenue(deps, venue, inst.venue_symbol, tf, granularity, range);
       results.push(await compare(deps.db, inst.id, venue, inst.venue_symbol, tf, range, venueRows));
     }
+    // A missing minute is lost data even where the venue has no candle either (no trades then):
+    // the comparison above cannot see it, so our own history is checked minute by minute.
+    for (const hole of await findHoles(deps.db, inst.id, range.from, range.to))
+      holes.push({ ...hole, symbol: inst.venue_symbol, repairQueued: (await deps.repair?.(hole)) ?? false });
   }
   const report: ConsistencyReport = {
     ...range,
-    checkedAt: deps.now?.() ?? Date.now(),
-    ok: results.every((r) => r.differences === 0),
+    checkedAt: now,
+    ok: results.every((r) => r.differences === 0) && holes.length === 0,
     results,
+    holes,
   };
   const failing = results.filter((r) => r.differences > 0);
   deps.log[report.ok ? 'info' : 'warn'](
@@ -109,6 +124,9 @@ export async function checkConsistency(
       from: new Date(range.from).toISOString(),
       compared: results.reduce((a, r) => a + r.compared, 0),
       failing: failing.map((r) => `${r.venue}:${r.symbol}:${r.timeframe} (${r.differences})`),
+      holes: holes.map(
+        (h) => `${h.symbol} ${new Date(h.from).toISOString()} (${(h.to - h.from) / 60_000} min)`,
+      ),
     },
     report.ok ? 'candles match the venues' : 'candles differ from the venues',
   );

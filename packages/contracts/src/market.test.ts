@@ -26,6 +26,7 @@ describe('live channels (API contracts §5.3)', () => {
       channels.candles(ID, '4h'),
       channels.trades(ID),
       channels.market(ID),
+      channels.indicators(ID, '15m'),
       channels.systemHealth,
     ];
     expect(names).toEqual([
@@ -34,16 +35,25 @@ describe('live channels (API contracts §5.3)', () => {
       `candles:${ID}:4h`,
       `trades:${ID}`,
       `market:${ID}`,
+      `indicators:${ID}:15m`,
       'system:health',
     ]);
     for (const n of names) expect(CHANNEL_PATTERN.test(n)).toBe(true);
-    for (const bad of ['ticker:BTC', `candles:${ID}:2h`, `orders:${ID}`, 'system:secrets', `ticker:${ID}x`])
+    for (const bad of [
+      'ticker:BTC',
+      `candles:${ID}:2h`,
+      `indicators:${ID}`,
+      `orders:${ID}`,
+      'system:secrets',
+      `ticker:${ID}x`,
+    ])
       expect(CHANNEL_PATTERN.test(bad)).toBe(false);
   });
 
-  it('marks trades and market channels durable (they carry seq and replay)', () => {
+  it('marks trades, market and indicators channels durable (they carry seq and replay)', () => {
     expect(isDurableChannel(channels.trades(ID))).toBe(true);
     expect(isDurableChannel(channels.market(ID))).toBe(true);
+    expect(isDurableChannel(channels.indicators(ID, '1h'))).toBe(true);
     expect(isDurableChannel(channels.ticker(ID))).toBe(false);
     expect(isDurableChannel(channels.candles(ID, '1m'))).toBe(false);
   });

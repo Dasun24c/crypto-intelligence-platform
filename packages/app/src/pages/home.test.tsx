@@ -73,9 +73,11 @@ describe('Command Center', () => {
     server.push(channels.ticker(BTC_BINANCE.id), 'ticker', ticker(BTC_BINANCE.id, '74020.1'));
     await waitFor(() => expect(lastPrice(btc)).toBe('Last price 74,020.10 USDT'));
     expect(within(btc).getByText(/^updated \d+ s ago$/)).toBeTruthy();
-    // The tile links to its Market Activity view.
+    // The tile links to its Market Activity and Technical Analysis views.
     const link = within(btc).getByRole('link', { name: /^Market activity/ });
     expect(link.getAttribute('href')).toBe(`/market?instrument=${BTC_BINANCE.id}`);
+    const analysis = within(btc).getByRole('link', { name: /^Technical analysis/ });
+    expect(analysis.getAttribute('href')).toBe(`/analysis?instrument=${BTC_BINANCE.id}`);
   });
 
   it('labels replay instruments and says plainly when there is no live data', async () => {

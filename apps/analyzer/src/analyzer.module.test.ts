@@ -7,15 +7,6 @@ function status(db: () => Promise<unknown>, redis: () => Promise<unknown>) {
 }
 
 describe('analyzer status', () => {
-  it('reports a truthful idle state until its phase delivers the real work', () => {
-    const probe = status(
-      () => Promise.resolve(),
-      () => Promise.resolve('PONG'),
-    ).probe();
-    expect(probe.status).toBe('ok');
-    expect(probe.detail).toMatch(/^idle: .*SMC engine/);
-  });
-
   it('is ready only when the database and Redis answer', async () => {
     const ok = status(
       () => Promise.resolve({ rows: [] }),

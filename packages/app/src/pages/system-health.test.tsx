@@ -2,13 +2,16 @@ import { cleanup, screen, waitFor, within } from '@testing-library/react';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { channels } from '@cip/contracts';
 import {
+  analysisStatus,
   BTC_BINANCE,
   BTC_COINBASE,
   BTC_REPLAY,
   feed,
   health,
   INSTRUMENTS,
+  PAXG_BINANCE,
   PAXG_COINBASE,
+  USDT_COINBASE,
 } from '../test/fixtures.js';
 import { mockApi, problem, renderApp, signedIn } from '../test/harness.js';
 
@@ -94,6 +97,78 @@ describe('System Health', () => {
     const { session, user } = await signedIn();
     renderApp('/system', session, user);
     expect(await screen.findByText(/No feed is reported/)).toBeTruthy();
+    expect(screen.getByText('No instrument is enabled, so nothing is analysed.')).toBeTruthy();
+  });
+
+  it('lists the analysis of every enabled instrument, including those no analyzer reports', async () => {
+    const usdt = { ...USDT_COINBASE, profile: { name: 'crypto-majors', version: 1 } };
+    mockApi({
+      'GET /api/v1/system/health': health(FEEDS, {
+        analysis: [
+          analysisStatus(BTC_BINANCE.id, { lagSec: 0.4 }),
+          analysisStatus(PAXG_BINANCE.id, {
+            paused: true,
+            pauseReason: 'data_gap',
+            detail: '1m: missing 2026-11-10 12:01 (backfill running)',
+            lagSec: 180,
+          }),
+          analysisStatus(BTC_COINBASE.id, {
+            status: 'warming_up',
+            paused: true,
+            pauseReason: 'warming_up',
+            detail: '1d: waiting for history',
+            lagSec: null,
+          }),
+          // Reported, but not in the instrument list (yet).
+          analysisStatus(BTC_REPLAY.id),
+        ],
+      }),
+      'GET /api/v1/instruments': [BTC_BINANCE, PAXG_BINANCE, BTC_COINBASE, PAXG_COINBASE, usdt],
+    });
+    const { session, user } = await signedIn();
+    renderApp('/system', session, user);
+    const card = (await screen.findByRole('heading', { name: 'Analysis' })).closest('section')!;
+    await waitFor(() =>
+      expect(within(card).getByText('4 of 6 instruments analysed · 2 paused')).toBeTruthy(),
+    );
+    const table = within(card).getByRole('table', { name: 'Analysis state of each enabled instrument' });
+    // Command Center order; instruments known only from a status come last.
+    expect(
+      within(table)
+        .getAllByRole('row')
+        .slice(1)
+        .map((r) => within(r).getAllByRole('cell')[0]!.textContent),
+    ).toEqual([
+      BTC_BINANCE.displayName,
+      BTC_COINBASE.displayName,
+      PAXG_BINANCE.displayName,
+      PAXG_COINBASE.displayName,
+      usdt.displayName,
+      `Instrument ${BTC_REPLAY.id}`,
+    ]);
+
+    const btc = within(table).getByRole('row', { name: /^BTC · Binance/ });
+    expect(within(btc).getByText('Live')).toBeTruthy();
+    expect(within(btc).getByText('No')).toBeTruthy();
+    expect(within(btc).getByText('0 s')).toBeTruthy();
+    expect(within(btc).getByText('2 s ago')).toBeTruthy();
+
+    const gap = within(table).getByRole('row', { name: /^PAXG \(gold-backed token\) · Binance/ });
+    expect(within(gap).getByText('Data gap')).toBeTruthy();
+    expect(within(gap).getByText('1m: missing 2026-11-10 12:01 (backfill running)')).toBeTruthy();
+    expect(within(gap).getByText('3 min')).toBeTruthy();
+
+    const warming = within(table).getByRole('row', { name: /^BTC · Coinbase/ });
+    expect(within(warming).getByText('Warming up')).toBeTruthy();
+    expect(within(warming).getByText('Waiting for history')).toBeTruthy();
+    expect(within(warming).getByText('1d: waiting for history')).toBeTruthy();
+    expect(within(warming).getByText('no candle analysed yet')).toBeTruthy();
+
+    const unheld = within(table).getByRole('row', { name: /^USDT · Coinbase/ });
+    expect(within(unheld).getByText('Not analysed')).toBeTruthy();
+    expect(within(unheld).getByText('Not analysed: no analyzer holds this instrument')).toBeTruthy();
+    const noProfile = within(table).getByRole('row', { name: /^PAXG \(gold-backed token\) · Coinbase/ });
+    expect(within(noProfile).getByText('Not analysed: the instrument has no profile')).toBeTruthy();
   });
 
   it('shows that it is checking until the first answer arrives', async () => {

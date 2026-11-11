@@ -1,5 +1,5 @@
 import { addDecimals, type DecimalString, maxDecimal, minDecimal } from './decimal.js';
-import { MINUTE_MS, minutesIn, TF_MS, type Timeframe } from './timeframe.js';
+import { MINUTE_MS, TF_MS, type Timeframe } from './timeframe.js';
 
 export type CandleSource = 'exchange_kline' | 'trades' | 'rest' | 'aggregated' | 'replay';
 export type CandleQuality = 'complete' | 'repaired' | 'partial';
@@ -35,16 +35,25 @@ export function worstQuality(qualities: readonly CandleQuality[]): CandleQuality
 }
 
 /**
- * A minute without trades (architecture §5.2): O = H = L = C = the previous close, volume 0, and an
- * all-zero profile, because "no trades" is known, not missing.
+ * A period without trades (architecture §5.2): O = H = L = C = the previous close, volume 0. A 1m
+ * candle (the default) also gets an all-zero profile, because "no trades" is known, not missing;
+ * other timeframes have no profile.
  */
 export function flatCandle(
   openTime: number,
   previousClose: DecimalString,
-  opts: { source: CandleSource; quality?: CandleQuality; underlyingClosed: boolean; profileBuckets: number },
+  opts: {
+    source: CandleSource;
+    quality?: CandleQuality;
+    underlyingClosed: boolean;
+    /** Buckets of the 1m profile; unused for other timeframes. */
+    profileBuckets: number;
+    timeframe?: Timeframe;
+  },
 ): Candle {
+  const timeframe = opts.timeframe ?? '1m';
   return {
-    timeframe: '1m',
+    timeframe,
     openTime,
     open: previousClose,
     high: previousClose,
@@ -54,7 +63,7 @@ export function flatCandle(
     quoteVolume: '0',
     tradeCount: 0,
     takerBuyVolume: '0',
-    microProfile: new Array<number>(opts.profileBuckets).fill(0),
+    microProfile: timeframe === '1m' ? new Array<number>(opts.profileBuckets).fill(0) : null,
     source: opts.source,
     quality: opts.quality ?? 'complete',
     underlyingClosed: opts.underlyingClosed,
@@ -62,22 +71,29 @@ export function flatCandle(
 }
 
 /**
- * Aggregates consecutive 1m candles into one `tf` candle opening at `openTime`. Missing minutes make
- * the result `partial`; any minute inside a gold-market closure flags the result, because the
- * rulebook (§3.6) flags every candle whose interval overlaps a closure.
+ * Aggregates consecutive `childTf` candles (1m unless given) into one `tf` candle opening at
+ * `openTime`. Missing children make the result `partial`; any child inside a gold-market closure flags
+ * the result, because the rulebook (§3.6) flags every candle whose interval overlaps a closure.
+ * Coinbase's 4h candles are built from its 1h candles this way, since its REST API has no 4h.
  */
-export function aggregateCandles(tf: Timeframe, openTime: number, minutes: readonly Candle[]): Candle {
-  if (tf === '1m') throw new Error('aggregateCandles builds timeframes above 1m');
+export function aggregateCandles(
+  tf: Timeframe,
+  openTime: number,
+  candles: readonly Candle[],
+  childTf: Timeframe = '1m',
+): Candle {
+  // Every timeframe is a whole multiple of each shorter one, so only the order needs checking.
+  if (TF_MS[tf] <= TF_MS[childTf]) throw new Error(`aggregateCandles builds timeframes above ${childTf}`);
   if (openTime % TF_MS[tf] !== 0) throw new Error(`open time ${openTime} is not aligned to ${tf}`);
   const end = openTime + TF_MS[tf];
-  const children = minutes
-    .filter((c) => c.timeframe === '1m' && c.openTime >= openTime && c.openTime < end)
+  const children = candles
+    .filter((c) => c.timeframe === childTf && c.openTime >= openTime && c.openTime < end)
     .sort((a, b) => a.openTime - b.openTime);
   const first = children[0];
   const last = children.at(-1);
-  if (!first || !last) throw new Error(`no 1m candles for ${tf} at ${openTime}`);
+  if (!first || !last) throw new Error(`no ${childTf} candles for ${tf} at ${openTime}`);
   for (let i = 1; i < children.length; i++) {
-    if (children[i]!.openTime === children[i - 1]!.openTime) throw new Error('duplicate 1m candle');
+    if (children[i]!.openTime === children[i - 1]!.openTime) throw new Error(`duplicate ${childTf} candle`);
   }
 
   let high = first.high;
@@ -88,7 +104,7 @@ export function aggregateCandles(tf: Timeframe, openTime: number, minutes: reado
   }
   const counts = children.map((c) => c.tradeCount);
   const takerBuys = children.map((c) => c.takerBuyVolume);
-  const complete = children.length === minutesIn(tf);
+  const complete = children.length === TF_MS[tf] / TF_MS[childTf];
   return {
     timeframe: tf,
     openTime,

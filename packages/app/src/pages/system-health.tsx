@@ -1,5 +1,5 @@
 import { useId } from 'react';
-import type { FeedStatus, HealthStatus, Instrument } from '@cip/contracts';
+import type { AnalysisStatus, FeedStatus, HealthStatus, Instrument, PauseReason } from '@cip/contracts';
 import {
   Alert,
   Card,
@@ -13,10 +13,12 @@ import {
   Th,
 } from '@cip/ui';
 import { useInstruments } from '../api/queries.js';
+import { RunStatusBadge } from '../components/analysis-status.js';
 import { FEED_TONE } from '../components/market-badges.js';
 import { useSystemHealth } from '../live/market-hooks.js';
+import { formatLag } from '../lib/analysis.js';
 import { formatAge } from '../lib/format.js';
-import { VENUE_LABEL } from '../lib/market.js';
+import { groupInstruments, VENUE_LABEL } from '../lib/market.js';
 import { useNow } from '../session.js';
 
 const TONE = { ok: 'ok', degraded: 'warn', down: 'crit' } as const;
@@ -140,9 +142,124 @@ function FeedsCard({
   );
 }
 
+interface AnalysisRow {
+  key: string;
+  name: string;
+  instrument: Instrument | null;
+  status: AnalysisStatus | null;
+}
+
 /**
- * System Health (architecture §16): dependencies, service heartbeats and market data feeds. Pushed
- * over `system:health` while the live connection is up, polled every 5 s otherwise.
+ * One row per enabled instrument in Command Center order, with its analysis state; an instrument no
+ * analyzer reports stays listed as not analysed. Statuses of instruments not (yet) listed come last.
+ */
+function analysisRows(
+  statuses: readonly AnalysisStatus[],
+  instruments: readonly Instrument[],
+): AnalysisRow[] {
+  const byId = new Map(statuses.map((s) => [s.instrumentId, s]));
+  const rows: AnalysisRow[] = groupInstruments(instruments)
+    .flatMap((g) => g.instruments)
+    .map((i) => ({ key: i.id, name: i.displayName, instrument: i, status: byId.get(i.id) ?? null }));
+  const listed = new Set(instruments.map((i) => i.id));
+  for (const s of statuses)
+    if (!listed.has(s.instrumentId))
+      rows.push({ key: s.instrumentId, name: `Instrument ${s.instrumentId}`, instrument: null, status: s });
+  return rows;
+}
+
+const PAUSE_REASON: Record<PauseReason, string> = {
+  warming_up: 'Waiting for history',
+  data_gap: 'Data gap',
+};
+
+function AnalysisCard({
+  statuses,
+  instruments,
+  now,
+}: {
+  statuses: readonly AnalysisStatus[];
+  instruments: readonly Instrument[];
+  now: number;
+}) {
+  const rows = analysisRows(statuses, instruments);
+  const analysed = rows.filter((r) => r.status !== null).length;
+  const paused = rows.filter((r) => r.status?.paused).length;
+  return (
+    <Card>
+      <CardHeader>
+        <CardTitle>Analysis</CardTitle>
+        <span className="text-xs text-fg-muted">
+          {analysed} of {rows.length} instruments analysed{paused > 0 ? ` · ${paused} paused` : ''}
+        </span>
+      </CardHeader>
+      <CardContent className="p-0">
+        {rows.length === 0 ? (
+          <p className="p-4 text-sm text-fg-muted">No instrument is enabled, so nothing is analysed.</p>
+        ) : (
+          <Table>
+            <caption className="sr-only">Analysis state of each enabled instrument</caption>
+            <thead>
+              <tr>
+                <Th>Instrument</Th>
+                <Th>Run</Th>
+                <Th>Paused</Th>
+                <Th>Detail</Th>
+                <Th className="text-right">Lag</Th>
+                <Th>Reported</Th>
+              </tr>
+            </thead>
+            <tbody>
+              {rows.map(({ key, name, instrument, status }) => (
+                <tr key={key}>
+                  <Td className="text-sm">{name}</Td>
+                  <Td>
+                    <RunStatusBadge status={status?.status ?? null} />
+                  </Td>
+                  <Td>
+                    {status === null ? (
+                      '—'
+                    ) : status.paused ? (
+                      <StatusBadge
+                        tone="warn"
+                        label={status.pauseReason ? PAUSE_REASON[status.pauseReason] : 'Paused'}
+                      />
+                    ) : (
+                      'No'
+                    )}
+                  </Td>
+                  <Td className="text-fg-muted">
+                    {status !== null
+                      ? status.detail || '—'
+                      : instrument?.profile === null
+                        ? 'Not analysed: the instrument has no profile'
+                        : 'Not analysed: no analyzer holds this instrument'}
+                  </Td>
+                  <Td className="whitespace-nowrap text-right font-mono text-xs">
+                    {status === null ? '—' : formatLag(status.lagSec)}
+                  </Td>
+                  <Td className="whitespace-nowrap font-mono text-xs">
+                    {status === null ? '—' : `${formatAge(now - status.updatedAt)} ago`}
+                  </Td>
+                </tr>
+              ))}
+            </tbody>
+          </Table>
+        )}
+        <p className="px-4 py-3 text-xs text-fg-muted">
+          Lag is how far the newest analysed candle trails the newest stored one, on the timeframe furthest
+          behind. Analysis pauses at a data gap until the backfill repairs it, and while a timeframe waits for
+          history.
+        </p>
+      </CardContent>
+    </Card>
+  );
+}
+
+/**
+ * System Health (architecture §16): dependencies, service heartbeats, market data feeds and the
+ * analysis of each instrument. Pushed over `system:health` while the live connection is up, polled
+ * every 5 s otherwise.
  */
 export function SystemHealthPage() {
   const health = useSystemHealth();
@@ -254,6 +371,9 @@ export function SystemHealthPage() {
       </Card>
 
       <FeedsCard feeds={data.feeds} instruments={instruments.data ?? []} now={now} />
+
+      {/* `?? []`: a server from before Phase 3 (a desktop app can point at one) sends no analysis. */}
+      <AnalysisCard statuses={data.analysis ?? []} instruments={instruments.data ?? []} now={now} />
     </div>
   );
 }

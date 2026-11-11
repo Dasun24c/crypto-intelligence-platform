@@ -2,6 +2,7 @@ import { Link, Outlet } from '@tanstack/react-router';
 import {
   Activity,
   ChartCandlestick,
+  ChartLine,
   Coins,
   LayoutDashboard,
   LogOut,
@@ -27,6 +28,7 @@ interface NavItem {
 const NAV: NavItem[] = [
   { to: '/', label: 'Command Center', icon: LayoutDashboard },
   { to: '/market', label: 'Market Activity', icon: ChartCandlestick },
+  { to: '/analysis', label: 'Technical Analysis', icon: ChartLine, capability: 'dashboards.view' },
   { to: '/system', label: 'System Health', icon: Activity },
   { to: '/admin/instruments', label: 'Instruments', icon: Coins, capability: 'instruments.manage' },
   { to: '/admin/users', label: 'Users', icon: Users, capability: 'users.manage' },
@@ -80,7 +82,8 @@ export function Shell() {
             </li>
           ))}
         </ul>
-        <p className="px-4 py-3 text-xs text-fg-subtle">v{session.platform.appVersion}</p>
+        {/* fg-muted, not fg-subtle: small text needs 4.5:1 contrast on the surface (WCAG 1.4.3). */}
+        <p className="px-4 py-3 text-xs text-fg-muted">v{session.platform.appVersion}</p>
       </nav>
       <div className="flex min-w-0 flex-1 flex-col">
         <header className="flex h-12 items-center justify-end gap-3 border-b border-border px-4">

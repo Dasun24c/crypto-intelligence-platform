@@ -1,13 +1,18 @@
 #!/usr/bin/env node
+import { Queue } from 'bullmq';
+import { Redis } from 'ioredis';
 import { createDb } from '@cip/db';
 import { BinanceVenue, CoinbaseVenue } from '@cip/exchange-adapters';
 import { createLogger, INSTANCE_ID } from '@cip/observability';
+import type { BackfillJob } from './backfill.js';
 import { checkConsistency, previousDay } from './consistency.js';
 import { loadJobsConfig } from './config.js';
+import { gapRepairer } from './gap-repairs.js';
 
 /**
  * `cip-jobs consistency [YYYY-MM-DD]`  compare a UTC day's stored candles with the venues' REST
- * candles (default: yesterday) and print the report; exit 2 when anything differs.
+ * candles (default: yesterday) and print the report; exit 2 when anything differs. Missing minutes
+ * are recorded as gaps and queued for the running jobs service to repair, as the nightly check does.
  */
 async function main(command: string | undefined, arg: string | undefined): Promise<number> {
   const config = loadJobsConfig();
@@ -24,15 +29,25 @@ async function main(command: string | undefined, arg: string | undefined): Promi
     return 64;
   }
   const db = createDb({ connectionString: config.DATABASE_URL, max: 2, applicationName: 'cip-jobs-cli' });
+  const redis = new Redis(config.REDIS_URL, { maxRetriesPerRequest: null, connectionName: 'cip-jobs-cli' });
+  const queue = new Queue<BackfillJob>('backfill', { connection: redis, prefix: config.QUEUE_PREFIX });
   const hooks = { onEvent: () => undefined, onUnparsed: () => undefined, onStatus: () => undefined };
   try {
     const report = await checkConsistency(
-      { db, log, venues: { binance: new BinanceVenue(hooks), coinbase: new CoinbaseVenue(hooks) } },
+      {
+        db,
+        redis,
+        log,
+        venues: { binance: new BinanceVenue(hooks), coinbase: new CoinbaseVenue(hooks) },
+        repair: gapRepairer(db, redis, queue),
+      },
       range,
     );
     process.stdout.write(`${JSON.stringify(report, null, 2)}\n`);
     return report.ok ? 0 : 2;
   } finally {
+    await queue.close();
+    await redis.quit().catch(() => redis.disconnect());
     await db.destroy();
   }
 }

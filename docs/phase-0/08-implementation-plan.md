@@ -115,6 +115,8 @@ Sizes are relative (M ≈ 1×, L ≈ 1.5–2×, XL ≈ 2.5–3×). Calendar esti
 | 3.4 | Streaming and batch implementations give identical results on the same data (property test) | TA-04 |
 | 3.5 | Indicator values are published ≤ 1 s (p95) after candle close. A script confirms the values shown in the UI equal the API's. | NFR-02 |
 
+> **Decided 2026-11-11.** For 3.5 and NFR-02, "candle close" is the moment the candle is final in the platform: the ingestor's `md:candles` entry announcing it. The venue's minute boundary is not the starting point. Coinbase candles, built from trades, become final 2 s after the boundary (the late-trade grace, architecture §5.4), and that grace stays. Measured in Phase 3: p95 114 ms from final candle to published indicators ([Phase 3 report](../phase-3/acceptance-report.md#35-publishing-and-the-ui)).
+
 ## Phase 4 — SMC structure and liquidity
 
 **Scope**

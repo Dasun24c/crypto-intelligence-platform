@@ -6,8 +6,9 @@ import {
   redirect,
   type RouterHistory,
 } from '@tanstack/react-router';
-import { type Capability, can, type UserSummary } from '@cip/contracts';
+import { type Capability, can, type Tf, type UserSummary } from '@cip/contracts';
 import { Shell } from './layout/shell.js';
+import { isTimeframe } from './lib/analysis.js';
 import { AdminAuditPage } from './pages/admin-audit.js';
 import { AdminInstrumentsPage } from './pages/admin-instruments.js';
 import { AdminUsersPage } from './pages/admin-users.js';
@@ -15,6 +16,7 @@ import { HomePage } from './pages/home.js';
 import { MarketActivityPage } from './pages/market-activity.js';
 import { ProfilePage } from './pages/profile.js';
 import { SystemHealthPage } from './pages/system-health.js';
+import { TechnicalAnalysisPage } from './pages/technical-analysis.js';
 
 export interface RouterContext {
   user: UserSummary;
@@ -45,6 +47,12 @@ export interface MarketSearch {
   instrument?: string;
 }
 
+/** `/analysis?instrument=<id>&tf=<tf>`: the instrument and timeframe Technical Analysis shows. */
+export interface AnalysisSearch {
+  instrument?: string;
+  tf?: Tf;
+}
+
 const rootRoute = createRootRouteWithContext<RouterContext>()({
   component: Shell,
   notFoundComponent: NotFound,
@@ -58,6 +66,16 @@ const routeTree = rootRoute.addChildren([
     validateSearch: (search: Record<string, unknown>): MarketSearch =>
       typeof search['instrument'] === 'string' ? { instrument: search['instrument'] } : {},
     component: MarketActivityPage,
+  }),
+  createRoute({
+    getParentRoute: () => rootRoute,
+    path: '/analysis',
+    beforeLoad: requireCapability('dashboards.view'),
+    validateSearch: (search: Record<string, unknown>): AnalysisSearch => ({
+      ...(typeof search['instrument'] === 'string' ? { instrument: search['instrument'] } : {}),
+      ...(isTimeframe(search['tf']) ? { tf: search['tf'] } : {}),
+    }),
+    component: TechnicalAnalysisPage,
   }),
   createRoute({ getParentRoute: () => rootRoute, path: '/system', component: SystemHealthPage }),
   createRoute({ getParentRoute: () => rootRoute, path: '/profile', component: ProfilePage }),

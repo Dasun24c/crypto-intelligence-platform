@@ -142,13 +142,22 @@ function InstrumentTile({ instrument, feed }: { instrument: Instrument; feed: Fe
         <FeedBadge feed={feed} replay={replay} />
         {ticker ? <span className="text-fg-muted">{freshness(view, ticker, now)}</span> : null}
       </footer>
-      <Link
-        to="/market"
-        search={{ instrument: instrument.id }}
-        className="text-xs text-accent underline-offset-2 hover:underline"
-      >
-        Market activity<span className="sr-only"> for {instrument.displayName}</span>
-      </Link>
+      <div className="flex flex-wrap gap-x-4 gap-y-1">
+        <Link
+          to="/market"
+          search={{ instrument: instrument.id }}
+          className="text-xs text-accent underline-offset-2 hover:underline"
+        >
+          Market activity<span className="sr-only"> for {instrument.displayName}</span>
+        </Link>
+        <Link
+          to="/analysis"
+          search={{ instrument: instrument.id }}
+          className="text-xs text-accent underline-offset-2 hover:underline"
+        >
+          Technical analysis<span className="sr-only"> for {instrument.displayName}</span>
+        </Link>
+      </div>
     </article>
   );
 }

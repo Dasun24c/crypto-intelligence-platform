@@ -10,6 +10,7 @@ import {
 } from '@cip/contracts';
 import { pingDb } from '@cip/db';
 import { effectiveStatus, type Readiness, readHeartbeats } from '@cip/observability';
+import { AnalysisStatusService } from '../analysis/analysis-status.service.js';
 import { CLOCK, type Clock, PG_POOL, REDIS } from '../tokens.js';
 import { FeedsService } from './feeds.service.js';
 
@@ -28,6 +29,7 @@ export class HealthService {
     @Inject(REDIS) private readonly redis: Redis,
     @Inject(CLOCK) private readonly clock: Clock,
     private readonly feedsService: FeedsService,
+    private readonly analysisStatus: AnalysisStatusService,
   ) {}
 
   private async probe(name: DependencyHealth['name'], fn: () => Promise<number>): Promise<DependencyHealth> {
@@ -73,13 +75,20 @@ export class HealthService {
       return { service, status, instances };
     });
     const dbUp = dependencies.find((d) => d.name === 'database')?.status === 'ok';
-    const feeds = dbUp && redisUp ? await this.feedsService.feeds() : [];
+    const [feeds, analysis] =
+      dbUp && redisUp ? await Promise.all([this.feedsService.feeds(), this.analysisStatus.all()]) : [[], []];
     const dependencyStatus = worst(dependencies.map((d) => d.status));
     const serviceStatus = worst(services.map((s) => s.status));
     const feedsOk = feeds.every((f) => f.state === 'connected');
+    // Analysis held back (warming up or waiting on a data gap) is not yet available: degraded.
+    const analysisOk = analysis.every((a) => !a.paused);
     const status: HealthStatus =
-      dependencyStatus === 'down' ? 'down' : serviceStatus === 'ok' && feedsOk ? 'ok' : 'degraded';
-    return { status, checkedAt: now, dependencies, services, feeds };
+      dependencyStatus === 'down'
+        ? 'down'
+        : serviceStatus === 'ok' && feedsOk && analysisOk
+          ? 'ok'
+          : 'degraded';
+    return { status, checkedAt: now, dependencies, services, feeds, analysis };
   }
 
   /** Readiness of this api instance: it can serve only if both dependencies answer. */

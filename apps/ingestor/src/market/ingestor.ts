@@ -2,7 +2,15 @@ import type { Meter } from '@opentelemetry/api';
 import { Queue } from 'bullmq';
 import { Redis } from 'ioredis';
 import { type Kysely, sql } from 'kysely';
-import { floorTo, MINUTE_MS, restSettledAt, type VenueId } from '@cip/domain';
+import {
+  floorTo,
+  HISTORY_CANDLES,
+  MINUTE_MS,
+  restSettledAt,
+  TF_MS,
+  type Timeframe,
+  type VenueId,
+} from '@cip/domain';
 import type { Database, NewTrade } from '@cip/db';
 import {
   BinanceVenue,
@@ -33,6 +41,20 @@ import { BatchWriter, CandleWriter, GapRecorder, publishEvent } from './writers.
 type StreamVenue = 'binance' | 'coinbase' | 'replay';
 /** Health warning above this clock offset (architecture §5.4). */
 const CLOCK_WARN_MS = 500;
+
+/**
+ * Timeframes whose warm-up the stored 1m history may not cover. Seven days of 1m (BACKFILL_DAYS)
+ * aggregate to 2,016 5m candles but only 672 15m, 168 1h, 42 4h and 7 1d candles, short of
+ * HISTORY_CANDLES; a shorter 1m history leaves 5m short too. Whatever falls short is fetched at its
+ * own timeframe (a timeframe whose history already reaches back far enough records no gap).
+ */
+export const DEEP_HISTORY_TIMEFRAMES: readonly Timeframe[] = ['5m', '15m', '1h', '4h', '1d'];
+
+/**
+ * Candles of deep history to keep per timeframe: HISTORY_CANDLES plus a 10% margin, so a run that
+ * starts a little later, or a venue that omits a few early periods, still leaves enough.
+ */
+export const DEEP_HISTORY_CANDLES = HISTORY_CANDLES + Math.ceil(HISTORY_CANDLES / 10);
 
 export interface MarketIngestorOptions {
   db: Kysely<Database>;
@@ -324,6 +346,9 @@ export class MarketIngestor {
         this.o.log.warn(sample, 'local clock is off venue time: run time synchronisation (chrony/NTP)');
     } catch (err) {
       this.o.log.warn({ err }, 'clock offset measurement failed');
+      // Without any measurement, minutes close on the local clock (and lag is skewed by its error)
+      // until the next 5-minute round: try again soon instead. A known offset is kept until replaced.
+      if (this.clock === null) this.timers.push(setTimeout(() => void this.measureClock(), 15_000));
     }
   }
 
@@ -395,6 +420,7 @@ export class MarketIngestor {
         details: { reason: last ? 'since last stored candle' : 'initial history' },
       });
     }
+    if (inst.venue !== 'replay') await this.recordDeepHistory(inst.id, now);
     const deps = {
       instrument: inst,
       candles: this.candles,
@@ -433,6 +459,29 @@ export class MarketIngestor {
     }
     this.o.log.info({ instrument: inst.venueSymbol, venue: inst.venue }, 'pipeline created');
     return pipeline;
+  }
+
+  /**
+   * Each deep-history timeframe whose stored candles do not reach back DEEP_HISTORY_CANDLES periods
+   * (before the last one that has ended) gets a gap of its own, which the backfill job fills from the
+   * venue's candles at that timeframe. History that already reaches back that far is not fetched
+   * again, so a restart costs one query per timeframe.
+   */
+  private async recordDeepHistory(instrumentId: string, now: number): Promise<void> {
+    for (const tf of DEEP_HISTORY_TIMEFRAMES) {
+      const end = floorTo(now, tf);
+      const origin = end - DEEP_HISTORY_CANDLES * TF_MS[tf];
+      const first = await this.candles.firstOpenTime(instrumentId, tf);
+      if (first !== null && first <= origin) continue;
+      await this.gaps.record({
+        instrumentId,
+        stream: 'kline',
+        from: origin,
+        to: end,
+        detectedBy: 'timer',
+        details: { timeframe: tf, reason: 'deep history' },
+      });
+    }
   }
 
   /**

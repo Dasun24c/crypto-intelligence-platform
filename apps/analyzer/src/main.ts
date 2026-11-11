@@ -1,17 +1,36 @@
 import 'reflect-metadata';
 import { NestFactory } from '@nestjs/core';
-import { ConfigError, PinoNestLogger, runService } from '@cip/observability';
+import type pg from 'pg';
+import { createDb } from '@cip/db';
+import { ConfigError, INSTANCE_ID, PinoNestLogger, runService } from '@cip/observability';
+import { Analyzer } from './analysis/analyzer.js';
 import { loadAnalyzerConfig } from './config.js';
-import { AnalyzerModule, AnalyzerStatus } from './analyzer.module.js';
+import { AnalyzerModule, AnalyzerStatus, PG_POOL } from './analyzer.module.js';
 
 async function main(): Promise<void> {
   const config = loadAnalyzerConfig();
-  await runService('analyzer', config, async ({ log, redis }) => {
+  await runService('analyzer', config, async ({ log, redis, meter }) => {
     const app = await NestFactory.createApplicationContext(AnalyzerModule.forRoot(config, redis), {
       logger: new PinoNestLogger(log),
     });
     const status = app.get(AnalyzerStatus);
-    return { probe: () => status.probe(), readiness: () => status.readiness(), stop: () => app.close() };
+    const analyzer = new Analyzer({
+      db: createDb({ pool: app.get<pg.Pool>(PG_POOL) }),
+      redis,
+      redisUrl: config.REDIS_URL,
+      log,
+      meter,
+      instance: INSTANCE_ID,
+    });
+    await analyzer.start();
+    return {
+      probe: () => analyzer.probe(),
+      readiness: () => status.readiness(),
+      stop: async () => {
+        await analyzer.stop();
+        await app.close();
+      },
+    };
   });
 }
 

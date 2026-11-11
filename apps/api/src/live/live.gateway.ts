@@ -4,6 +4,7 @@ import { HttpAdapterHost } from '@nestjs/core';
 import { Redis } from 'ioredis';
 import { type DefaultEventsMap, type Namespace, Server, type Socket } from 'socket.io';
 import {
+  ANALYSIS_EVENTS_STREAM,
   can,
   CHANNEL_PATTERN,
   CONFIG_CHANNELS,
@@ -11,11 +12,13 @@ import {
   isDurableChannel,
   type SubscribeAck,
   SubscribeRequestSchema,
+  TimeframeSchema,
   UnsubscribeRequestSchema,
   WS_NAMESPACE,
   WS_PATH,
 } from '@cip/contracts';
 import type { Logger } from '@cip/observability';
+import { AnalysisRepository } from '../analysis/analysis.repository.js';
 import { TokenService } from '../auth/token.service.js';
 import type { AuthenticatedUser } from '../common/access.js';
 import { ProblemError } from '../common/problem.js';
@@ -27,7 +30,13 @@ import { effectiveStatus, toSummary, UsersRepository } from '../users/users.repo
 
 /** Where the ingestor publishes non-durable messages (ADR 014). */
 const LIVE_PATTERN = 'live:*';
-const EVENTS_STREAM = 'md:events';
+/** The durable streams: market events from the ingestor, analysis events from the analyzer. */
+const MARKET_EVENTS = 'md:events';
+const STREAMS = [MARKET_EVENTS, ANALYSIS_EVENTS_STREAM] as const;
+type DurableStream = (typeof STREAMS)[number];
+/** The stream a durable channel's messages come from. */
+export const streamOf = (ch: string): DurableStream =>
+  ch.startsWith('indicators:') ? ANALYSIS_EVENTS_STREAM : MARKET_EVENTS;
 const MARKET_TYPES = new Set(['gap.opened', 'gap.closed', 'feed.status', 'wall.appeared', 'wall.ended']);
 const MAX_CHANNELS = 200;
 const MAX_REPLAY = 10_000;
@@ -57,8 +66,8 @@ type LiveSocket = Socket<DefaultEventsMap, DefaultEventsMap, DefaultEventsMap, S
  * The real-time gateway (architecture §10, API contracts §5): Socket.IO on `/v1`, WebSocket only,
  * an access token at the handshake. Non-durable channels arrive from the ingestor over Redis pub/sub
  * and are skipped, never queued, for a client that is behind. Durable channels are
- * read from the `md:events` stream and carry its entry id as `seq`, so a reconnecting client can
- * replay what it missed. Each API instance delivers to its own sockets only; no adapter is needed.
+ * read from the `md:events` and `an:events` streams and carry the entry id as `seq`, so a
+ * reconnecting client can replay what it missed. Each API instance delivers to its own sockets only; no adapter is needed.
  * A client that falls behind is skipped for non-durable messages until it catches up.
  */
 @Injectable()
@@ -68,7 +77,7 @@ export class LiveGateway implements OnApplicationBootstrap, OnApplicationShutdow
   private subscriber: Redis | null = null;
   private reader: Redis | null = null;
   private running = false;
-  private lastSeq = '0-0';
+  private readonly lastSeq: Record<DurableStream, string> = { 'md:events': '0-0', 'an:events': '0-0' };
   private readonly lastLive = new Map<string, string>();
   private instrumentIds: { at: number; ids: Set<string> } | null = null;
   private timers: NodeJS.Timeout[] = [];
@@ -85,6 +94,7 @@ export class LiveGateway implements OnApplicationBootstrap, OnApplicationShutdow
     private readonly users: UsersRepository,
     private readonly market: MarketRepository,
     private readonly health: HealthService,
+    private readonly analysis: AnalysisRepository,
   ) {}
 
   onApplicationBootstrap(): void {
@@ -235,12 +245,13 @@ export class LiveGateway implements OnApplicationBootstrap, OnApplicationShutdow
     if (ch === 'system:health') return { mode: 'snapshot', snapshot: await this.health.check() };
     if (!isDurableChannel(ch)) return { mode: 'snapshot', snapshot: await this.liveSnapshot(ch) };
 
-    const latest = (await this.redis.xrevrange(EVENTS_STREAM, '+', '-', 'COUNT', 1))[0]?.[0] ?? '0-0';
+    const stream = streamOf(ch);
+    const latest = (await this.redis.xrevrange(stream, '+', '-', 'COUNT', 1))[0]?.[0] ?? '0-0';
     if (since === undefined) return { mode: 'live', seq: latest };
-    const first = (await this.redis.xrange(EVENTS_STREAM, '-', '+', 'COUNT', 1))[0]?.[0];
+    const first = (await this.redis.xrange(stream, '-', '+', 'COUNT', 1))[0]?.[0];
     const replayable = first !== undefined && compareSeq(since, first) >= 0;
     const entries = replayable
-      ? await this.redis.xrange(EVENTS_STREAM, `(${since}`, latest, 'COUNT', MAX_REPLAY)
+      ? await this.redis.xrange(stream, `(${since}`, latest, 'COUNT', MAX_REPLAY)
       : [];
     if (replayable && entries.length < MAX_REPLAY) {
       for (const [seq, fields] of entries) {
@@ -264,7 +275,9 @@ export class LiveGateway implements OnApplicationBootstrap, OnApplicationShutdow
 
   /** The current state when a replay is impossible: the client replaces its local copy with it. */
   private async durableSnapshot(ch: string): Promise<unknown> {
-    const id = ch.split(':')[1]!;
+    const [, id = '', tf] = ch.split(':');
+    if (ch.startsWith('indicators:'))
+      return { series: await this.analysis.series(id, TimeframeSchema.parse(tf), { limit: 500 }) };
     if (ch.startsWith('trades:'))
       return { largeTrades: (await this.market.largeTrades(id, { limit: 50 })).items };
     const now = this.clock();
@@ -281,20 +294,30 @@ export class LiveGateway implements OnApplicationBootstrap, OnApplicationShutdow
     this.nsp.to(ch).except(SLOW_ROOM).emit('message', JSON.parse(message));
   }
 
-  /** Tails `md:events` and delivers each entry on its durable channel. */
+  /** Tails `md:events` and `an:events` and delivers each entry on its durable channel. */
   private async readEvents(): Promise<void> {
     const reader = this.reader!;
-    try {
-      this.lastSeq = (await reader.xrevrange(EVENTS_STREAM, '+', '-', 'COUNT', 1))[0]?.[0] ?? '0-0';
-    } catch (err) {
-      this.log.warn({ err }, 'could not read the event stream position');
+    for (const stream of STREAMS) {
+      try {
+        this.lastSeq[stream] = (await reader.xrevrange(stream, '+', '-', 'COUNT', 1))[0]?.[0] ?? '0-0';
+      } catch (err) {
+        this.log.warn({ err, stream }, 'could not read the event stream position');
+      }
     }
     while (this.running) {
       try {
-        const res = await reader.xread('COUNT', 500, 'BLOCK', 5_000, 'STREAMS', EVENTS_STREAM, this.lastSeq);
-        for (const [, entries] of res ?? [])
+        const res = await reader.xread(
+          'COUNT',
+          500,
+          'BLOCK',
+          5_000,
+          'STREAMS',
+          ...STREAMS,
+          ...STREAMS.map((s) => this.lastSeq[s]),
+        );
+        for (const [stream, entries] of res ?? [])
           for (const [seq, fields] of entries) {
-            this.lastSeq = seq;
+            this.lastSeq[stream as DurableStream] = seq;
             const envelope = toEnvelope(seq, fields);
             if (envelope && this.nsp?.adapter.rooms.has(envelope.ch)) {
               this.delivered++;
@@ -355,19 +378,24 @@ function replier(ack: unknown): (response: unknown) => void {
     : () => undefined;
 }
 
-/** An `md:events` entry as the envelope of its durable channel, or null for types no channel carries. */
+/**
+ * An `md:events` or `an:events` entry as the envelope of its durable channel, or null for types
+ * no channel carries.
+ */
 export function toEnvelope(seq: string, fields: string[]): Envelope | null {
   const type = fields[1];
   const raw = fields[3];
   if (!type || !raw) return null;
-  const data = JSON.parse(raw) as { instrumentId?: unknown };
+  const data = JSON.parse(raw) as { instrumentId?: unknown; tf?: unknown };
   if (typeof data.instrumentId !== 'string') return null;
   const ch =
     type === 'trade.large'
       ? `trades:${data.instrumentId}`
       : MARKET_TYPES.has(type)
         ? `market:${data.instrumentId}`
-        : null;
+        : type === 'indicators.closed' && typeof data.tf === 'string'
+          ? `indicators:${data.instrumentId}:${data.tf}`
+          : null;
   return ch ? { ch, seq, ts: Number(seq.split('-')[0]), type, data } : null;
 }
 

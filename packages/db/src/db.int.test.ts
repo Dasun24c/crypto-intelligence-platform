@@ -3,6 +3,7 @@ import pg from 'pg';
 import { afterAll, beforeAll, describe, expect, inject, it } from 'vitest';
 import { createDb } from './client.js';
 import { migrateToLatest } from './migrator.js';
+import { LAUNCH_PROFILE_IDS, launchProfileFor } from './profiles.js';
 import { verifyAuditChain } from './audit.js';
 import type { Database } from './types.js';
 
@@ -50,6 +51,7 @@ describe('migrations', () => {
       '0003_audit_log',
       '0004_service_roles_and_grants',
       '0005_market_schema',
+      '0006_analysis_indicators',
     ]);
     const again = await migrateToLatest(owner);
     expect(again.error).toBeUndefined();
@@ -69,7 +71,7 @@ describe('migrations', () => {
   it('match the Kysely table types', async () => {
     const { rows } = await sql<{ table_schema: string; table_name: string; column_name: string }>`
       SELECT table_schema, table_name, column_name FROM information_schema.columns
-      WHERE table_schema IN ('app', 'market')
+      WHERE table_schema IN ('app', 'market', 'analysis')
     `.execute(owner);
     const actual: Record<string, string[]> = {};
     for (const r of rows) (actual[`${r.table_schema}.${r.table_name}`] ??= []).push(r.column_name);
@@ -155,6 +157,7 @@ describe('market schema (migration 0005)', () => {
       SELECT hypertable_schema || '.' || hypertable_name AS name FROM timescaledb_information.hypertables ORDER BY 1
     `.execute(owner);
     expect(hypertables.map((h) => h.name)).toEqual([
+      'analysis.indicator_values',
       'market.candles',
       'market.cross_venue_spreads',
       'market.feed_events',
@@ -164,7 +167,7 @@ describe('market schema (migration 0005)', () => {
     ]);
     const { rows: jobs } = await sql<{ proc: string; name: string; config: Record<string, string> }>`
       SELECT proc_name AS proc, hypertable_schema || '.' || hypertable_name AS name, config
-      FROM timescaledb_information.jobs WHERE hypertable_schema = 'market'
+      FROM timescaledb_information.jobs WHERE hypertable_schema IN ('market', 'analysis')
     `.execute(owner);
     const retention = Object.fromEntries(
       jobs.filter((j) => j.proc === 'policy_retention').map((j) => [j.name, j.config['drop_after']]),
@@ -271,6 +274,125 @@ describe('market schema (migration 0005)', () => {
     } finally {
       await ingestor.destroy();
       await jobs.destroy();
+    }
+  });
+});
+
+describe('analysis schema (migration 0006)', () => {
+  it('seeds the two launch profiles, hashed over their settings, and assigns one to every instrument', async () => {
+    const profiles = await owner
+      .selectFrom('market.instrument_profiles')
+      .select(['id', 'name', 'version', 'params', 'params_hash'])
+      .orderBy('name')
+      .execute();
+    expect(profiles.map((p) => [p.id, p.name, p.version])).toEqual([
+      [LAUNCH_PROFILE_IDS['crypto-majors'], 'crypto-majors', 1],
+      [LAUNCH_PROFILE_IDS.gold, 'gold', 1],
+    ]);
+    for (const p of profiles) {
+      const { rows } = await sql<{ hash: string }>`
+        SELECT encode(sha256(convert_to(params::text, 'UTF8')), 'hex') AS hash
+        FROM market.instrument_profiles WHERE id = ${p.id}
+      `.execute(owner);
+      expect(p.params_hash).toBe(rows[0]!.hash);
+      expect((p.params as { indicators: { rsi: { period: number } } }).indicators.rsi.period).toBe(14);
+    }
+    const instruments = await owner
+      .selectFrom('market.instruments')
+      .select(['asset_class', 'profile_id'])
+      .where('venue_id', '!=', 'replay')
+      .execute();
+    expect(instruments).toHaveLength(9);
+    for (const i of instruments) expect(i.profile_id).toBe(launchProfileFor(i.asset_class));
+  });
+
+  it('keeps one open live run per instrument and lets only the analyzer and jobs write runs', async () => {
+    const analyzer = createDb({ connectionString: roleUrls.svc_analyzer, max: 1 });
+    const instrumentId = '019a6f00-0000-7000-8000-000000000003';
+    const run = (id: string) => ({
+      id,
+      mode: 'live' as const,
+      instrument_id: instrumentId,
+      profile_id: LAUNCH_PROFILE_IDS['crypto-majors'],
+      ruleset_version: 'test',
+      params_hash: 'x',
+      from_time: new Date(Date.UTC(2026, 10, 10)),
+      status: 'running' as const,
+    });
+    try {
+      await analyzer
+        .insertInto('analysis.detection_runs')
+        .values(run('019a6f00-0000-7000-8000-00000000f001'))
+        .execute();
+      expect(
+        await sqlState(
+          analyzer
+            .insertInto('analysis.detection_runs')
+            .values(run('019a6f00-0000-7000-8000-00000000f002'))
+            .execute(),
+        ),
+      ).toBe('23505');
+      await analyzer
+        .insertInto('analysis.indicator_values')
+        .values({
+          instrument_id: instrumentId,
+          timeframe: '1h',
+          open_time: new Date(Date.UTC(2026, 10, 10, 12)),
+          run_id: '019a6f00-0000-7000-8000-00000000f001',
+          rsi: 55.5,
+          macd: -2.5e-17,
+          macd_signal: null,
+          macd_hist: null,
+          ema_fast: 1.0000000000000002,
+          ema_mid: null,
+          ema_slow: null,
+          vwap: null,
+          atr: null,
+          volume_z: null,
+          volume_anomaly: null,
+          trend: null,
+          trend_strength: null,
+        })
+        .execute();
+      // Doubles come back exactly as written. (node-postgres sends -0 as "0"; the indicators never produce -0.)
+      const value = await api
+        .selectFrom('analysis.indicator_values')
+        .select(['rsi', 'macd', 'ema_fast'])
+        .where('run_id', '=', '019a6f00-0000-7000-8000-00000000f001')
+        .executeTakeFirstOrThrow();
+      expect(value.rsi).toBe(55.5);
+      expect(value.macd).toBe(-2.5e-17);
+      expect(value.ema_fast).toBe(1.0000000000000002);
+      expect(
+        await sqlState(
+          api
+            .insertInto('analysis.detection_runs')
+            .values(run('019a6f00-0000-7000-8000-00000000f003'))
+            .execute(),
+        ),
+      ).toBe('42501');
+      expect(
+        await sqlState(
+          analyzer
+            .deleteFrom('analysis.indicator_values')
+            .where('instrument_id', '=', instrumentId)
+            .execute(),
+        ),
+      ).toBe('42501');
+      await analyzer
+        .updateTable('analysis.detection_runs')
+        .set({ status: 'superseded', finished_at: new Date() })
+        .where('id', '=', '019a6f00-0000-7000-8000-00000000f001')
+        .execute();
+      // Once the first run is closed, a new live run may open.
+      await analyzer
+        .insertInto('analysis.detection_runs')
+        .values(run('019a6f00-0000-7000-8000-00000000f002'))
+        .execute();
+    } finally {
+      await owner.deleteFrom('analysis.indicator_values').where('instrument_id', '=', instrumentId).execute();
+      await owner.deleteFrom('analysis.detection_runs').where('instrument_id', '=', instrumentId).execute();
+      await analyzer.destroy();
     }
   });
 });

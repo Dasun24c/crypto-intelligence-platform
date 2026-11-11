@@ -205,6 +205,31 @@ docs/
 - **Alert evaluation** runs inside each instrument actor on 1 Hz ticker updates, `an:events` and `md:events`. Rules are cached and refreshed on `config:alerts`. Cooldowns and de-duplication keys live in Redis.
 - **Replays** run on the `replay` queue: the same engine, a new `run_id` with `mode = replay`, and a digest that can be compared with the live run.
 
+> **As implemented in Phase 3 (indicators only).** The analyzer (`apps/analyzer/src/analysis/`) runs the parts of this pipeline the indicators need.
+>
+> **Runs and leases**
+>
+> - One actor per instrument, behind `lease:analyzer:{id}`: 15 s TTL, renewed every 5 s.
+> - One open live run per instrument. A change of profile, settings (`params_hash`) or rules version (`ruleset_version`, today `indicators-1`) supersedes the run and starts a new one.
+> - The lease has no fencing epoch yet. Indicator writes are idempotent and deterministic, so a brief overlap between two holders writes the same values twice. Epochs arrive with the Phase 4 checkpoints, which are not idempotent.
+>
+> **Warm-up**
+>
+> - Each timeframe starts `HISTORY_CANDLES` (1,000) candles before the run's start, which meets the "at least 500 candles of the highest timeframe" rule.
+> - The ingestor records history gaps so the backfill job fetches that history. 1m comes from 7 days of 1m candles. 5m, 15m, 1h, 4h and 1d come from the venues' REST candles directly whenever the stored history is short; with 7 days of 1m, 5m is long enough without them.
+> - A timeframe waits while its history is incomplete or being backfilled.
+> - It waits at most 120 s for a gap to be recorded. After that it accepts a shorter history: the pair was listed later, or the venue is the replay venue, which has no history at all.
+> - The candle each timeframe starts at is stored on the run (`series_origins`) the first time. A restart, or older history that arrives later, never changes what a run computes.
+>
+> **Live**
+>
+> - A `md:candles:{id}` entry wakes the actor. Every 5 s it is also woken to retry paused timeframes.
+> - A missing candle, or a partial one whose gap is still open, holds that timeframe back. Its state reads "paused: data gap", as ADR 005 requires.
+> - Some minutes were lost before anything recorded a gap, for example by Phase 2's defect 1. Nothing would ever repair those minutes, and analysis would wait at them for ever. The nightly consistency check therefore looks for holes in each instrument's stored 1m history, records each hole as a gap and queues it for the backfill. It also runs on demand: `cip-jobs consistency YYYY-MM-DD`.
+> - Values go to `analysis.indicator_values`. Points stored for the first time are published on `an:events`.
+>
+> **Restarts**: there are no checkpoints yet. A restart recomputes the run from its start (the same values; nothing is re-published), and its cost grows with the run's age until Phase 4 adds checkpoints.
+
 ## 8. AI pipeline
 
 ```mermaid

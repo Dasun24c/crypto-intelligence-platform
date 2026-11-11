@@ -1,9 +1,16 @@
 import type {
+  AnalysisStatus,
+  Candle,
   CrossVenueSpread,
   FeedStatus,
+  IndicatorParams,
+  IndicatorPoint,
+  IndicatorSeries,
   Instrument,
   LargeTrade,
+  RunRef,
   SystemHealth,
+  Tf,
   Ticker,
   Wall,
 } from '@cip/contracts';
@@ -33,6 +40,7 @@ function instrument(
     isPrimaryVenue: venue === 'binance',
     venueStatus: 'trading',
     enabled: true,
+    storeRawTrades: true,
     profile: null,
     underlyingCalendar: gold ? 'gold' : null,
     ...extra,
@@ -100,6 +108,93 @@ export function health(feeds: FeedStatus[], extra: Partial<SystemHealth> = {}): 
       instances: [instance(s)],
     })),
     feeds,
+    analysis: [],
+    ...extra,
+  };
+}
+
+// -----------------------------------------------------------------------------------------------
+// Technical analysis
+// -----------------------------------------------------------------------------------------------
+
+/** The launch profiles' indicator settings (migration 0006). */
+export const DEFAULT_PARAMS: IndicatorParams = {
+  rsi: { period: 14 },
+  macd: { fast: 12, slow: 26, signal: 9 },
+  ema: { fast: 20, mid: 50, slow: 200 },
+  atr: { period: 14 },
+  volume: { lookback: 50, zThreshold: 3.5 },
+  trend: { slopeBars: 5, minStrength: 0.1 },
+};
+
+export const RUN_ID = '019a7300-0000-7000-8000-000000000001';
+
+export function run(extra: Partial<RunRef> = {}): RunRef {
+  return {
+    id: RUN_ID,
+    status: 'running',
+    from: 0,
+    profile: { name: 'crypto-majors', version: 1 },
+    ...extra,
+  };
+}
+
+/** A point with every indicator computed; values are distinct so a test can tell them apart. */
+export function point(t: number, extra: Partial<IndicatorPoint> = {}): IndicatorPoint {
+  return {
+    t,
+    rsi: 55.123456789,
+    macd: 12.3456789,
+    macdSignal: 10.987654321,
+    macdHist: 1.35802456799999,
+    emaFast: 74_010.12345678,
+    emaMid: 73_990.5,
+    emaSlow: 73_500.25,
+    vwap: 73_950.987654321,
+    atr: 35.75,
+    volumeZ: 1.2345,
+    volumeAnomaly: false,
+    trend: 'bullish',
+    trendStrength: 0.45678,
+    warmup: false,
+    ...extra,
+  };
+}
+
+export function series(
+  instrumentId: string,
+  tf: Tf,
+  points: IndicatorPoint[],
+  extra: Partial<IndicatorSeries> = {},
+): IndicatorSeries {
+  return { instrumentId, tf, run: run(), params: DEFAULT_PARAMS, points, ...extra };
+}
+
+export function candle(t: number, close: string, extra: Partial<Candle> = {}): Candle {
+  return {
+    t,
+    o: close,
+    h: close,
+    l: close,
+    c: close,
+    v: '12.5',
+    qv: '925000',
+    n: 1_000,
+    quality: 'complete',
+    underlyingClosed: false,
+    ...extra,
+  };
+}
+
+export function analysisStatus(instrumentId: string, extra: Partial<AnalysisStatus> = {}): AnalysisStatus {
+  return {
+    instrumentId,
+    runId: RUN_ID,
+    status: 'running',
+    lagSec: 0,
+    paused: false,
+    detail: '',
+    updatedAt: Date.now() - 2_000,
     ...extra,
   };
 }

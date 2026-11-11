@@ -24,7 +24,7 @@ COPY . .
 RUN --mount=type=cache,id=pnpm-store,target=/pnpm/store --mount=type=cache,id=pnpm-cache,target=/root/.cache/pnpm \
     pnpm install --offline --frozen-lockfile --store-dir /pnpm/store \
       --filter "./packages/*" --filter "./apps/{api,ingestor,analyzer,jobs,web}"
-RUN pnpm --filter "./packages/{contracts,observability,db,domain,exchange-adapters,market-data}" --filter "./apps/{api,ingestor,analyzer,jobs}" run build \
+RUN pnpm --filter "./packages/{contracts,observability,db,domain,exchange-adapters,market-data,indicators}" --filter "./apps/{api,ingestor,analyzer,jobs}" run build \
  && pnpm --filter @cip/web run build
 
 # Production dependencies only, for the server packages. This stage starts clean: `pnpm fetch` fills
@@ -51,6 +51,7 @@ COPY --from=build --chown=node:node /repo/packages/db/dist ./packages/db/dist
 COPY --from=build --chown=node:node /repo/packages/domain/dist ./packages/domain/dist
 COPY --from=build --chown=node:node /repo/packages/exchange-adapters/dist ./packages/exchange-adapters/dist
 COPY --from=build --chown=node:node /repo/packages/market-data/dist ./packages/market-data/dist
+COPY --from=build --chown=node:node /repo/packages/indicators/dist ./packages/indicators/dist
 COPY --from=build --chown=node:node /repo/apps/api/dist ./apps/api/dist
 COPY --from=build --chown=node:node /repo/apps/ingestor/dist ./apps/ingestor/dist
 COPY --from=build --chown=node:node /repo/apps/analyzer/dist ./apps/analyzer/dist

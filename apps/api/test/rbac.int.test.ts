@@ -98,6 +98,17 @@ const ENDPOINTS: Endpoint[] = [
     policy: 'dashboards.view',
     route: '/api/v1/market/:instrumentId/walls',
   },
+  {
+    method: 'GET',
+    path: `/api/v1/indicators/${NOBODY}?tf=1h`,
+    policy: 'dashboards.view',
+    route: '/api/v1/indicators/:instrumentId',
+  },
+  {
+    method: 'GET',
+    path: '/api/v1/system/runs',
+    policy: 'dashboards.view',
+  },
   { method: 'GET', path: '/api/v1/admin/instruments', policy: 'instruments.manage' },
   { method: 'POST', path: '/api/v1/admin/instruments', policy: 'instruments.manage', body: {} },
   { method: 'PATCH', path: `/api/v1/admin/instruments/${NOBODY}`, policy: 'instruments.manage', body: {} },

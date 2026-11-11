@@ -113,6 +113,11 @@ export class TradeCandleBuilder {
   private lastClose: DecimalString | null;
   lateTrades = 0;
 
+  /** The open time of the next minute this builder will finalise. */
+  get next(): number {
+    return this.nextOpen;
+  }
+
   /**
    * `start.nextOpen` is the first minute to build: after a fresh connection, the next full minute,
    * because the minute in progress was only partly seen (backfill covers it). `start.lastClose` is

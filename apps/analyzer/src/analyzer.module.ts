@@ -2,7 +2,7 @@ import { type DynamicModule, Inject, Injectable, Module, type OnApplicationShutd
 import type { Redis } from 'ioredis';
 import type pg from 'pg';
 import { createPool, pingDb } from '@cip/db';
-import { checkDependencies, type HeartbeatProbe, type Readiness } from '@cip/observability';
+import { checkDependencies, type Readiness } from '@cip/observability';
 import type { AnalyzerConfig } from './config.js';
 
 export const CONFIG = Symbol('CONFIG');
@@ -10,8 +10,8 @@ export const PG_POOL = Symbol('PG_POOL');
 export const REDIS = Symbol('REDIS');
 
 /**
- * Phase 1 skeleton: the service runs, connects with its own database role and reports a truthful
- * idle state to System Health. It produces no data until its phase delivers the real work.
+ * The service's connections and readiness. The analysis itself is `Analyzer` (analysis/), which
+ * main.ts starts on the module's database pool and reports to System Health.
  */
 @Injectable()
 export class AnalyzerStatus implements OnApplicationShutdown {
@@ -19,10 +19,6 @@ export class AnalyzerStatus implements OnApplicationShutdown {
     @Inject(PG_POOL) private readonly pool: pg.Pool,
     @Inject(REDIS) private readonly redis: Redis,
   ) {}
-
-  probe(): HeartbeatProbe {
-    return { status: 'ok', detail: 'idle: indicators and the SMC engine arrive in Phases 3–6' };
-  }
 
   readiness(): Promise<Readiness> {
     return checkDependencies({ database: () => pingDb(this.pool), redis: () => this.redis.ping() });

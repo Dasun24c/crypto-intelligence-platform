@@ -3,24 +3,30 @@
   "version": "0.0.0",
   "private": true,
   "type": "module",
-  "description": "Indicators, SMC engine, setups and alert evaluation (Phases 3\u20138). Phase 1: service skeleton.",
+  "description": "Indicators (Phase 3), then the SMC engine, setups and alert evaluation (Phases 4–8).",
   "scripts": {
     "build": "swc src -d dist --strip-leading-paths --config-file ../../.swcrc --ignore \"**/*.test.ts\"",
     "typecheck": "tsc -p tsconfig.json",
     "test": "vitest run",
     "dev": "node --env-file-if-exists=.env --watch --conditions=@cip/source --import @swc-node/register/esm-register src/main.ts",
-    "start": "node dist/main.js"
+    "start": "node dist/main.js",
+    "test:integration": "vitest run --config vitest.int.config.ts"
   },
   "dependencies": {
     "@cip/contracts": "workspace:*",
     "@cip/db": "workspace:*",
+    "@cip/domain": "workspace:*",
+    "@cip/indicators": "workspace:*",
     "@cip/observability": "workspace:*",
     "@nestjs/common": "catalog:",
     "@nestjs/core": "catalog:",
+    "@opentelemetry/api": "catalog:",
     "ioredis": "catalog:",
+    "kysely": "catalog:",
     "pg": "catalog:",
     "reflect-metadata": "catalog:",
     "rxjs": "catalog:",
+    "uuid": "catalog:",
     "zod": "catalog:"
   },
   "devDependencies": {
@@ -28,10 +34,12 @@
     "@swc-node/register": "catalog:",
     "@swc/cli": "catalog:",
     "@swc/core": "catalog:",
+    "@testcontainers/postgresql": "catalog:",
     "@types/node": "catalog:",
     "@types/pg": "catalog:",
     "@typescript/native": "catalog:",
     "@vitest/coverage-v8": "catalog:",
+    "testcontainers": "catalog:",
     "typescript": "catalog:",
     "vitest": "catalog:"
   }

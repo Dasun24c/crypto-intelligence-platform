@@ -46,3 +46,10 @@ export const REST_SETTLE_MS = 30_000;
 export function restSettledAt(to: number): number {
   return Math.ceil(to / MINUTE_MS) * MINUTE_MS + REST_SETTLE_MS;
 }
+
+/**
+ * Candles of history each timeframe needs before analysis starts (architecture §7, warm-up: at least
+ * 500 of the highest timeframe). The analyzer warms each run up on this many candles per timeframe;
+ * the ingestor and the backfill job keep at least this much history available.
+ */
+export const HISTORY_CANDLES = 1_000;

@@ -1,5 +1,6 @@
 import { readFileSync } from 'node:fs';
 import { Redis } from 'ioredis';
+import { sql } from 'kysely';
 import { afterAll, beforeAll, describe, expect, inject, it } from 'vitest';
 import type { Candle } from '@cip/domain';
 import { createDb } from '@cip/db';
@@ -185,6 +186,44 @@ describe('gaps', () => {
     expect(gap).toMatchObject({ stream: 'trades', detected_by: 'reconnect', status: 'open' });
     const events = await redis.xrange('md:events', '-', '+');
     expect(events.some(([, fields]) => fields[1] === 'gap.opened')).toBe(true);
+  });
+});
+
+describe('first connection', () => {
+  it('records the minutes a Coinbase stream that opened late never saw', async () => {
+    const SOL_CB = '019a6f00-0000-7000-8000-000000000007';
+    const planned = Math.floor(Date.now() / 60_000) * 60_000 - 3 * 60_000;
+    const pipeline = new CoinbasePipeline(deps(SOL_CB, 'coinbase', 'SOL-USD'), {
+      nextOpen: planned,
+      lastClose: '150',
+    });
+    // Other tests record gaps for this instrument too: only the ones this pipeline recorded count.
+    const late = () =>
+      db
+        .selectFrom('market.data_gaps')
+        .selectAll()
+        .where('instrument_id', '=', SOL_CB)
+        .where('gap_start', '>=', new Date(planned))
+        .where(sql<string>`details->>'reason'`, '=', 'stream opened late')
+        .execute();
+    // The socket opens 2 minutes and 5 seconds after the minute the pipeline planned to start with.
+    pipeline.onConnectionOpen(planned + 2 * 60_000 + 5_000);
+    await expect.poll(late).toHaveLength(1);
+    const [gap] = await late();
+    expect(gap).toMatchObject({
+      stream: 'trades',
+      detected_by: 'reconnect',
+      details: { reason: 'stream opened late' },
+    });
+    expect([gap!.gap_start.getTime(), gap!.gap_end?.getTime()]).toEqual([planned, planned + 3 * 60_000]);
+    // A stream that opens before the planned minute records nothing.
+    const early = new CoinbasePipeline(deps(SOL_CB, 'coinbase', 'SOL-USD'), {
+      nextOpen: planned + 3 * 60_000,
+      lastClose: '150',
+    });
+    early.onConnectionOpen(planned + 2 * 60_000 + 5_000);
+    await new Promise((r) => setTimeout(r, 200));
+    expect(await late()).toHaveLength(1);
   });
 });
 

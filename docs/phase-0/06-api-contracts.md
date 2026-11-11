@@ -86,6 +86,13 @@ Roles: **V** viewer, **A** analyst, **Ad** admin. Every endpoint needs authentic
 | GET | `/smc/{instrumentId}/sweeps?tf&from&to` | V | `Sweep[]` |
 | GET | `/smc/{instrumentId}/zones?tf&types&status` | V | `PoiZone[]` |
 
+> **As implemented in Phase 3.** `GET /indicators/{instrumentId}?tf&from&to&limit` returns an `IndicatorSeries` rather than a bare `IndicatorPoint[]`:
+>
+> - **Shape**: `{ instrumentId, tf, run, params, points }`. `run` is `{ id, status, from, profile: { name, version } }` for the instrument's open live run (else its latest run), or `null` if it was never analysed. `params` holds the run's indicator settings, so a chart can label "EMA 20" without hard-coding periods.
+> - **Points**: oldest first; by default the latest 1,000 (`limit` up to 5,000). With `from`, the first `limit` from there.
+> - **`IndicatorPoint`**: `{ t, rsi, macd, macdSignal, macdHist, emaFast, emaMid, emaSlow, vwap, atr, volumeZ, volumeAnomaly, trend, trendStrength, warmup }`. Values are null during each indicator's own warm-up. `warmup` is true for candles before the run's start.
+> - **Schemas**: all in `packages/contracts/src/analysis.ts`.
+
 ### Setups and replays
 
 | Method | Path | Role | Returns |
@@ -122,6 +129,8 @@ Roles: **V** viewer, **A** analyst, **Ad** admin. Every endpoint needs authentic
 | GET | `/system/health` | V | `SystemHealth` |
 | GET | `/system/feeds` | V | `FeedStatus[]` |
 | GET | `/system/runs` | V | Live and replay runs with status and lag |
+
+> **As implemented in Phase 3.** `GET /system/runs?instrumentId&limit` returns `DetectionRun[]`, newest first: `{ id, mode, instrumentId, profile, rulesetVersion, paramsHash, from, to, status, startedAt, finishedAt, lagSec, paused, pauseReason }`. The last three come from the analyzer's live state and are `null`/`false` for closed runs. Profiles are not editable yet. Migration 0006 seeds version 1 of `crypto-majors` and `gold`, and new instruments get their asset class's profile.
 | GET / POST / PATCH | `/admin/users[/{id}]` | Ad | User management; `POST /admin/users/{id}/reset-mfa` |
 | POST / PATCH | `/admin/instruments[/{id}]` | Ad | Add an instrument (triggers backfill), enable/disable, assign profile, primary venue |
 | GET / POST | `/admin/profiles[/{name}/versions]` | Ad | Create a new profile version (starts a new live run with warm-up) |
@@ -259,7 +268,14 @@ interface SystemHealth {
 interface FeedStatus { instrumentId: string; stream: 'trades' | 'depth' | 'kline' | 'ticker'; state: 'connected' | 'degraded' | 'disconnected'; lastMessageAt: Ts; lagMsP50: number; lagMsP95: number; openGaps: number; }
 ```
 
-> **As implemented through Phase 2.** `SystemHealth` is built up phase by phase. Today it is `{ status, checkedAt, dependencies: {name: 'database' | 'redis', status, latencyMs, detail}[], services: {service, status, instances[]}[], feeds: FeedStatus[] }`; `analysis` and `ai` arrive with phases 4 and 6. `FeedStatus` also carries `detail` (`streaming`, `no messages`, `delayed`, `disconnected`, `not streaming`, `halted`, `delisted`), and `lastMessageAt`, `lagMsP50` and `lagMsP95` are `null` when unknown. Lag is measured against venue time corrected for the measured clock offset of the host (architecture §5.4).
+> **As implemented through Phase 2.** `SystemHealth` is built up phase by phase. Today it is `{ status, checkedAt, dependencies: {name: 'database' | 'redis', status, latencyMs, detail}[], services: {service, status, instances[]}[], feeds: FeedStatus[], analysis: AnalysisStatus[] }`; `ai` arrives with Phase 6. `FeedStatus` also carries `detail` (`streaming`, `no messages`, `delayed`, `disconnected`, `not streaming`, `halted`, `delisted`), and `lastMessageAt`, `lagMsP50` and `lagMsP95` are `null` when unknown. Lag is measured against venue time corrected for the measured clock offset of the host (architecture §5.4).
+
+> **As implemented in Phase 3.** `analysis` arrived a phase early, with the indicators. Each entry is `AnalysisStatus`: `{ instrumentId, runId, status, lagSec, paused, pauseReason?, detail, updatedAt }`.
+>
+> - **Where it comes from**: the analyzer holding the instrument's lease writes it to `analysis:status:{instrumentId}` every 5 s, with a 15 s TTL.
+> - **`detail`**: names the timeframes held back, for example "1m: missing 2026-11-10 12:01 (backfill running)".
+> - **`lagSec`**: the newest stored candle minus the newest analysed one, worst timeframe.
+> - **Effect on `status`**: while any instrument is paused, the overall status is `degraded`.
 
 ### Alert conditions
 
@@ -338,6 +354,12 @@ interface ActivitySnapshot {
 }
 interface ActivityPulse { ts: Ts; kind: 'pattern' | 'sweep' | 'mss' | 'ai_completed' | 'alert'; refId: string; instrumentId?: string; }
 ```
+
+> **As implemented in Phase 3.** The `indicators:{instrumentId}:{tf}` channel works as follows:
+>
+> - **Source**: it is read from the `an:events` stream, which the analyzer writes. Its `seq` is that stream's entry id, so it is compared only with other `indicators:` seqs.
+> - **Message**: `indicators.closed` carries `{ instrumentId, tf, runId, point: IndicatorPoint }`, once for each candle the analyzer stores for the first time. Warm-up points and values recomputed after a restart are not sent.
+> - **Snapshot**: when a resync cannot replay, the snapshot is `{ series: IndicatorSeries }` holding the latest 500 points.
 
 ### 5.4 Sequencing and resync
 

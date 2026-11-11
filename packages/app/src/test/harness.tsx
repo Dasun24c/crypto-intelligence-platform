@@ -2,7 +2,13 @@ import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { createMemoryHistory, RouterProvider } from '@tanstack/react-router';
 import { act, render } from '@testing-library/react';
 import { vi } from 'vitest';
-import type { Envelope, Role, SubscribeRequest, UserSummary } from '@cip/contracts';
+import {
+  type Envelope,
+  isDurableChannel,
+  type Role,
+  type SubscribeRequest,
+  type UserSummary,
+} from '@cip/contracts';
 import type { Platform } from '../platform.js';
 import { createAppRouter } from '../router.js';
 import { Session, SessionContext } from '../session.js';
@@ -76,6 +82,11 @@ export function mockApi(routes: ApiRoutes) {
 export class FakeLiveServer {
   /** Non-durable channel → the snapshot a subscribe returns. */
   readonly snapshots: Record<string, unknown> = {};
+  /**
+   * Durable channel → the snapshot a resubscribe (one with `since`) returns, as when the missed
+   * messages are no longer in the stream. Without an entry the resubscribe goes on live.
+   */
+  readonly resyncSnapshots: Record<string, unknown> = {};
   readonly sockets = fakeSockets();
   private seq = 2_000;
 
@@ -83,7 +94,18 @@ export class FakeLiveServer {
     const socket = this.sockets.create(...args);
     socket.autoOpen = true;
     socket.respond = (event, payload) => {
-      if (event === 'subscribe') return ackAll((payload as SubscribeRequest).channels, this.snapshots);
+      if (event === 'subscribe') {
+        const request = payload as SubscribeRequest;
+        const ack = ackAll(request.channels, this.snapshots);
+        for (const ch of Object.keys(request.since ?? {}))
+          if (ch in this.resyncSnapshots)
+            ack.results[ch] = {
+              mode: 'snapshot',
+              seq: `${this.seq++}-0`,
+              snapshot: this.resyncSnapshots[ch],
+            };
+        return ack;
+      }
       if (event === 'auth:renew') return { ok: true };
       return undefined;
     };
@@ -98,9 +120,11 @@ export class FakeLiveServer {
 
   /** Delivers a message as the gateway would; durable channels get the next seq. */
   push(ch: string, type: string, data: unknown, ts = Date.now()): void {
-    const durable = ch.startsWith('trades:') || ch.startsWith('market:');
+    // The PAXG spread rides on the durable market channel without a seq.
     const message: Envelope =
-      durable && type !== 'spread' ? { ch, seq: `${this.seq++}-0`, ts, type, data } : { ch, ts, type, data };
+      isDurableChannel(ch) && type !== 'spread'
+        ? { ch, seq: `${this.seq++}-0`, ts, type, data }
+        : { ch, ts, type, data };
     act(() => {
       for (const socket of this.sockets.made) if (socket.connected) socket.send(message);
     });

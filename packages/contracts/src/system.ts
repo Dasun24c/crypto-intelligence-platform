@@ -1,5 +1,6 @@
 import { z } from 'zod';
 import { TsSchema } from './common.js';
+import { AnalysisStatusSchema } from './analysis.js';
 import { FeedStatusSchema } from './market.js';
 
 export const HEALTH_STATUSES = ['ok', 'degraded', 'down'] as const;
@@ -46,6 +47,8 @@ export const SystemHealthSchema = z.object({
   services: z.array(ServiceHealthSchema),
   /** Per instrument and stream (Phase 2); a feed that is not connected makes the system degraded. */
   feeds: z.array(FeedStatusSchema),
+  /** Per analysed instrument (Phase 3); a paused instrument makes the system degraded. */
+  analysis: z.array(AnalysisStatusSchema),
 });
 export type SystemHealth = z.infer<typeof SystemHealthSchema>;
 

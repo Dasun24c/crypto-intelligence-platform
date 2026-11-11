@@ -2,7 +2,7 @@
 
 | | |
 |---|---|
-| Status | **Ready for your review.** 6 criteria met; 2 partly verified (2.2 over 24 h, 2.11 nightly run on GitHub); 1 measured but not met as written (2.10, a conflict between two approved specs); 2 not yet run (2.4 chaos tests, 2.6 soak: both need the staging host, D2) |
+| Status | **Accepted 2026-11-10** (you asked to start Phase 3), with these items carried forward: decision 1 (NFR-01 against the ticker rate, 2.10) and decision 2 (Coinbase candles for thin products, 2.2) are still open; the soak (2.6) and chaos tests (2.4) wait for D2; the first GitHub CI run and the nightly live run (2.11) wait for the pull request. Originally: 6 met, 2 partly verified, 1 measured but not met as written, 2 not yet run |
 | Date | 2026-11-10 |
 | Scope | [Implementation plan, Phase 2](../phase-0/08-implementation-plan.md#phase-2--market-data) |
 | Evidence | This machine (Windows 11, Docker Desktop, Node.js 26.13.0), live public data from Binance (`data-stream.binance.vision`, `data-api.binance.vision`) and Coinbase Exchange, 2026-11-10 06:30–09:45 UTC |

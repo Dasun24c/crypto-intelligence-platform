@@ -93,6 +93,7 @@ describe('TradeCandleBuilder (Coinbase)', () => {
       { profileBuckets: 2, graceMs: 0, closed: never },
       { nextOpen: T0 + M, lastClose: null },
     );
+    expect(b.next).toBe(T0 + M);
     b.addTrade(trade(30_000, '100', '1')); // before the start: not late, just not ours
     expect(b.lateTrades).toBe(0);
     expect(b.finalize(T0 + 2 * M)).toEqual([]); // no trades and no previous close: nothing to write

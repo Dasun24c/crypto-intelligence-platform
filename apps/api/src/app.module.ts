@@ -20,6 +20,9 @@ import type { ApiConfig } from './config.js';
 import { LiveGateway } from './live/live.gateway.js';
 import { AdminClosuresController, AdminInstrumentsController } from './market/admin-market.controller.js';
 import { MarketController } from './market/market.controller.js';
+import { AnalysisController } from './analysis/analysis.controller.js';
+import { AnalysisRepository } from './analysis/analysis.repository.js';
+import { AnalysisStatusService } from './analysis/analysis-status.service.js';
 import { MarketRepository } from './market/market.repository.js';
 import { publicVenueDirectory, VENUE_DIRECTORY, type VenueDirectory } from './market/venue-directory.js';
 import { MeController } from './me/me.controller.js';
@@ -64,6 +67,7 @@ export class AppModule {
         AdminInstrumentsController,
         AdminClosuresController,
         MarketController,
+        AnalysisController,
         SystemController,
         ProbesController,
       ],
@@ -100,6 +104,8 @@ export class AppModule {
         HealthService,
         FeedsService,
         MarketRepository,
+        AnalysisRepository,
+        AnalysisStatusService,
         LiveGateway,
       ],
     };

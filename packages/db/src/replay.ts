@@ -1,4 +1,5 @@
 import type { Kysely } from 'kysely';
+import { launchProfileFor } from './profiles.js';
 import type { Database } from './types.js';
 
 /**
@@ -69,7 +70,10 @@ export const REPLAY_INSTRUMENTS = [
   },
 ] as const;
 
-/** Inserts the replay instruments (idempotent). Run as the owner role. */
+/**
+ * Inserts the replay instruments (idempotent) with their launch profile, and gives a profile to
+ * replay instruments seeded before profiles existed. Run as the owner role.
+ */
 export async function seedReplayInstruments(db: Kysely<Database>): Promise<number> {
   const result = await db
     .insertInto('market.instruments')
@@ -84,13 +88,18 @@ export async function seedReplayInstruments(db: Kysely<Database>): Promise<numbe
         role: i.role,
         price_tick: i.tick,
         qty_step: i.step,
-        profile_id: null,
+        profile_id: launchProfileFor(i.assetClass),
         underlying_calendar_id: i.gold ? 'gold' : null,
         is_primary_venue: i.primary,
         venue_status: 'trading' as const,
       })),
     )
-    .onConflict((oc) => oc.columns(['venue_id', 'venue_symbol']).doNothing())
+    .onConflict((oc) =>
+      oc
+        .columns(['venue_id', 'venue_symbol'])
+        .doUpdateSet((eb) => ({ profile_id: eb.ref('excluded.profile_id') }))
+        .where('market.instruments.profile_id', 'is', null),
+    )
     .executeTakeFirst();
   return Number(result.numInsertedOrUpdatedRows ?? 0n);
 }

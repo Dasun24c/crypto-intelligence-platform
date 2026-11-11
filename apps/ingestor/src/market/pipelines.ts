@@ -294,11 +294,12 @@ export abstract class InstrumentPipeline {
 
   onConnectionOpen(now: number): void {
     this.connected = true;
+    const first = this.disconnectedAt === null;
     if (this.disconnectedAt !== null) {
       this.gap('trades', this.disconnectedAt, now, 'reconnect');
       this.disconnectedAt = null;
     }
-    this.afterReconnect(now);
+    this.afterReconnect(now, first);
   }
 
   onConnectionClosed(now: number): void {
@@ -315,7 +316,8 @@ export abstract class InstrumentPipeline {
     this.bookLost(now);
   }
 
-  protected abstract afterReconnect(now: number): void;
+  /** The connection opened: `first` when no outage gap was recorded (the first connection). */
+  protected abstract afterReconnect(now: number, first: boolean): void;
 
   /**
    * 1 Hz: completed taker orders, wall scan, candles in progress, book metrics, 10 s snapshots, and
@@ -731,11 +733,17 @@ export class CoinbasePipeline extends InstrumentPipeline {
     return this.builder.lateTrades;
   }
 
-  protected afterReconnect(now: number): void {
+  protected afterReconnect(now: number, first: boolean): void {
     // Minutes during the outage are unknown, not empty: rebuild from the next full minute and let
     // the recorded gap's backfill fill them from REST.
+    const resume = floorTo(this.venueTime(now), '1m') + MINUTE_MS;
+    // The first connection can open after the minute the pipeline planned to build first (the
+    // socket connects a few seconds after start). Those minutes were never seen, and no outage gap
+    // covers them: without this they would be lost, and analysis would wait at them (ADR 005).
+    if (first && resume > this.builder.next)
+      this.gap('trades', this.builder.next, resume, 'reconnect', { reason: 'stream opened late' });
     const lastClose = this.ticker?.last ?? null;
-    this.builder = this.newBuilder({ nextOpen: floorTo(this.venueTime(now), '1m') + MINUTE_MS, lastClose });
+    this.builder = this.newBuilder({ nextOpen: resume, lastClose });
     this.tradeSeq.reset();
     this.heartbeat.reset();
   }

@@ -86,6 +86,8 @@ export interface Database {
   'market.large_trades': LargeTradesTable;
   'market.orderbook_walls': OrderbookWallsTable;
   'market.data_gaps': DataGapsTable;
+  'analysis.detection_runs': DetectionRunsTable;
+  'analysis.indicator_values': IndicatorValuesTable;
 }
 
 // ---------------------------------------------------------------- market (data model §4)
@@ -267,11 +269,61 @@ export interface DataGapsTable {
   details: ColumnType<Record<string, unknown>, Record<string, unknown> | undefined, Record<string, unknown>>;
 }
 
+// ---------------------------------------------------------------- analysis (data model §5)
+
+export type RunStatus = 'warming_up' | 'running' | 'completed' | 'failed' | 'superseded';
+
+export interface DetectionRunsTable {
+  id: string;
+  mode: 'live' | 'replay';
+  instrument_id: string;
+  profile_id: string;
+  ruleset_version: string;
+  params_hash: string;
+  from_time: Date;
+  to_time: Date | null;
+  /** Per timeframe, the open time (epoch ms) the run's series starts at, fixed once chosen. */
+  series_origins: ColumnType<
+    Record<string, number>,
+    Record<string, number> | undefined,
+    Record<string, number>
+  >;
+  status: RunStatus;
+  requested_by: string | null;
+  result_digest: string | null;
+  started_at: Generated<Date>;
+  finished_at: Date | null;
+}
+
+/** double precision columns come back from node-postgres as numbers, exactly as stored. */
+export interface IndicatorValuesTable {
+  instrument_id: string;
+  timeframe: '1m' | '5m' | '15m' | '1h' | '4h' | '1d';
+  open_time: Date;
+  run_id: string;
+  rsi: number | null;
+  macd: number | null;
+  macd_signal: number | null;
+  macd_hist: number | null;
+  ema_fast: number | null;
+  ema_mid: number | null;
+  ema_slow: number | null;
+  vwap: number | null;
+  atr: number | null;
+  volume_z: number | null;
+  volume_anomaly: boolean | null;
+  trend: 'bullish' | 'bearish' | 'neutral' | null;
+  trend_strength: number | null;
+}
+
 export type InstrumentRow = Selectable<InstrumentsTable>;
 export type CandleRow = Selectable<CandlesTable>;
 export type NewCandle = Insertable<CandlesTable>;
 export type NewTrade = Insertable<TradesTable>;
 export type DataGapRow = Selectable<DataGapsTable>;
+export type DetectionRunRow = Selectable<DetectionRunsTable>;
+export type IndicatorValueRow = Selectable<IndicatorValuesTable>;
+export type NewIndicatorValue = Insertable<IndicatorValuesTable>;
 
 export type UserRow = Selectable<UsersTable>;
 export type NewUser = Insertable<UsersTable>;

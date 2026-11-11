@@ -120,6 +120,8 @@ The spec asks for "maintainable, secure, scalable and reliable" without numbers.
 | NFR-14 | Determinism | Replaying stored candles produces exactly the same detection digest as live processing | Replay tests in CI |
 | NFR-15 | Test coverage | ≥ 90% line coverage for the domain packages (indicators, SMC engine, contracts, AI validation); ≥ 70% for services | CI coverage gates |
 
+> **NFR-02, decided 2026-11-11.** "Candle close" is the moment the candle is final in the platform, which is when the ingestor announces it. For Coinbase that is 2 s after the minute boundary, because of the late-trade grace. See the [implementation plan, Phase 3](08-implementation-plan.md#phase-3--technical-analysis).
+
 ## 5. Out of scope for the initial release
 
 - Placing orders, exchange accounts, portfolios or anything that moves money.

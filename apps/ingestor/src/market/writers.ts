@@ -1,7 +1,14 @@
 import { randomUUID } from 'node:crypto';
 import type { Redis } from 'ioredis';
 import type { Kysely } from 'kysely';
-import { aggregateCandles, type Candle, floorTo, TF_MS, timeframesClosingAt } from '@cip/domain';
+import {
+  aggregateCandles,
+  type Candle,
+  floorTo,
+  TF_MS,
+  type Timeframe,
+  timeframesClosingAt,
+} from '@cip/domain';
 import { candleToRow, type Database, rowToCandle } from '@cip/db';
 import type { Logger } from '@cip/observability';
 
@@ -95,6 +102,19 @@ export class CandleWriter {
       .limit(1)
       .executeTakeFirst();
     return row ? { close: row.close, openTime: row.open_time.getTime() } : null;
+  }
+
+  /** Open time of the earliest stored `tf` candle: how far back that timeframe's history reaches. */
+  async firstOpenTime(instrumentId: string, tf: Timeframe): Promise<number | null> {
+    const row = await this.db
+      .selectFrom('market.candles')
+      .select('open_time')
+      .where('instrument_id', '=', instrumentId)
+      .where('timeframe', '=', tf)
+      .orderBy('open_time')
+      .limit(1)
+      .executeTakeFirst();
+    return row ? row.open_time.getTime() : null;
   }
 }
 

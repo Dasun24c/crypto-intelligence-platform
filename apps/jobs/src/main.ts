@@ -7,6 +7,7 @@ import { checkDependencies, ConfigError, runService } from '@cip/observability';
 import { Backfiller, type BackfillJob, GapNotRepairable, GapNotSettled } from './backfill.js';
 import { loadJobsConfig } from './config.js';
 import { CONSISTENCY_CHECK, CONSISTENCY_PATTERN, checkConsistency, previousDay } from './consistency.js';
+import { gapRepairer, HOLE_SWEEP, HOLE_SWEEP_EVERY_MS, sweepHoles } from './gap-repairs.js';
 import { Maintenance } from './maintenance.js';
 import {
   GENERATE_CLOSURES,
@@ -31,6 +32,14 @@ async function main(): Promise<void> {
     // Public REST clients (no credentials) for pair status and gap repair; budgets live in each client.
     const noHooks = { onEvent: () => undefined, onUnparsed: () => undefined, onStatus: () => undefined };
     const venues = { binance: new BinanceVenue(noHooks), coinbase: new CoinbaseVenue(noHooks) };
+    const queueRedis = new Redis(config.REDIS_URL, {
+      maxRetriesPerRequest: null,
+      connectionName: 'cip-jobs-backfill',
+    });
+    const backfillQueue = new Queue<BackfillJob>('backfill', {
+      connection: queueRedis,
+      prefix: config.QUEUE_PREFIX,
+    });
     const maintenance = new Maintenance({
       redisUrl: config.REDIS_URL,
       prefix: config.QUEUE_PREFIX,
@@ -48,9 +57,23 @@ async function main(): Promise<void> {
           name: CONSISTENCY_CHECK,
           pattern: CONSISTENCY_PATTERN,
           run: async () => {
-            const report = await checkConsistency({ db, redis, log, venues }, previousDay(Date.now()));
-            return { ok: report.ok, failing: report.results.filter((r) => r.differences > 0).length };
+            const report = await checkConsistency(
+              { db, redis, log, venues, repair: gapRepairer(db, redis, backfillQueue) },
+              previousDay(Date.now()),
+            );
+            return {
+              ok: report.ok,
+              failing: report.results.filter((r) => r.differences > 0).length,
+              holes: report.holes.length,
+            };
           },
+        },
+        {
+          name: HOLE_SWEEP,
+          everyMs: HOLE_SWEEP_EVERY_MS,
+          run: async () => ({
+            recorded: await sweepHoles(db, gapRepairer(db, redis, backfillQueue), Date.now()),
+          }),
         },
         {
           name: GENERATE_CLOSURES,
@@ -70,11 +93,6 @@ async function main(): Promise<void> {
 
     // Gap repair from the venues' public REST APIs (architecture §5.4).
     const backfiller = new Backfiller(db, redis, log, venues);
-    const queueRedis = new Redis(config.REDIS_URL, {
-      maxRetriesPerRequest: null,
-      connectionName: 'cip-jobs-backfill',
-    });
-    const backfillQueue = new Queue('backfill', { connection: queueRedis, prefix: config.QUEUE_PREFIX });
     const backfill = new Worker<BackfillJob>(
       'backfill',
       async (job, token) => {
