@@ -695,6 +695,21 @@ CREATE TABLE ops.system_events (                        -- hypertable on ts
 > - **Profiles**: version 3 of `crypto-majors` (`…0205`) and `gold` (`…0206`) adds the zone settings of rulebook §10, and every instrument moves to it.
 > - **Grants**: as for the Phase 4 projections.
 
+> **As implemented in Phase 6** (migration 0009):
+>
+> - **The four §5.2 tables** are as above, with these differences:
+>   - `setups.resolution` and `setup_outcomes.result` add `expired`: a setup that ended before it ever confirmed (rulebook I26).
+>   - `confluence_score` is `numeric(4,1)`: half credits on weights of 15 make scores like 62.5.
+>   - `setups.flags` holds the run's flags on its latest transition (`warmup`, `late_detection`), as on the other projections. `quality_flags` holds the engine's (rulebook §7).
+>   - `target1_ref` and `target2_ref` are `{kind: level | zone, id, price}`. `refs` holds `{sweeps, mss: {anchorId, anchorPrice, breakCandleTime, displacement, structureEventId}, rangeId, poiId, levelIds}`, all projection ids.
+>   - `created_candle_time`, `updated_candle_time` and `resolved_candle_time` are decision times (the close of the deciding candle).
+>   - `setup_transitions` adds `event_seq` (the run's event that recorded it, unique per setup) and `decided_at`; its `candle_time` is the deciding candle's open time. A confirmation that failed its checklist is a `triggered` → `triggered` row.
+>   - `setup_checklist_results` holds the evaluation at each state reached (the latest one for that state).
+>   - `setup_outcomes` holds a row only for setups that confirmed.
+> - **Event log**: `detection_events.type` adds `setup_transition`. Each carries the whole setup, so the projection takes the latest one.
+> - **Profiles**: version 4 of `crypto-majors` (`…0207`) and `gold` (`…0208`) adds `params.smc.setups` (rulebook §10), and every instrument moves to it.
+> - **Grants**: as for the Phase 4 projections, plus the transitions' identity sequence for svc_analyzer.
+
 ## 8. Hypertables, columnstore and retention
 
 | Table | Chunk interval | Columnstore after | Retention | Estimated rows/day (9 pairs) |

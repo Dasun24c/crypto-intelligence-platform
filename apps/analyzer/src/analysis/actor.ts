@@ -21,7 +21,7 @@ import { decodeState, encodeState } from './checkpoint.js';
 import type { InstrumentLease } from './lease.js';
 import { type Output, type ProcessorConfig, RunProcessor } from './processor.js';
 import type { AnalysedInstrument, AnalysisRepository } from './repository.js';
-import { isWarmup, type RunInfo, toMessage } from './smc-rows.js';
+import { isWarmup, type RunInfo, toMessage, toSetupMessage } from './smc-rows.js';
 import { LeaseLost, type SmcStore } from './smc-store.js';
 
 /**
@@ -112,7 +112,7 @@ export function analysisParams(params: unknown): { indicators: IndicatorParams; 
   const parsed = ProfileParamsSchema.safeParse(params);
   if (!parsed.success)
     throw new Error(`invalid settings: ${parsed.error.issues.map((i) => i.message).join('; ')}`);
-  if (!parsed.data.smc) throw new Error('the profile has no SMC settings (version 3 or later is needed)');
+  if (!parsed.data.smc) throw new Error('the profile has no SMC settings (version 4 or later is needed)');
   const smc = parsed.data.smc;
   validateSmcParams(smc);
   return { indicators: parsed.data.indicators, smc };
@@ -484,7 +484,9 @@ export class InstrumentActor {
     const now = this.now();
     for (const e of events) {
       if (e.seq <= this.published || isWarmup(info, e)) continue;
-      const message = toMessage(info, e, now);
+      // Detections go to the smc channel, setup transitions to the setups channels (API contracts §5.3).
+      const setup = toSetupMessage(info, e, now);
+      const message = setup ?? toMessage(info, e, now);
       if (!message) continue;
       await this.deps.redis.xadd(
         ANALYSIS_EVENTS_STREAM,
@@ -493,7 +495,7 @@ export class InstrumentActor {
         EVENTS_MAXLEN,
         '*',
         'type',
-        'smc',
+        setup ? 'setup' : 'smc',
         'data',
         JSON.stringify(message),
       );

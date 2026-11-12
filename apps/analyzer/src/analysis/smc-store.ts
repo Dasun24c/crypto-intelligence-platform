@@ -136,6 +136,83 @@ export class SmcStore {
         .where('id', '=', linked)
         .where('linked_zone_id', 'is', null)
         .execute();
+    await this.writeSetups(tx, p);
+  }
+
+  /**
+   * Setups (data model §5.2), after the zones their entry zone refers to: each setup's row takes
+   * its latest state, every transition is appended once (keyed by its event), and the checklist of
+   * each state reached and the outcome are upserted.
+   */
+  private async writeSetups(tx: Transaction<Database>, p: ReturnType<typeof project>): Promise<void> {
+    const rows = [...p.setups.values()];
+    const mutable = [
+      'variant',
+      'state',
+      'resolution',
+      'entry_zone_id',
+      'entry_price',
+      'invalidation_price',
+      'target1_price',
+      'target2_price',
+      'target1_ref',
+      'target2_ref',
+      'rr_target1',
+      'confluence_score',
+      'mandatory_passed',
+      'quality_flags',
+      'flags',
+      'refs',
+      'updated_candle_time',
+      'resolved_candle_time',
+    ] as const;
+    for (let i = 0; i < rows.length; i += CHUNK)
+      await tx
+        .insertInto('analysis.setups')
+        .values(rows.slice(i, i + CHUNK) as never)
+        .onConflict((oc) =>
+          oc
+            .column('id')
+            .doUpdateSet((eb) => Object.fromEntries(mutable.map((c) => [c, eb.ref(`excluded.${c}`)]))),
+        )
+        .execute();
+    for (let i = 0; i < p.setupTransitions.length; i += CHUNK)
+      await tx
+        .insertInto('analysis.setup_transitions')
+        .values(p.setupTransitions.slice(i, i + CHUNK) as never)
+        .onConflict((oc) => oc.columns(['setup_id', 'event_seq']).doNothing())
+        .execute();
+    const checklist = [...p.setupChecklist.values()];
+    for (let i = 0; i < checklist.length; i += CHUNK)
+      await tx
+        .insertInto('analysis.setup_checklist_results')
+        .values(checklist.slice(i, i + CHUNK) as never)
+        .onConflict((oc) =>
+          oc.columns(['setup_id', 'state', 'item']).doUpdateSet((eb) => ({
+            credit: eb.ref('excluded.credit'),
+            weight: eb.ref('excluded.weight'),
+            mandatory: eb.ref('excluded.mandatory'),
+            evidence: eb.ref('excluded.evidence'),
+          })),
+        )
+        .execute();
+    const outcomes = [...p.setupOutcomes.values()];
+    for (let i = 0; i < outcomes.length; i += CHUNK)
+      await tx
+        .insertInto('analysis.setup_outcomes')
+        .values(outcomes.slice(i, i + CHUNK) as never)
+        .onConflict((oc) =>
+          oc.column('setup_id').doUpdateSet((eb) => ({
+            entry_touched_at: eb.ref('excluded.entry_touched_at'),
+            resolved_at: eb.ref('excluded.resolved_at'),
+            result: eb.ref('excluded.result'),
+            mfe_r: eb.ref('excluded.mfe_r'),
+            mae_r: eb.ref('excluded.mae_r'),
+            bars_held: eb.ref('excluded.bars_held'),
+            resolved_with_tf: eb.ref('excluded.resolved_with_tf'),
+          })),
+        )
+        .execute();
   }
 
   /** One statement for all of a batch's zone changes: each carries the zone's whole state. */

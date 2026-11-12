@@ -22,6 +22,7 @@ import { Access } from '../common/access.js';
 import { ProblemError } from '../common/problem.js';
 import { ZodPipe } from '../common/zod.pipe.js';
 import { MarketRepository } from '../market/market.repository.js';
+import { SetupsRepository } from './setups.repository.js';
 import { SmcRepository } from './smc.repository.js';
 
 const IdPipe = new ZodPipe(z.uuid());
@@ -39,6 +40,7 @@ export class SmcController {
   constructor(
     private readonly smc: SmcRepository,
     private readonly market: MarketRepository,
+    private readonly setups: SetupsRepository,
   ) {}
 
   private async runOf(id: string, runId: string | undefined) {
@@ -79,13 +81,14 @@ export class SmcController {
         setups: [],
         closures,
       };
-    const [swings, structure, ranges, levels, sweeps, zones] = await Promise.all([
+    const [swings, structure, ranges, levels, sweeps, zones, setups] = await Promise.all([
       this.smc.swings(run.id, q.tf, w),
       this.smc.structure(run.id, q.tf, w),
       this.smc.ranges(run.id, q.tf, w),
       this.smc.levels(run.id, q.tf, w),
       this.smc.sweeps(run.id, q.tf, w),
       this.smc.zones(run.id, q.tf, w),
+      this.setups.alive(run.id, q.tf, from, to, q.limit),
     ]);
     return {
       instrumentId: id,
@@ -97,7 +100,7 @@ export class SmcController {
       levels,
       sweeps,
       zones,
-      setups: [],
+      setups,
       closures,
     };
   }

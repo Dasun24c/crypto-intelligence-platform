@@ -6,10 +6,10 @@ import { runEngine } from './harness.js';
 import type { SmcEvent } from './types.js';
 
 /**
- * Criteria 4.1 and 4.2: every golden fixture (rulebook §12) gives exactly its labelled detections,
- * keeps the §13 invariants, and is prefix-stable: the events for candles 0..n are the same whether
- * or not later candles exist, at every cut point (or 1,000 random ones in a longer fixture). A
- * checkpoint taken at any cut also continues exactly.
+ * Criteria 4.1, 4.2, 5.1–5.3 and 6.1–6.6: every golden fixture (rulebook §12) gives exactly its
+ * labelled detections, keeps the §13 invariants, and is prefix-stable: the events for candles 0..n
+ * are the same whether or not later candles exist, at every cut point (or 1,000 random ones in a
+ * longer fixture). A checkpoint taken at any cut also continues exactly.
  */
 const fixtures = loadFixtures();
 
@@ -54,6 +54,12 @@ const CONCEPTS = [
   'zone-location',
 ];
 
+/**
+ * Rulebook §6 patterns and variants (criterion 6.1): 5 positive cases in each direction and 5 near
+ * misses each (§12), the cards' warnings among the near misses.
+ */
+const PATTERN_CONCEPTS = ['pattern-1-a', 'pattern-1-b', 'pattern-2', 'pattern-3', 'pattern-4'];
+
 describe('golden fixtures', () => {
   it('meet the rulebook §12 minimum coverage', () => {
     const count = (concept: string, cls: string) =>
@@ -63,6 +69,15 @@ describe('golden fixtures', () => {
         expect(count(concept, cls), `${concept} ${cls}`).toBeGreaterThanOrEqual(3);
     for (const cls of ['closure', 'reopening', 'thin_book'])
       expect(count('gold', cls), `gold ${cls}`).toBeGreaterThanOrEqual(3);
+    for (const concept of PATTERN_CONCEPTS)
+      for (const cls of ['bullish', 'bearish', 'negative'])
+        expect(count(concept, cls), `${concept} ${cls}`).toBeGreaterThanOrEqual(5);
+    // Criteria 6.3, 6.5 and 6.6: the checklist, outcomes and gold-market setups.
+    for (const cls of ['bullish', 'bearish'])
+      for (const concept of ['checklist', 'outcomes'])
+        expect(count(concept, cls), `${concept} ${cls}`).toBeGreaterThanOrEqual(3);
+    for (const cls of ['closure', 'reopening', 'thin_book'])
+      expect(count('gold-setups', cls), `gold-setups ${cls}`).toBeGreaterThanOrEqual(3);
     for (const { path, fixture } of fixtures) {
       expect(path.startsWith(`${fixture.concept}/`), path).toBe(true);
       expect(fixture.labelledBy, path).toBeTruthy();
