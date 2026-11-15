@@ -26,3 +26,4 @@ An Architecture Decision Record (ADR) records one significant decision: the cont
 | [020](020-alerts-evaluation-and-delivery.md) | Alerts are evaluated in the analyzer by one shared evaluator and delivered through the notifications queue | Accepted | 2026-11-12 |
 | [021](021-practice-trading-engine-and-broker.md) | Practice trading is a pure fill engine run by one broker service on the platform's own live data, never a venue | Accepted | 2026-11-14 |
 | [022](022-automatic-practice-trading.md) | Automatic practice trading is a pure decider inside the broker, acting on confirmed setups under each user's rules, journalled with every input | Accepted | 2026-11-15 |
+| [023](023-ai-pipeline.md) | The AI pipeline runs in the jobs service: event triggers, a server-built context, Grok over HTTPS with structured outputs, grounding validation, a reserved budget, and every analysis stored | Accepted | 2026-11-15 |

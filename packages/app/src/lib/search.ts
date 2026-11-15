@@ -77,3 +77,23 @@ export function readPracticeSearch(search: unknown): PracticeSearch {
   }
   return out;
 }
+
+/** `/ai?analysis&instrument&setup&reason`: an analysis to open, or a request to prefill (a setup review). */
+export interface AiSearch {
+  analysis?: string;
+  instrument?: string;
+  setup?: string;
+  reason?: 'market_summary' | 'setup_review' | 'refresh';
+}
+
+export function readAiSearch(search: unknown): AiSearch {
+  const s = (search ?? {}) as Record<string, unknown>;
+  const text = (k: string) => (typeof s[k] === 'string' && s[k] ? { [k]: s[k] } : {});
+  const reason = s['reason'];
+  return {
+    ...text('analysis'),
+    ...text('instrument'),
+    ...text('setup'),
+    ...(reason === 'market_summary' || reason === 'setup_review' || reason === 'refresh' ? { reason } : {}),
+  };
+}

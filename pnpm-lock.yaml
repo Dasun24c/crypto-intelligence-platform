@@ -566,6 +566,9 @@ importers:
 
   apps/api:
     dependencies:
+      '@cip/ai':
+        specifier: workspace:*
+        version: link:../../packages/ai
       '@cip/alerts':
         specifier: workspace:*
         version: link:../../packages/alerts
@@ -912,6 +915,9 @@ importers:
 
   apps/jobs:
     dependencies:
+      '@cip/ai':
+        specifier: workspace:*
+        version: link:../../packages/ai
       '@cip/alerts':
         specifier: workspace:*
         version: link:../../packages/alerts
@@ -1037,6 +1043,43 @@ importers:
       vite:
         specifier: 'catalog:'
         version: 8.3.6(@types/node@26.6.6)(jiti@2.7.0)(yaml@2.9.1)
+
+  packages/ai:
+    dependencies:
+      '@cip/contracts':
+        specifier: workspace:*
+        version: link:../contracts
+      '@cip/domain':
+        specifier: workspace:*
+        version: link:../domain
+      zod:
+        specifier: 'catalog:'
+        version: 4.6.7
+    devDependencies:
+      '@cip/config':
+        specifier: workspace:*
+        version: link:../config
+      '@swc/cli':
+        specifier: 'catalog:'
+        version: 0.8.2(@swc/core@1.16.22)(supports-color@7.2.0)
+      '@swc/core':
+        specifier: 'catalog:'
+        version: 1.16.22
+      '@types/node':
+        specifier: 'catalog:'
+        version: 26.6.6
+      '@typescript/native':
+        specifier: 'catalog:'
+        version: typescript@7.0.2
+      '@vitest/coverage-v8':
+        specifier: 'catalog:'
+        version: 5.1.0(vitest@5.1.0)
+      fast-check:
+        specifier: 'catalog:'
+        version: 4.10.2
+      vitest:
+        specifier: 'catalog:'
+        version: 5.1.0(@opentelemetry/api@1.10.0)(@types/node@26.6.6)(@vitest/coverage-v8@5.1.0)(jsdom@31.0.0)(vite@8.3.6(@types/node@26.6.6)(jiti@2.7.0)(yaml@2.9.1))
 
   packages/alerts:
     dependencies:

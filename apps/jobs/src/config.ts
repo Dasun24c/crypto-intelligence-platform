@@ -1,3 +1,4 @@
+import { readFileSync } from 'node:fs';
 import { z } from 'zod';
 import { LogLevelSchema, loadEnv, NodeEnvSchema, PortSchema } from '@cip/observability';
 
@@ -36,10 +37,36 @@ export const JobsEnvSchema = z.object({
     .int()
     .min(60_000)
     .default(6 * 60 * 60 * 1000),
+  /**
+   * The xAI (Grok) API key for the AI analyses (ADR 023). Only this service has it: in the local
+   * stack it is `.secrets-jobs/grok-api-key`, a folder no other container mounts. Optional: without
+   * it nothing is queued and requested analyses fail as `no_key`. With `GROK_API_KEY_FILE`, the
+   * file is read again at every call, so a key added later needs no restart.
+   */
+  GROK_API_KEY: z.string().optional(),
+  /** xAI's OpenAI-compatible API; tests point it at a fake server. */
+  AI_BASE_URL: z.url().default('https://api.x.ai/v1'),
 });
 
 export type JobsConfig = z.infer<typeof JobsEnvSchema>;
 
 export function loadJobsConfig(env: NodeJS.ProcessEnv = process.env): JobsConfig {
   return loadEnv(JobsEnvSchema, env);
+}
+
+/**
+ * A key read at every use, so one added later needs no restart: from the file when one is named,
+ * else the value given at start-up. An empty value or a missing file counts as no key.
+ */
+export function keyReader(value: string | undefined, file: string | undefined): () => string | undefined {
+  return () => {
+    let key = value;
+    if (file)
+      try {
+        key = readFileSync(file, 'utf8').trim();
+      } catch {
+        key = undefined;
+      }
+    return key ? key : undefined;
+  };
 }

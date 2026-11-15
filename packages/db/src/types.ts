@@ -115,6 +115,8 @@ export interface Database {
   'trading.strategies': TradingStrategiesTable;
   'trading.auto_decisions': TradingAutoDecisionsTable;
   'trading.auto_days': TradingAutoDaysTable;
+  'ai.analyses': AiAnalysesTable;
+  'ai.daily_usage': AiDailyUsageView;
 }
 
 // ---------------------------------------------------------------- market (data model §4)
@@ -498,6 +500,54 @@ export interface TradingJournalTable {
   decisions: ColumnType<string[], string[] | undefined, string[]>;
 }
 
+// ---------------------------------------------------------------- ai (data model §6, migration 0014)
+
+/** Every AI analysis, accepted or not, with what was sent and received (ADR 011, ADR 023). */
+export interface AiAnalysesTable {
+  id: string;
+  instrument_id: string | null;
+  trigger: 'event' | 'digest' | 'on_demand';
+  trigger_refs: ColumnType<unknown, string, string>;
+  request_reason: 'market_summary' | 'setup_review' | 'refresh' | null;
+  setup_id: string | null;
+  requested_by: string | null;
+  context_hash: string;
+  context: ColumnType<unknown, string, string>;
+  prompt_version: string;
+  model_requested: string;
+  model_reported: string | null;
+  status: 'accepted' | 'rejected' | 'failed' | 'skipped_budget' | 'cache_hit';
+  cache_source_id: string | null;
+  stance: 'bullish' | 'bearish' | 'neutral' | null;
+  confidence: 'low' | 'medium' | 'high' | null;
+  response: ColumnType<unknown, string | null, string | null>;
+  validation: ColumnType<unknown, string, string>;
+  repair_attempted: Generated<boolean>;
+  error: string | null;
+  input_tokens: number | null;
+  cached_input_tokens: number | null;
+  output_tokens: number | null;
+  reasoning_tokens: number | null;
+  /** numeric(12, 6): a string from node-postgres. */
+  cost_usd: ColumnType<string | null, string | null, string | null>;
+  latency_ms: number | null;
+  created_at: ColumnType<Date, Date | undefined, never>;
+}
+
+/** `ai.daily_usage`: per UTC day (a view). */
+export interface AiDailyUsageView {
+  day: string;
+  calls: number;
+  accepted: number;
+  rejected: number;
+  failed: number;
+  cache_hits: number;
+  skipped: number;
+  input_tokens: number;
+  output_tokens: number;
+  cost_usd: string;
+}
+
 /** A user's automatic practice trading rules (migration 0013, ADR 022). */
 export interface TradingStrategiesTable {
   id: string;
@@ -852,6 +902,8 @@ export type TradingStrategyRow = Selectable<TradingStrategiesTable>;
 export type TradingAutoDecisionRow = Selectable<TradingAutoDecisionsTable>;
 export type NewTradingAutoDecision = Insertable<TradingAutoDecisionsTable>;
 export type TradingAutoDayRow = Selectable<TradingAutoDaysTable>;
+export type AiAnalysisRow = Selectable<AiAnalysesTable>;
+export type NewAiAnalysis = Insertable<AiAnalysesTable>;
 
 export type UserRow = Selectable<UsersTable>;
 export type NewUser = Insertable<UsersTable>;

@@ -423,6 +423,7 @@ export function SetupDetailPage() {
   const raw = (params as { setupId?: unknown } | null)?.setupId;
   const setupId = typeof raw === 'string' ? raw : '';
   const timeZone = useDisplayTimeZone();
+  const user = useCurrentUser();
   const instruments = useInstruments();
   const detail = useSetupDetail(setupId, null);
   const setup = detail.data;
@@ -470,6 +471,15 @@ export function SetupDetailPage() {
           All levels are hypothetical. {SETUP_DISCLAIMER}.
         </p>
         {gold ? <PaxgDisclaimer /> : null}
+        {can(user.role, 'ai.request') && s.state !== 'resolved' ? (
+          <Link
+            to="/ai"
+            search={{ instrument: s.instrumentId, setup: s.id, reason: 'setup_review' }}
+            className="inline-block text-sm text-accent underline"
+          >
+            Ask Grok to review this setup
+          </Link>
+        ) : null}
       </header>
       <div className="grid gap-6 lg:grid-cols-2">
         <LevelsCard setup={s} />
