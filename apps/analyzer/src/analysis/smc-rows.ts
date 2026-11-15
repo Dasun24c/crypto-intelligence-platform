@@ -1,8 +1,16 @@
-import type { SmcEventMessage } from '@cip/contracts';
+import {
+  SETUP_DISCLAIMER,
+  SETUP_LABELS,
+  type SetupSummary,
+  type SetupTransitionMessage,
+  type SmcEventMessage,
+} from '@cip/contracts';
 import type { NewDetectionEvent } from '@cip/db';
 import { TF_MS } from '@cip/domain';
-import { type SmcEvent, storedPayload } from '@cip/smc-engine';
+import { type SetupTransitionData, type SmcEvent, storedPayload, type TargetRef } from '@cip/smc-engine';
 import { entityId } from './ids.js';
+
+type SetupEvent = Extract<SmcEvent, { type: 'setup_transition' }>;
 
 /**
  * How engine events become rows (the event log and the data model §5.1 projections) and live
@@ -70,7 +78,34 @@ export interface Projection {
   zoneChanges: Map<string, ZoneChange>;
   /** [zone id, the zone it links to]: the linked zone links back unless it already links elsewhere. */
   zoneLinks: [string, string][];
+  /** Setups after their latest transition in the batch, by id; every transition; the checklist per state. */
+  setups: Map<string, Record<string, unknown>>;
+  setupTransitions: Record<string, unknown>[];
+  setupChecklist: Map<string, Record<string, unknown>>;
+  setupOutcomes: Map<string, Record<string, unknown>>;
 }
+
+/** A setup's references (sweeps, MSS, range, POI, levels) by projection id. */
+export function setupRefs(d: SetupTransitionData, id: (key: string) => string) {
+  return {
+    sweeps: d.refs.sweeps.map(id),
+    mss: d.refs.mss
+      ? {
+          anchorId: id(d.refs.mss.anchor),
+          anchorPrice: d.refs.mss.anchorPrice,
+          breakCandleTime: d.refs.mss.breakCandleTime,
+          displacement: d.refs.mss.displacement,
+          structureEventId: d.refs.mss.structureEvent === null ? null : id(d.refs.mss.structureEvent),
+        }
+      : null,
+    rangeId: d.refs.range === null ? null : id(d.refs.range),
+    poiId: d.refs.poi === null ? null : id(d.refs.poi),
+    levelIds: d.refs.levels.map(id),
+  };
+}
+
+const targetRef = (t: TargetRef | null, id: (key: string) => string) =>
+  t ? { kind: t.kind, id: id(t.key), price: t.price } : null;
 
 export function project(info: RunInfo, events: readonly SmcEvent[], now: number): Projection {
   const p: Projection = {
@@ -84,6 +119,10 @@ export function project(info: RunInfo, events: readonly SmcEvent[], now: number)
     levelChanges: new Map(),
     zoneChanges: new Map(),
     zoneLinks: [],
+    setups: new Map(),
+    setupTransitions: [],
+    setupChecklist: new Map(),
+    setupOutcomes: new Map(),
   };
   const id = (key: string) => entityId(info.runId, key);
   const base = (e: SmcEvent) => ({
@@ -212,11 +251,121 @@ export function project(info: RunInfo, events: readonly SmcEvent[], now: number)
           status_changed_at: e.data.statusChangedAt === null ? null : new Date(e.data.statusChangedAt),
         });
         break;
+      case 'setup_transition': {
+        // Each transition carries the whole setup: the latest one in the batch is its row.
+        const d = e.data;
+        const sid = id(e.key);
+        p.setups.set(sid, {
+          ...base(e),
+          pattern: d.pattern,
+          variant: d.variant,
+          direction: d.direction,
+          context_tf: d.contextTf,
+          setup_tf: d.setupTf,
+          state: d.to,
+          resolution: d.resolution,
+          entry_zone_id: d.entryZone === null ? null : id(d.entryZone),
+          entry_price: d.levels.entry,
+          invalidation_price: d.levels.invalidation,
+          target1_price: d.levels.target1,
+          target2_price: d.levels.target2,
+          target1_ref: JSON.stringify(targetRef(d.targets.target1, id)),
+          target2_ref: JSON.stringify(targetRef(d.targets.target2, id)),
+          rr_target1: d.levels.rr,
+          confluence_score: d.score,
+          mandatory_passed: d.mandatoryPassed,
+          quality_flags: [...d.qualityFlags],
+          flags: runFlags(info, e, now),
+          refs: JSON.stringify(setupRefs(d, id)),
+          created_candle_time: new Date(d.createdAt),
+          updated_candle_time: new Date(e.time),
+          resolved_candle_time: d.to === 'resolved' ? new Date(e.time) : null,
+        });
+        p.setupTransitions.push({
+          setup_id: sid,
+          event_seq: e.seq,
+          from_state: d.from,
+          to_state: d.to,
+          candle_time: new Date(e.time - TF_MS[d.setupTf]),
+          decided_at: new Date(e.time),
+          processed_at: new Date(now),
+          reason: d.reason,
+          evidence: JSON.stringify(d.evidence),
+        });
+        for (const c of d.checklist)
+          p.setupChecklist.set(`${sid}|${d.to}|${c.item}`, {
+            setup_id: sid,
+            state: d.to,
+            item: c.item,
+            credit: c.credit,
+            weight: c.weight,
+            mandatory: c.mandatory,
+            evidence: JSON.stringify(c.evidence),
+          });
+        if (d.outcome)
+          p.setupOutcomes.set(sid, {
+            setup_id: sid,
+            entry_touched_at: d.outcome.entryTouchedAt === null ? null : new Date(d.outcome.entryTouchedAt),
+            resolved_at: new Date(d.outcome.resolvedAt),
+            result: d.outcome.result,
+            mfe_r: d.outcome.mfeR,
+            mae_r: d.outcome.maeR,
+            bars_held: d.outcome.barsHeld,
+            resolved_with_tf: d.outcome.resolvedWithTf,
+          });
+        break;
+      }
       case 'gap_marker':
         break;
     }
   }
   return p;
+}
+
+/** A setup as lists and channels carry it, after transition `e`. */
+export function setupSummary(info: RunInfo, e: SetupEvent, now: number): SetupSummary {
+  const d = e.data;
+  return {
+    id: entityId(info.runId, e.key),
+    instrumentId: info.instrumentId,
+    runId: info.runId,
+    pattern: d.pattern,
+    variant: d.variant,
+    direction: d.direction,
+    contextTf: d.contextTf,
+    setupTf: d.setupTf,
+    state: d.to,
+    resolution: d.resolution,
+    displayLabel: SETUP_LABELS[d.to],
+    levels: { ...d.levels },
+    score: d.score,
+    mandatoryPassed: d.mandatoryPassed,
+    qualityFlags: [...d.qualityFlags],
+    flags: runFlags(info, e, now),
+    createdAt: d.createdAt,
+    updatedAt: e.time,
+    resolvedAt: d.to === 'resolved' ? e.time : null,
+    disclaimer: SETUP_DISCLAIMER,
+  };
+}
+
+/** The `setup.transition` message for the `setups` channels (API contracts §5.3). */
+export function toSetupMessage(info: RunInfo, e: SmcEvent, now: number): SetupTransitionMessage | null {
+  if (e.type !== 'setup_transition') return null;
+  const d = e.data;
+  return {
+    ...setupSummary(info, e, now),
+    transition: {
+      from: d.from,
+      to: d.to,
+      reason: d.reason,
+      candleTime: e.time - TF_MS[d.setupTf],
+      decidedAt: e.time,
+      processedAt: now,
+      late: info.live && now - e.time > LATE_MS,
+      evidence: d.evidence,
+    },
+  };
 }
 
 /** The live message for an event (API form), or null for events that are not published. */
@@ -373,6 +522,8 @@ export function toMessage(info: RunInfo, e: SmcEvent, now: number): SmcEventMess
           statusChangedAt: e.data.statusChangedAt,
         },
       };
+    // Setups go to the `setups` channels instead (toSetupMessage); gap markers are not published.
+    case 'setup_transition':
     case 'gap_marker':
       return null;
   }

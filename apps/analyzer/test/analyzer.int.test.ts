@@ -390,7 +390,7 @@ describe('analyzer runs (Phase 3)', () => {
     const c = analyzers[2]!;
     const old = await openRun(SOL);
     const v2 = '019a6f00-0000-7000-8000-0000000002a1';
-    // Version 4: the launch profile's settings (version 3) with RSI 21.
+    // Version 5: the launch profile's settings (version 4) with RSI 21.
     const { params: current } = await owner
       .selectFrom('market.instrument_profiles')
       .select('params')
@@ -402,7 +402,7 @@ describe('analyzer runs (Phase 3)', () => {
     };
     await sql`
       INSERT INTO market.instrument_profiles (id, name, version, params, params_hash)
-      SELECT ${v2}::uuid, 'crypto-majors', 4, p, encode(sha256(convert_to(p::text, 'UTF8')), 'hex')
+      SELECT ${v2}::uuid, 'crypto-majors', 5, p, encode(sha256(convert_to(p::text, 'UTF8')), 'hex')
       FROM (SELECT ${JSON.stringify(params)}::jsonb AS p) AS x
     `.execute(owner);
     await owner.updateTable('market.instruments').set({ profile_id: v2 }).where('id', '=', SOL).execute();

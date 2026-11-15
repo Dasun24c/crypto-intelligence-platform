@@ -17,7 +17,11 @@ export interface Fixture {
   source: string;
   /** Per timeframe: `[openTime, open, high, low, close, volume, extra?]`; a hole is a missing candle. */
   candles: Partial<Record<Timeframe, [number, string, string, string, string, string, Extra?][]>>;
-  context: { closures: { from: string; to: string; reason: Closure['reason'] }[]; economicEvents: unknown[] };
+  /** `economicEvents: null` is an unavailable calendar (checklist item 8 then fails). */
+  context: {
+    closures: { from: string; to: string; reason: Closure['reason'] }[];
+    economicEvents: { id: string; at: string; currency: string; impact: 'low' | 'medium' | 'high' }[] | null;
+  };
   expected: Expectation[];
   notExpected?: Expectation[];
   exhaustive?: Filter[];
@@ -99,7 +103,16 @@ export function fixtureInput(f: Fixture): { steps: StepInput[]; context: StepCon
       underlyingClosed: overlapsClosure(openTime, tf, closures),
       microProfile: extra?.profile,
     }));
-  return { steps: toSteps(candles), context: { closures } };
+  const economicEvents =
+    f.context.economicEvents === null
+      ? null
+      : f.context.economicEvents.map((e) => ({
+          id: e.id,
+          scheduledAt: Date.parse(e.at),
+          currency: e.currency,
+          impact: e.impact,
+        }));
+  return { steps: toSteps(candles), context: { closures, economicEvents } };
 }
 
 /** `{ "$approx": x, "$tol": t }` matches a number within t; ISO strings match epoch-ms numbers. */

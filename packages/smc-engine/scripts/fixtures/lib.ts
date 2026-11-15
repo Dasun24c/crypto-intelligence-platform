@@ -57,6 +57,8 @@ export interface Case {
   /** More timeframes, each starting at `start` unless given its own. */
   more?: (Series & { start?: number })[];
   closures?: { from: number; to: number; reason: 'weekend' | 'daily_break' | 'holiday' }[];
+  /** Economic calendar (checklist item 8); null is an unavailable calendar. Default: none scheduled. */
+  economicEvents?: { id: string; at: number; currency: string; impact: 'low' | 'medium' | 'high' }[] | null;
   expected: Exp[];
   notExpected?: Exp[];
   /** Event filters every matching event of which must be among `expected`. */
@@ -143,7 +145,20 @@ const LEVEL_MIRROR = new Map<string, string>(
     [b, a],
   ]),
 );
-const PRICE_FIELDS = new Set(['price', 'breakPrice', 'levelPrice', 'extremePrice', 'equilibrium']);
+const PRICE_FIELDS = new Set([
+  'price',
+  'breakPrice',
+  'levelPrice',
+  'extremePrice',
+  'equilibrium',
+  // Setups (§6): hypothetical levels and the prices their evidence quotes.
+  'entry',
+  'invalidation',
+  'target1',
+  'target2',
+  'anchorPrice',
+  'close',
+]);
 const KEY_FIELDS = new Set([
   'key',
   'level',
@@ -153,6 +168,19 @@ const KEY_FIELDS = new Set([
   'droppedBreaches',
   'linkedZone',
   'structureEvent',
+  'entryZone',
+  'sweeps',
+  'sweep',
+  'firstSweep',
+  'anchor',
+  'poi',
+  'levels',
+  // Setup evidence: the candidates, structure and zones a transition names.
+  'candidates',
+  'fvgs',
+  'lost',
+  'excluded',
+  'swing',
 ]);
 
 /** Entity keys carry the side: `lv:4h:swing_low:s:…` ↔ `lv:4h:swing_high:b:…`, `sw:…:h:…` ↔ `…:l:…`. */
@@ -176,9 +204,34 @@ export function mirrorKey(key: string): string {
       return [p[0], p[1], LEVEL_MIRROR.get(p[2]!) ?? p[2], p[3] === 'bu' ? 'be' : 'bu', ...p.slice(4)].join(
         ':',
       );
+    case 'su':
+      // su:{setup tf}:{context tf}:{pattern}:{bu|be}:{created}
+      return [p[0], p[1], p[2], p[3], p[4] === 'bu' ? 'be' : 'bu', ...p.slice(5)].join(':');
     default:
       return key;
   }
+}
+
+/**
+ * ATR(14) with Wilder smoothing at each candle's close (rulebook §1), as fixture designs need it
+ * for buffers and distances: the first value is the mean true range of candles 0–13.
+ */
+export function atrs(bars: Slot[], period = 14): (number | null)[] {
+  const out: (number | null)[] = [];
+  let atr: number | null = null;
+  let sum = 0;
+  let prev: Bar | null = null;
+  bars.forEach((b, i) => {
+    if (!b) throw new Error('atrs: a case with gaps needs its own ATR reasoning');
+    const tr = prev ? Math.max(b[1] - b[2], Math.abs(b[1] - prev[3]), Math.abs(b[2] - prev[3])) : b[1] - b[2];
+    if (i < period) {
+      sum += tr;
+      if (i === period - 1) atr = sum / period;
+    } else atr = (atr! * (period - 1) + tr) / period;
+    out.push(i < period - 1 ? null : atr);
+    prev = b;
+  });
+  return out;
 }
 
 function mirrorValue(field: string, v: unknown, m: number): unknown {
@@ -291,6 +344,14 @@ export const keys = {
     `zn:${tf}:${type}:${direction === 'bullish' ? 'bu' : 'be'}:${originFrom}`,
   structure: (tf: Tf, level: 'internal' | 'external', type: string, breakOpen: number) =>
     `st:${tf}:${level === 'internal' ? 'int' : 'ext'}:${type}:${breakOpen}`,
+  sweep: (tf: Tf, levelKey: string, breachOpen: number) => `sp:${tf}:${levelKey}:${breachOpen}`,
+  setup: (
+    setupTf: Tf,
+    contextTf: Tf,
+    pattern: 'p1' | 'p2' | 'p3' | 'p4',
+    direction: 'bullish' | 'bearish',
+    created: number,
+  ) => `su:${setupTf}:${contextTf}:${pattern}:${direction === 'bullish' ? 'bu' : 'be'}:${created}`,
 };
 
 /** Candles of a timeframe `factor` times longer: complete groups only (a group with a hole is null). */

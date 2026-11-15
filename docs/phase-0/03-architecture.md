@@ -239,6 +239,7 @@ docs/
 > - The actor's `RunProcessor` walks the run boundary by boundary from each timeframe's origin. At each boundary every due timeframe's candle steps its indicator series, and the candles step the engine together, in one call.
 > - The rules version is now `indicators-1+smc-0.1.0`. Profiles moved to version 2 (with `smc` settings), which superseded the Phase 3 runs.
 > - Phase 5 adds the points of interest to the same loop: rules version `indicators-1+smc-0.2.0`, profiles version 3, a `poi_zones` projection, and `zone.created` and `zone.status` on `an:events` and the `smc` channel. The runtime itself is unchanged.
+> - Phase 6 adds the setups (rulebook §5–§8) to the same loop: rules version `indicators-1+smc-0.3.0`, profiles version 4, four setup projections, and `setup` entries on `an:events` for the `setups` channels. Outcomes are part of engine state, and the 1m candles the engine already takes resolve ambiguity, as this section says. The engine's checkpoint format is 4: a run whose checkpoint the code cannot continue is superseded and a new one warms up, as any rules change does. The runtime itself is unchanged.
 > - The whole instrument now waits at the first candle that can still be repaired, where Phase 3 held back only that timeframe. This is ADR 005's strict order. A gap declared unrepairable is stepped over with a gap marker, which ends ranges and drops pending sweeps on that timeframe.
 >
 > **Writes, checkpoints and fencing**

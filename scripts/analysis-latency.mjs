@@ -1,8 +1,8 @@
 #!/usr/bin/env node
-// Criteria 3.5 and 4.6 / NFR-02: how soon indicator values (≤ 1 s p95) and SMC detections
-// (≤ 2 s p95) are published after a candle closes.
+// Criteria 3.5 and 4.6 / NFR-02: how soon indicator values (≤ 1 s p95) and SMC detections and
+// setup transitions (≤ 2 s p95) are published after a candle closes.
 //
-// For every `indicators.closed` and `smc` entry on `an:events` in the window, it measures:
+// For every `indicators.closed`, `smc` and `setup` entry on `an:events` in the window, it measures:
 //   - wake-up → published: from the ingestor's `md:candles:{id}` entry announcing the final candle
 //     to the analyzer's `an:events` entry. Both are Redis stream ids (Redis server clock, ms).
 //   - boundary → published: from the candle's close boundary (venue time) to the `an:events` entry,
@@ -139,12 +139,15 @@ const byTf = {};
 const byInstrument = {};
 const smcWake = [];
 const smcBoundary = [];
+const setupWake = [];
+const setupBoundary = [];
 let untimed = 0;
 for (const p of published) {
-  const smc = p.stream === 'smc';
+  const setup = p.stream === 'setup';
+  const smc = p.stream === 'smc' || setup;
   if (p.stream !== 'indicators.closed' && !smc) continue;
-  // An SMC detection is decided at a boundary (`time`); any timeframe's wake-up for it counts.
-  const close = smc ? p.time : p.point.t + TF_MS[p.tf];
+  // An SMC detection (or setup transition) is decided at a boundary; any timeframe's wake-up counts.
+  const close = setup ? p.transition.decidedAt : smc ? p.time : p.point.t + TF_MS[p.tf];
   const w = wakeups.get(p.instrumentId)?.get(close);
   if (!w || (!smc && !w.tfs.includes(p.tf))) {
     untimed++;
@@ -153,8 +156,8 @@ for (const p of published) {
   const a = idMs(p.id) - w.ms;
   const b = Math.round(idMs(p.id) - clock.offset - close);
   if (smc) {
-    smcWake.push(a);
-    smcBoundary.push(b);
+    (setup ? setupWake : smcWake).push(a);
+    (setup ? setupBoundary : smcBoundary).push(b);
     continue;
   }
   wake.push(a);
@@ -175,6 +178,13 @@ console.log(`boundary → published: ${stats(boundary)}`);
 for (const [id, v] of Object.entries(byInstrument)) console.log(`  ${id} ${stats(v)}`);
 console.log(`SMC wake-up → published:  ${stats(smcWake)}`);
 console.log(`SMC boundary → published: ${stats(smcBoundary)}`);
+console.log(`Setup wake-up → published:  ${stats(setupWake)}`);
+console.log(`Setup boundary → published: ${stats(setupBoundary)}`);
 const p95 = (v) => [...v].sort((x, y) => x - y)[Math.ceil(0.95 * v.length) - 1];
 process.exitCode =
-  wake.length > 0 && p95(wake) <= 1000 && (smcWake.length === 0 || p95(smcWake) <= 2000) ? 0 : 1;
+  wake.length > 0 &&
+  p95(wake) <= 1000 &&
+  (smcWake.length === 0 || p95(smcWake) <= 2000) &&
+  (setupWake.length === 0 || p95(setupWake) <= 2000)
+    ? 0
+    : 1;

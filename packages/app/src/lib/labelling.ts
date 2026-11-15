@@ -29,6 +29,15 @@ export const CONCEPTS = [
   'supply-demand',
   'zone-fills',
   'zone-location',
+  // Phase 6: rulebook §6 patterns and variants, the §7 checklist, §8 outcomes, and gold setups.
+  'pattern-1-a',
+  'pattern-1-b',
+  'pattern-2',
+  'pattern-3',
+  'pattern-4',
+  'checklist',
+  'outcomes',
+  'gold-setups',
 ] as const;
 export const CLASSES = ['bullish', 'bearish', 'negative', 'closure', 'reopening', 'thin_book'] as const;
 
@@ -128,7 +137,38 @@ export function candidatesFrom(overlay: ChartOverlay, from: number, to: number):
         data: { status: z.status, fillPct: z.fillPct },
       });
   }
+  // Setups: when each started forming, and its latest state (the overlay holds no history).
+  const patternName = {
+    double_liquidity_trap: 'Pattern 1',
+    eq_near_poi: 'Pattern 2',
+    htf_order_block: 'Pattern 3',
+    sweep_outside_fill_inside: 'Pattern 4',
+  };
+  for (const u of overlay.setups) {
+    const name = `${patternName[u.pattern]}${u.variant ? ` ${u.variant}` : ''} ${u.direction}`;
+    add(`${u.id}:forming`, u.createdAt, `${name} forming`, {
+      type: 'setup_transition',
+      tf: u.setupTf,
+      data: { pattern: u.pattern, direction: u.direction, to: 'forming' },
+    });
+    if (u.state !== 'forming')
+      add(
+        `${u.id}:${u.state}`,
+        u.updatedAt,
+        `${name} ${u.state.replace('_', ' ')}${u.resolution ? ` (${u.resolution.replace(/_/g, ' ')})` : ''}`,
+        {
+          type: 'setup_transition',
+          tf: u.setupTf,
+          data: { pattern: u.pattern, direction: u.direction, to: u.state },
+        },
+      );
+  }
   return out.sort((a, b) => a.at - b.at || a.summary.localeCompare(b.summary));
+}
+
+/** A setup the rulebook says confirms at a candle (rulebook §6). */
+function setupConfirmed(pattern: string, direction: string) {
+  return { type: 'setup_transition', data: { pattern, direction, to: 'confirmed' } } as const;
 }
 
 /** What an analyst can add at a candle the platform missed. */
@@ -168,6 +208,14 @@ export const MANUAL_KINDS = {
   'FVG bearish': { type: 'zone_created', data: { type: 'fvg', direction: 'bearish' } },
   'demand zone': { type: 'zone_created', data: { type: 'demand', direction: 'bullish' } },
   'supply zone': { type: 'zone_created', data: { type: 'supply', direction: 'bearish' } },
+  'Pattern 1 confirmed bullish': setupConfirmed('double_liquidity_trap', 'bullish'),
+  'Pattern 1 confirmed bearish': setupConfirmed('double_liquidity_trap', 'bearish'),
+  'Pattern 2 confirmed bullish': setupConfirmed('eq_near_poi', 'bullish'),
+  'Pattern 2 confirmed bearish': setupConfirmed('eq_near_poi', 'bearish'),
+  'Pattern 3 confirmed bullish': setupConfirmed('htf_order_block', 'bullish'),
+  'Pattern 3 confirmed bearish': setupConfirmed('htf_order_block', 'bearish'),
+  'Pattern 4 confirmed bullish': setupConfirmed('sweep_outside_fill_inside', 'bullish'),
+  'Pattern 4 confirmed bearish': setupConfirmed('sweep_outside_fill_inside', 'bearish'),
 } as const satisfies Record<string, { type: string; data: Record<string, unknown>; onCandle?: boolean }>;
 export type ManualKind = keyof typeof MANUAL_KINDS;
 

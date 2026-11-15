@@ -287,24 +287,28 @@ export const channels = {
   market: (instrumentId: string) => `market:${instrumentId}`,
   indicators: (instrumentId: string, tf: Tf) => `indicators:${instrumentId}:${tf}`,
   smc: (instrumentId: string) => `smc:${instrumentId}`,
+  /** Every instrument's setups, or one instrument's (Phase 6). */
+  setups: (instrumentId?: string) => (instrumentId ? `setups:${instrumentId}` : 'setups'),
   systemHealth: 'system:health',
 } as const;
 
 const UUID = '[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}';
 export const CHANNEL_PATTERN = new RegExp(
-  `^(?:(?:ticker|book|trades|market|smc):${UUID}|(?:candles|indicators):${UUID}:(?:1m|5m|15m|1h|4h|1d)|system:health)$`,
+  `^(?:(?:ticker|book|trades|market|smc):${UUID}|(?:candles|indicators):${UUID}:(?:1m|5m|15m|1h|4h|1d)|setups(?::${UUID})?|system:health)$`,
 );
 
 /**
  * Durable channels carry `seq` (the id of the stream entry behind the message: md:events for
- * trades and market, an:events for indicators and smc) and can be replayed after a reconnect.
+ * trades and market, an:events for indicators, smc and setups) and can be replayed after a reconnect.
  */
 export function isDurableChannel(channel: string): boolean {
   return (
     channel.startsWith('trades:') ||
     channel.startsWith('market:') ||
     channel.startsWith('indicators:') ||
-    channel.startsWith('smc:')
+    channel.startsWith('smc:') ||
+    channel === 'setups' ||
+    channel.startsWith('setups:')
   );
 }
 
@@ -397,6 +401,7 @@ export type MarketMessageType =
   | 'sweep'
   | 'zone.created'
   | 'zone.status'
+  | 'setup.transition'
   | 'health.update';
 
 /** A stored or live candle in its wire form (structural, so this package stays dependency-free). */

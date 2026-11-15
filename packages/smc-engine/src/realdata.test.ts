@@ -4,7 +4,7 @@ import { invariantViolations } from '../test/invariants.js';
 import { realCandles } from '../test/real-data.js';
 import { SmcEngine } from './engine.js';
 import { runEngine, toSteps } from './harness.js';
-import { CRYPTO_MAJORS_SMC_PARAMS, GOLD_SMC_PARAMS } from './params.js';
+import { CRYPTO_MAJORS_SMC_PARAMS, GOLD_SMC_PARAMS, PATTERNS } from './params.js';
 import type { SmcEvent, StepInput } from './types.js';
 
 /**
@@ -77,6 +77,23 @@ describe('the engine on 34 days of BTCUSDT', () => {
       expect(seen, k).toContain(k);
   });
 
+  it('runs every pattern and resolves setups several ways (Phase 6)', () => {
+    const transitions = full.filter(
+      (e): e is Extract<SmcEvent, { type: 'setup_transition' }> => e.type === 'setup_transition',
+    );
+    const seen = new Set(transitions.map((e) => `${e.data.pattern}:${e.data.to}`));
+    for (const p of PATTERNS) {
+      expect(seen, `${p} forms`).toContain(`${p}:forming`);
+      expect(seen, `${p} triggers`).toContain(`${p}:triggered`);
+    }
+    const confirmed = new Set(
+      transitions.filter((e) => e.data.to === 'confirmed').map((e) => e.data.pattern),
+    );
+    expect(confirmed.size).toBeGreaterThanOrEqual(3);
+    const results = new Set(transitions.flatMap((e) => (e.data.outcome ? [e.data.outcome.result] : [])));
+    for (const r of ['target_reached', 'invalidated', 'expired_no_entry']) expect(results, r).toContain(r);
+  });
+
   it('keeps the rulebook §13 invariants', () => {
     expect(invariantViolations(full, BTC.tick)).toEqual([]);
   });
@@ -106,8 +123,10 @@ describe('the engine on 34 days of BTCUSDT', () => {
     expect(() => SmcEngine.restore(snapshot, { params: GOLD_SMC_PARAMS, tick: '0.01' })).toThrow(
       /other rules/,
     );
-    // A Phase 4 checkpoint (format 1, no zones) cannot continue a 0.2.0 run.
-    expect(() => SmcEngine.restore({ ...snapshot, v: 1 as 2 }, BTC)).toThrow(/format/);
+    // Earlier checkpoints (format 1: no zones; 2: no setups; 3: setups without evidence state)
+    // cannot continue a 0.3.0 run.
+    for (const v of [1, 2, 3])
+      expect(() => SmcEngine.restore({ ...snapshot, v: v as 4 }, BTC)).toThrow(/format/);
   });
 
   it('steps in well under 2 ms at the 95th percentile', () => {

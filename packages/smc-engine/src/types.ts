@@ -1,5 +1,5 @@
 import type { Closure, Timeframe } from '@cip/domain';
-import type { SessionName } from './params.js';
+import type { ChecklistItem, PatternName, SessionName } from './params.js';
 
 /** One closed candle, as the engine takes it. Prices and volume are exact decimal strings. */
 export interface EngineCandle {
@@ -31,9 +31,23 @@ export interface StepInput {
   missing?: readonly Timeframe[];
 }
 
-/** What else is known at `time` (rulebook §1): the gold-market closure calendar. */
+/** A scheduled economic release, as checklist item 8 needs it (rulebook §7). */
+export interface EconomicEventRef {
+  id: string;
+  /** Epoch ms. */
+  scheduledAt: number;
+  currency: string;
+  impact: 'low' | 'medium' | 'high';
+}
+
+/**
+ * What else is known at `time` (rulebook §1): the gold-market closure calendar and the economic
+ * calendar. `economicEvents` absent or null means the calendar is unavailable: checklist item 8
+ * then fails with `calendar_unavailable`.
+ */
 export interface StepContext {
   closures: readonly Closure[];
+  economicEvents?: readonly EconomicEventRef[] | null;
 }
 
 export type Direction = 'bullish' | 'bearish';
@@ -206,6 +220,112 @@ export interface ZoneStatusData {
   reason: 'touch' | 'fill' | 'invalidated' | 'expired';
 }
 
+/** Rulebook §6.1 states. `resolved` carries a resolution. */
+export type SetupState = 'forming' | 'triggered' | 'confirmed' | 'entry_active' | 'resolved';
+
+/**
+ * How a setup ended. The first five are rulebook §6.1's. `expired` ends a setup that never confirmed
+ * (its preconditions went, or a sweep or MSS window passed): see rulebook §14.
+ */
+export type SetupResolution =
+  'target_reached' | 'invalidated' | 'expired_no_entry' | 'expired_open' | 'ambiguous' | 'expired';
+
+/**
+ * Rulebook §7 quality flags the engine sets. `thin_book` makes a sweep non-qualifying instead;
+ * `late_detection` depends on the wall clock and is added by the analyzer.
+ */
+export type QualityFlag = 'underlying_closed' | 'liquidity_unverified' | 'low_liquidity' | 'data_gap';
+
+export interface ChecklistResult {
+  item: ChecklistItem;
+  credit: 0 | 0.5 | 1;
+  weight: number;
+  mandatory: boolean;
+  evidence: Record<string, unknown>;
+}
+
+/** Where a hypothetical target came from: a liquidity level or a zone (its proximal edge). */
+export interface TargetRef {
+  kind: 'level' | 'zone';
+  key: string;
+  price: string;
+}
+
+/** The sweep-anchored MSS (rulebook §6.1). */
+export interface MssData {
+  /** Key of the internal swing it broke, and its price. */
+  anchor: string;
+  anchorPrice: string;
+  /** Open time of the candle that closed beyond the anchor. */
+  breakCandleTime: number;
+  /** The engine's structure event at that candle in the same direction, if there is one. */
+  structureEvent: string | null;
+  displacement: { from: number; to: number; bodyAtr: number } | null;
+}
+
+/** Rulebook §8, for setups that reached `confirmed`. */
+export interface SetupOutcomeData {
+  result: SetupResolution;
+  /** Close of the candle that touched the entry; null when it never did. */
+  entryTouchedAt: number | null;
+  resolvedAt: number;
+  /** Excursions in R from the entry candle to the resolving candle; null without an entry. */
+  mfeR: number | null;
+  maeR: number | null;
+  /** Setup candles from the entry candle to the resolving one, both included. */
+  barsHeld: number | null;
+  /** `1m` when 1m candles decided the order of events inside one setup candle. */
+  resolvedWithTf: '1m' | null;
+}
+
+/**
+ * One state transition of a setup (rulebook §6.1), with everything the setup holds at that moment:
+ * a projection can rebuild the setup from its latest transition. `from === to === 'triggered'`
+ * records a confirmation that failed its checklist, with the reasons (the setup keeps "watching").
+ */
+export interface SetupTransitionData {
+  pattern: PatternName;
+  /** Pattern 1: `A` (both sweeps on one side) or `B` (one on each side); null otherwise. */
+  variant: 'A' | 'B' | null;
+  direction: Direction;
+  contextTf: Timeframe;
+  setupTf: Timeframe;
+  from: SetupState | null;
+  to: SetupState;
+  reason: string;
+  resolution: SetupResolution | null;
+  /** Close of the candle at which the setup started forming. */
+  createdAt: number;
+  levels: {
+    entry: string | null;
+    invalidation: string | null;
+    target1: string | null;
+    target2: string | null;
+    rr: number | null;
+  };
+  /** Key of the entry zone. */
+  entryZone: string | null;
+  targets: { target1: TargetRef | null; target2: TargetRef | null };
+  checklist: ChecklistResult[];
+  /** Σ weight × credit, 0–100 (can end in .5). */
+  score: number;
+  mandatoryPassed: boolean;
+  qualityFlags: QualityFlag[];
+  refs: {
+    /** Keys of the sweeps the setup used, oldest first. */
+    sweeps: string[];
+    mss: MssData | null;
+    range: string | null;
+    /** Patterns 2 and 3: the context-timeframe zone. */
+    poi: string | null;
+    /** Keys of the levels it swept or targets. */
+    levels: string[];
+  };
+  /** What decided this transition (the candle's prices, the 1m candle, the failed items, …). */
+  evidence: Record<string, unknown>;
+  outcome: SetupOutcomeData | null;
+}
+
 export interface GapMarkerData {
   /** Open time of the first missing (or partial) candle. */
   from: number;
@@ -238,6 +358,7 @@ export type SmcEvent =
   | EventOf<'sweep', SweepData>
   | EventOf<'zone_created', ZoneData>
   | EventOf<'zone_status', ZoneStatusData>
+  | EventOf<'setup_transition', SetupTransitionData>
   | EventOf<'gap_marker', GapMarkerData>;
 
 export type SmcEventType = SmcEvent['type'];

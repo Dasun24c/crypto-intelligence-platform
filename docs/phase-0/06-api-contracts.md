@@ -139,6 +139,17 @@ Roles: **V** viewer, **A** analyst, **Ad** admin. Every endpoint needs authentic
 >   - The digests cover the events decided in (`from`, `to`].
 >   - `comparison` is `null` when no live run covered the period.
 
+> **As implemented in Phase 6.** Setups (rulebook §6–§8). `GET /setups/stats` arrives with Phase 12, with the statistics.
+>
+> - **`GET /setups?instrumentId&pattern&direction&state&minScore&from&to&runId&cursor&limit`** returns `Page<SetupSummary>`, newest change first (keyset on the latest transition's time). `pattern` and `state` are comma-separated. `from` and `to` bound the latest transition's decision time. Without `runId` it reads each instrument's live run (else its latest live run).
+> - **`GET /setups/{id}`** returns `SetupDetail`: the summary plus `transitions` (oldest first), `checklist` (as evaluated at the current state) and `checklistByState`, `outcome` (setups that confirmed, once resolved), `targets` (`{kind, id, price}`) and `refs`:
+>   - `sweeps`, `entryZone`, `levels`, `range` and `poi` as the SMC endpoints give them;
+>   - `mss` is the sweep-anchored MSS: `{ anchorId, anchorPrice, breakCandleTime, displacement, structureEvent }`, with the engine's structure event at its break when there is one (rulebook I31).
+> - **`SetupSummary`** is the shape in §4, with these differences: it adds `runId`, `flags` (the run's: `warmup`, `late_detection`) and `resolvedAt`; `score` is never null (the checklist is evaluated at every transition); `resolution` can also be `expired` (rulebook I26).
+> - **Transitions**: `{ from, to, reason, candleTime, decidedAt, processedAt, late, evidence }`. `candleTime` is the deciding candle's open time and `decidedAt` its close; `late` is true when a live run stored it more than 120 s after `decidedAt`. `evidence` names what decided it, never empty (rulebook I37).
+> - **Overlay**: `setups` holds the run's setups whose setup timeframe is `tf` and that were alive in the window (formed by its end, not resolved before its start).
+> - **Position size** (SMC-06): the calculator is `positionSize` in `packages/domain`, for the UI to call; there is no endpoint.
+
 ### Calendar, AI, alerts, whales
 
 | Method | Path | Role | Returns |
@@ -408,6 +419,13 @@ interface ActivityPulse { ts: Ts; kind: 'pattern' | 'sweep' | 'mss' | 'ai_comple
 > - **Snapshot**: `{ run, levels, ranges }`, holding the live run's active levels and ranges. History comes from `GET /smc/{id}/overlay`.
 >
 > Phase 5 adds `zone.created` (a `PoiZone`) and `zone.status` (`{ id, status, fillPct, firstTouchAt, statusChangedAt }`, to merge into the zone with that id). The snapshot adds `zones`, the live run's live zones.
+
+> **As implemented in Phase 6.** The `setups` and `setups:{instrumentId}` channels:
+>
+> - **Source**: `an:events` entries of type `setup`, which the analyzer writes for each setup transition a live run stores for the first time (never warm-up ones). Each entry reaches its instrument's `setups:{id}` and `setups`, with the same `seq`.
+> - **Message**: `setup.transition` carries a `SetupSummary` after the transition, with the transition itself in `transition`.
+> - **Snapshot**: `{ setups, transitions }`: the setups of the current live runs that are not resolved, and their latest 50 transitions, each with its `setupId`.
+> - **Subscribing**: `setups` needs no instrument id; `setups:{id}` needs an enabled instrument, like the other channels.
 
 ### 5.4 Sequencing and resync
 

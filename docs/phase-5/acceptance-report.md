@@ -2,7 +2,7 @@
 
 | | |
 |---|---|
-| Status | **Built; awaiting your acceptance.** All three criteria are met; 5.1 with synthetic fixtures only, as for 4.1. Not committed |
+| Status | **Accepted 2026-11-11** (you asked to start Phase 6), with these items carried forward: the review of rulebook §14 notes I14–I24 (and I1–I13); recorded fixtures reviewed by a second person, now also for zones (5.1 is met with synthetic fixtures only); a 7-day replay of purely live time; the first start's serial warm-up; and the Phase 3 and Phase 2 items. Committed as 61147fc, pushed, and opened as pull request #1 |
 | Date | 2026-11-11 |
 | Scope | [Implementation plan, Phase 5](../phase-0/08-implementation-plan.md#phase-5--smc-points-of-interest) |
 | Evidence | This machine (Windows 11, Docker Desktop, Node.js 26.13.0); the local Compose stack streaming live public data from Binance and Coinbase; nine new live runs (ruleset `indicators-1+smc-0.2.0`), live from 2026-11-11 09:56 UTC; checks to 10:23 UTC |

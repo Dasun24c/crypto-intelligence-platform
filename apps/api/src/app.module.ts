@@ -25,6 +25,8 @@ import { AnalysisRepository } from './analysis/analysis.repository.js';
 import { AnalysisStatusService } from './analysis/analysis-status.service.js';
 import { ReplayController } from './analysis/replay.controller.js';
 import { ReplayService } from './analysis/replay.service.js';
+import { SetupsController } from './analysis/setups.controller.js';
+import { SetupsRepository } from './analysis/setups.repository.js';
 import { SmcController } from './analysis/smc.controller.js';
 import { SmcRepository } from './analysis/smc.repository.js';
 import { MarketRepository } from './market/market.repository.js';
@@ -73,6 +75,7 @@ export class AppModule {
         MarketController,
         AnalysisController,
         SmcController,
+        SetupsController,
         ReplayController,
         SystemController,
         ProbesController,
@@ -113,6 +116,7 @@ export class AppModule {
         AnalysisRepository,
         AnalysisStatusService,
         SmcRepository,
+        SetupsRepository,
         ReplayService,
         LiveGateway,
       ],

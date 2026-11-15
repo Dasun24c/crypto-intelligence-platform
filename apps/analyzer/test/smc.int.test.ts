@@ -270,6 +270,66 @@ describe('SMC analysis runtime (Phase 4)', () => {
       const other = zones.find((x) => x.id === z.linked_zone_id)!;
       expect(other.linked_zone_id).not.toBeNull();
     }
+    // Setups (Phase 6): one row per setup with the state of its latest transition, every transition
+    // stored once, the checklist of each state it reached, and the outcome of each confirmed one.
+    expect(types).toContain('setup_transition');
+    type T = {
+      to: string;
+      score: number;
+      resolution: string | null;
+      entryZone: string | null;
+      outcome: { result: string } | null;
+    };
+    const latest = new Map<string, T>();
+    const states = new Map<string, Set<string>>();
+    let transitions = 0;
+    for (const e of events)
+      if (e.type === 'setup_transition') {
+        const d = (e.payload as { data: T }).data;
+        latest.set(e.entity_id!, d);
+        states.set(e.entity_id!, (states.get(e.entity_id!) ?? new Set()).add(d.to));
+        transitions++;
+      }
+    const setups = await owner
+      .selectFrom('analysis.setups')
+      .selectAll()
+      .where('run_id', '=', run.id)
+      .execute();
+    expect(setups.length).toBe(latest.size);
+    for (const s of setups) {
+      const d = latest.get(s.id)!;
+      expect({ state: s.state, score: Number(s.confluence_score), resolution: s.resolution }).toEqual({
+        state: d.to,
+        score: d.score,
+        resolution: d.resolution,
+      });
+      expect(s.flags).toContain('warmup');
+      if (d.entryZone) expect(s.entry_zone_id).toBe(entityId(run.id, d.entryZone));
+    }
+    const ids = setups.map((s) => s.id);
+    const stored = await owner
+      .selectFrom('analysis.setup_transitions')
+      .selectAll()
+      .where('setup_id', 'in', ids)
+      .execute();
+    expect(stored.length).toBe(transitions);
+    const checklist = await owner
+      .selectFrom('analysis.setup_checklist_results')
+      .select(['setup_id', 'state'])
+      .where('setup_id', 'in', ids)
+      .execute();
+    expect(checklist.length).toBe([...states.values()].reduce((n, s) => n + 8 * s.size, 0));
+    const outcomes = await owner
+      .selectFrom('analysis.setup_outcomes')
+      .selectAll()
+      .where('setup_id', 'in', ids)
+      .execute();
+    expect(outcomes.map((o) => [o.setup_id, o.result]).sort()).toEqual(
+      [...latest]
+        .filter(([, d]) => d.outcome)
+        .map(([id, d]) => [id, d.outcome!.result])
+        .sort(),
+    );
     // Checkpoints every 60 boundaries during the warm-up.
     const cp = await store.loadCheckpoint(run.id);
     expect(cp).not.toBeNull();
@@ -286,8 +346,11 @@ describe('SMC analysis runtime (Phase 4)', () => {
     const events = (await eventLog(runId)).filter((e) => e.candle_time.getTime() > FROM);
     expect(events.length).toBeGreaterThan(0);
     const messages = await published();
-    const visible = events.filter((e) => e.type !== 'gap_marker');
+    // Setup transitions go to the setups channels (their own stream entries), gap markers nowhere.
+    const visible = events.filter((e) => e.type !== 'gap_marker' && e.type !== 'setup_transition');
     expect(messages.map((m) => m.seq)).toEqual(visible.map((e) => Number(e.seq)));
+    const setupEntries = (await redis.xrange('an:events', '-', '+')).filter(([, f]) => f[1] === 'setup');
+    expect(setupEntries.length).toBe(events.filter((e) => e.type === 'setup_transition').length);
     for (const m of messages) {
       expect(m).toMatchObject({ instrumentId: BTC, runId });
       expect(JSON.stringify(m.data)).not.toContain('warmup');

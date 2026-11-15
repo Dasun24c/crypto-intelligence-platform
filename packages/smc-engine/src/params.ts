@@ -4,8 +4,68 @@ import { TF_MS, TIMEFRAMES, type Timeframe } from '@cip/domain';
  * The version of the rulebook this engine implements (docs/phase-0/07-smc-rulebook.md, v0.1).
  * Every detection carries it; changing a rule means a new version and a new run (ADR 004).
  */
-/** 0.2.0: Phase 5 adds the points of interest (rulebook §4). */
-export const RULESET_VERSION = '0.2.0';
+/**
+ * 0.2.0: Phase 5 adds the points of interest (rulebook §4). 0.3.0: Phase 6 adds the patterns, the
+ * confluence checklist and outcomes (§5–§8).
+ */
+export const RULESET_VERSION = '0.3.0';
+
+/** The four patterns of rulebook §6, in the order the engine evaluates them. */
+export const PATTERNS = [
+  'double_liquidity_trap',
+  'eq_near_poi',
+  'htf_order_block',
+  'sweep_outside_fill_inside',
+] as const;
+export type PatternName = (typeof PATTERNS)[number];
+
+/** Rulebook §7 checklist items, in order. */
+export const CHECKLIST_ITEMS = [
+  'htf_bias',
+  'liquidity_marked',
+  'poi_present',
+  'sweep',
+  'mss',
+  'levels_defined',
+  'risk_reward',
+  'news_clear',
+] as const;
+export type ChecklistItem = (typeof CHECKLIST_ITEMS)[number];
+
+/** Rulebook §6–§7 and §10: patterns, hypothetical levels, timing, checklist and quality flags. */
+export interface SetupParams {
+  /** The patterns evaluated on every (context, setup) pair. */
+  patterns: PatternName[];
+  /** §6.1 sweep-anchored MSS. */
+  mss: { maxBars: number; maxDistanceAtr: number; requireDisplacement: boolean };
+  /** §6.1 hypothetical levels; the entry is the entry zone's proximal edge. */
+  levels: { slBufferAtr: number; targetMinDistanceAtr: number; entryRef: 'proximal' };
+  /** §6.1 expiry, in setup-timeframe candles. */
+  timing: { entryExpiryBars: number; maxHoldBars: number };
+  pattern1: { minBarsBetweenSweeps: number; maxBarsBetweenSweeps: number; rangeEdgeTolAtr: number };
+  /** Fills are fractions (0.5 = 50 %). */
+  pattern2: { proximityAtr: number; maxPoiFill: number };
+  pattern3: { approachAtr: number; liqProximityAtr: number; sweepWindowBars: number; maxObFill: number };
+  pattern4: { maxTargetFvgFill: number };
+  /** §7: weights (summing to 100), mandatory items, the R:R minimum and the news blackout. */
+  checklist: {
+    minRR: number;
+    newsBlackoutMin: { before: number; after: number };
+    /** Currencies whose high-impact events matter (item 8). */
+    newsCurrencies: string[];
+    weights: Record<ChecklistItem, number>;
+    mandatory: ChecklistItem[];
+  };
+  /** §7 quality flags. */
+  quality: {
+    lowLiqVolumeRatio: number;
+    /** Not evaluated by the engine: it has no order-book data (see rulebook §14). */
+    maxSpreadBps: number;
+    lateThresholdSec: number;
+    blockConfirmWhenUnderlyingClosed: boolean;
+    blockConfirmOnLowLiquidity: boolean;
+  };
+}
 
 export const SESSION_NAMES = ['asia', 'london', 'new_york'] as const;
 export type SessionName = (typeof SESSION_NAMES)[number];
@@ -87,6 +147,8 @@ export interface SmcParams {
     orderBlockCandles: number;
     supplyDemandCandles: number;
   };
+  /** §5–§8: patterns, checklist and outcomes (ruleset 0.3.0). */
+  setups: SetupParams;
 }
 
 const base: SmcParams = {
@@ -141,6 +203,39 @@ const base: SmcParams = {
     orderBlockCandles: 300,
     supplyDemandCandles: 300,
   },
+  setups: {
+    patterns: [...PATTERNS],
+    mss: { maxBars: 12, maxDistanceAtr: 6.0, requireDisplacement: true },
+    levels: { slBufferAtr: 0.1, targetMinDistanceAtr: 1.0, entryRef: 'proximal' },
+    timing: { entryExpiryBars: 24, maxHoldBars: 288 },
+    pattern1: { minBarsBetweenSweeps: 5, maxBarsBetweenSweeps: 60, rangeEdgeTolAtr: 0.5 },
+    pattern2: { proximityAtr: 1.0, maxPoiFill: 0.5 },
+    pattern3: { approachAtr: 2.0, liqProximityAtr: 1.0, sweepWindowBars: 12, maxObFill: 0.5 },
+    pattern4: { maxTargetFvgFill: 0.5 },
+    checklist: {
+      minRR: 2.0,
+      newsBlackoutMin: { before: 30, after: 30 },
+      newsCurrencies: ['USD'],
+      weights: {
+        htf_bias: 15,
+        liquidity_marked: 10,
+        poi_present: 15,
+        sweep: 15,
+        mss: 20,
+        levels_defined: 5,
+        risk_reward: 15,
+        news_clear: 5,
+      },
+      mandatory: ['sweep', 'mss', 'levels_defined'],
+    },
+    quality: {
+      lowLiqVolumeRatio: 0.3,
+      maxSpreadBps: 5,
+      lateThresholdSec: 120,
+      blockConfirmWhenUnderlyingClosed: false,
+      blockConfirmOnLowLiquidity: false,
+    },
+  },
 };
 
 const clone = (p: SmcParams): SmcParams => JSON.parse(JSON.stringify(p)) as SmcParams;
@@ -148,11 +243,19 @@ const clone = (p: SmcParams): SmcParams => JSON.parse(JSON.stringify(p)) as SmcP
 /** Rulebook §10, crypto majors (profile `crypto-majors`). */
 export const CRYPTO_MAJORS_SMC_PARAMS: SmcParams = deepFreeze(clone(base));
 
-/** Rulebook §10, gold (profile `gold`): wider equal-level tolerance, lower thin-book notional. */
+/**
+ * Rulebook §10, gold (profile `gold`): wider equal-level tolerance, lower thin-book notional, a
+ * longer news blackout and spread limit, and no confirmation while the gold market is closed (J9).
+ */
+const goldSetups = clone(base).setups;
+goldSetups.checklist.newsBlackoutMin = { before: 60, after: 60 };
+goldSetups.quality.maxSpreadBps = 15;
+goldSetups.quality.blockConfirmWhenUnderlyingClosed = true;
 export const GOLD_SMC_PARAMS: SmcParams = deepFreeze({
   ...clone(base),
   equalLevels: { tolAtr: 0.15, minGap: 5, maxGap: 200 },
   thinBook: { notionalUsd: 20_000 },
+  setups: goldSetups,
 });
 
 function deepFreeze<T>(o: T): T {
@@ -266,6 +369,69 @@ export function validateSmcParams(p: SmcParams): void {
   }
   const e = p.expiry;
   for (const [k, v] of Object.entries(e)) count(`expiry.${k}`, v);
+  validateSetupParams(p.setups);
+}
+
+const fraction = (name: string, v: number) => {
+  if (!(Number.isFinite(v) && v >= 0 && v <= 1)) throw new RangeError(`${name} must be in [0, 1]`);
+};
+
+function validateSetupParams(s: SetupParams): void {
+  if (!s || typeof s !== 'object') throw new RangeError('setups settings are missing');
+  if (!Array.isArray(s.patterns) || !s.patterns.every((x) => (PATTERNS as readonly string[]).includes(x)))
+    throw new RangeError('setups.patterns must list patterns');
+  if (new Set(s.patterns).size !== s.patterns.length)
+    throw new RangeError('setups.patterns lists a pattern twice');
+  count('setups.mss.maxBars', s.mss.maxBars);
+  positive('setups.mss.maxDistanceAtr', s.mss.maxDistanceAtr);
+  if (typeof s.mss.requireDisplacement !== 'boolean')
+    throw new RangeError('setups.mss.requireDisplacement must be true or false');
+  nonNegative('setups.levels.slBufferAtr', s.levels.slBufferAtr);
+  nonNegative('setups.levels.targetMinDistanceAtr', s.levels.targetMinDistanceAtr);
+  if (s.levels.entryRef !== 'proximal') throw new RangeError('setups.levels.entryRef must be "proximal"');
+  count('setups.timing.entryExpiryBars', s.timing.entryExpiryBars);
+  count('setups.timing.maxHoldBars', s.timing.maxHoldBars);
+  const p1 = s.pattern1;
+  count('setups.pattern1.minBarsBetweenSweeps', p1.minBarsBetweenSweeps);
+  count('setups.pattern1.maxBarsBetweenSweeps', p1.maxBarsBetweenSweeps, p1.minBarsBetweenSweeps);
+  nonNegative('setups.pattern1.rangeEdgeTolAtr', p1.rangeEdgeTolAtr);
+  positive('setups.pattern2.proximityAtr', s.pattern2.proximityAtr);
+  fraction('setups.pattern2.maxPoiFill', s.pattern2.maxPoiFill);
+  positive('setups.pattern3.approachAtr', s.pattern3.approachAtr);
+  nonNegative('setups.pattern3.liqProximityAtr', s.pattern3.liqProximityAtr);
+  count('setups.pattern3.sweepWindowBars', s.pattern3.sweepWindowBars, 0);
+  fraction('setups.pattern3.maxObFill', s.pattern3.maxObFill);
+  fraction('setups.pattern4.maxTargetFvgFill', s.pattern4.maxTargetFvgFill);
+  // The sweep log keeps ZONE_HORIZON candles: the windows that look back through it must fit.
+  if (s.pattern3.sweepWindowBars > ZONE_HORIZON)
+    throw new RangeError(`setups.pattern3.sweepWindowBars must be at most ${ZONE_HORIZON}`);
+  const c = s.checklist;
+  positive('setups.checklist.minRR', c.minRR);
+  count('setups.checklist.newsBlackoutMin.before', c.newsBlackoutMin.before, 0);
+  count('setups.checklist.newsBlackoutMin.after', c.newsBlackoutMin.after, 0);
+  if (!Array.isArray(c.newsCurrencies) || !c.newsCurrencies.every((x) => /^[A-Z]{3}$/.test(x)))
+    throw new RangeError('setups.checklist.newsCurrencies must list ISO currency codes');
+  let total = 0;
+  for (const item of CHECKLIST_ITEMS) {
+    const w = c.weights?.[item];
+    count(`setups.checklist.weights.${item}`, w, 0);
+    total += w;
+  }
+  if (total !== 100) throw new RangeError('setups.checklist.weights must add up to 100');
+  if (
+    !Array.isArray(c.mandatory) ||
+    !c.mandatory.every((x) => (CHECKLIST_ITEMS as readonly string[]).includes(x))
+  )
+    throw new RangeError('setups.checklist.mandatory must list checklist items');
+  const q = s.quality;
+  positive('setups.quality.lowLiqVolumeRatio', q.lowLiqVolumeRatio);
+  positive('setups.quality.maxSpreadBps', q.maxSpreadBps);
+  count('setups.quality.lateThresholdSec', q.lateThresholdSec);
+  if (
+    typeof q.blockConfirmWhenUnderlyingClosed !== 'boolean' ||
+    typeof q.blockConfirmOnLowLiquidity !== 'boolean'
+  )
+    throw new RangeError('setups.quality block settings must be true or false');
 }
 
 /**

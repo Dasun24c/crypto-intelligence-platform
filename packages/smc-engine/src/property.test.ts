@@ -18,7 +18,10 @@ import type { EngineCandle, StepInput } from './types.js';
  *   not later candles exist.
  * - **Checkpoints**: a snapshot taken at the cut, through JSON, continues exactly.
  * - **Invariants**: seq order, no event about an unclosed candle, prices on the tick, entities
- *   created once, nothing changes after a level is swept, broken or expired.
+ *   created once, nothing changes after a level is swept, broken or expired, and setups move only
+ *   along the state machine and never leave `resolved` (criterion 6.2).
+ *
+ * The markets must reach every setup state, so that the setup invariants are tested, not vacuous.
  */
 const CONFIG = { params: CRYPTO_MAJORS_SMC_PARAMS, tick: '0.01' };
 const START = Date.UTC(2026, 2, 2); // a Monday
@@ -111,10 +114,13 @@ function stepsAreConsistent(steps: StepInput[]): boolean {
 
 describe('random markets (fast-check)', () => {
   it('never repaint, continue exactly from checkpoints and keep the invariants', () => {
+    const reached = new Map<string, number>();
     fc.assert(
       fc.property(marketArb, fc.double({ min: 0, max: 1, noNaN: true }), ({ steps }, at) => {
         const full = runEngine(new SmcEngine(CONFIG), steps);
         expect(invariantViolations(full.events, CONFIG.tick)).toEqual([]);
+        for (const e of full.events)
+          if (e.type === 'setup_transition') reached.set(e.data.to, (reached.get(e.data.to) ?? 0) + 1);
         const cut = Math.max(1, Math.min(steps.length, Math.ceil(at * steps.length)));
         const engine = new SmcEngine(CONFIG);
         const prefix = runEngine(engine, steps.slice(0, cut)).events;
@@ -126,5 +132,8 @@ describe('random markets (fast-check)', () => {
       }),
       { numRuns: 1000, seed: 20261111 },
     );
+    // With this seed: about 11,600 setups formed, 17 confirmed, 4 entries and 10,600 resolutions.
+    for (const state of ['forming', 'triggered', 'confirmed', 'entry_active', 'resolved'])
+      expect(reached.get(state) ?? 0, state).toBeGreaterThan(0);
   });
 });

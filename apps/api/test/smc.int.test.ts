@@ -10,6 +10,9 @@ import {
   REPLAY_QUEUE,
   type ReplayJob,
   type ReplayStatus,
+  type SetupDetail,
+  type SetupSummary,
+  type SetupTransitionMessage,
   type SmcEventMessage,
   type StructureEvent,
   type SubscribeAck,
@@ -268,6 +271,174 @@ async function seed(runId: string, base: number): Promise<void> {
     .set({ linked_zone_id: id(base + 21) })
     .where('id', '=', id(base + 20))
     .execute();
+  await seedSetups(runId, base);
+}
+
+/**
+ * Setups (Phase 6): a confirmed bullish Pattern 1 on 5m (entry zone the 5m FVG, T1 the pdh level),
+ * a bearish Pattern 4 on 5m that reached its target, and a Pattern 2 forming on 15m.
+ */
+async function seedSetups(runId: string, base: number): Promise<void> {
+  const setup = (n: number, over: Record<string, unknown>) => ({
+    id: id(base + n),
+    run_id: runId,
+    instrument_id: BTC,
+    variant: null,
+    context_tf: '1h',
+    setup_tf: '5m',
+    resolution: null,
+    entry_zone_id: null,
+    entry_price: null,
+    invalidation_price: null,
+    target1_price: null,
+    target2_price: null,
+    target1_ref: null,
+    target2_ref: null,
+    rr_target1: null,
+    mandatory_passed: false,
+    quality_flags: ['liquidity_unverified'],
+    flags: [],
+    refs: JSON.stringify({ sweeps: [], mss: null, rangeId: null, poiId: null, levelIds: [] }),
+    resolved_candle_time: null,
+    ...over,
+  });
+  await owner
+    .insertInto('analysis.setups')
+    .values([
+      setup(30, {
+        pattern: 'double_liquidity_trap',
+        variant: 'A',
+        direction: 'bullish',
+        state: 'confirmed',
+        entry_zone_id: id(base + 23),
+        entry_price: '101',
+        invalidation_price: '99.8',
+        target1_price: '107',
+        target1_ref: JSON.stringify({ kind: 'level', id: id(base + 8), price: '107' }),
+        rr_target1: 5,
+        confluence_score: 77.5,
+        mandatory_passed: true,
+        refs: JSON.stringify({
+          sweeps: [id(base + 10)],
+          mss: {
+            anchorId: id(base + 1),
+            anchorPrice: '105.5',
+            breakCandleTime: FROM + 115 * 60_000,
+            displacement: { from: FROM + 115 * 60_000, to: FROM + 115 * 60_000, bodyAtr: 1.8 },
+            structureEventId: id(base + 4),
+          },
+          rangeId: id(base + 6),
+          poiId: null,
+          levelIds: [id(base + 7), id(base + 8)],
+        }),
+        created_candle_time: new Date(FROM + H),
+        updated_candle_time: new Date(FROM + 2 * H),
+      }),
+      setup(31, {
+        pattern: 'sweep_outside_fill_inside',
+        direction: 'bearish',
+        state: 'resolved',
+        resolution: 'target_reached',
+        entry_price: '104',
+        invalidation_price: '105',
+        target1_price: '102',
+        rr_target1: 2,
+        confluence_score: 70,
+        mandatory_passed: true,
+        created_candle_time: new Date(FROM + 3 * H),
+        updated_candle_time: new Date(FROM + 5 * H),
+        resolved_candle_time: new Date(FROM + 5 * H),
+      }),
+      setup(32, {
+        pattern: 'eq_near_poi',
+        direction: 'bearish',
+        context_tf: '4h',
+        setup_tf: '15m',
+        state: 'forming',
+        confluence_score: 5,
+        quality_flags: [],
+        created_candle_time: new Date(FROM + 6 * H),
+        updated_candle_time: new Date(FROM + 6 * H),
+      }),
+    ] as never)
+    .execute();
+  const transition = (
+    n: number,
+    seq: number,
+    from: string | null,
+    to: string,
+    at: number,
+    reason: string,
+  ) => ({
+    setup_id: id(base + n),
+    event_seq: seq,
+    from_state: from,
+    to_state: to,
+    candle_time: new Date(at - 5 * 60_000),
+    decided_at: new Date(at),
+    processed_at: new Date(at + 1_000),
+    reason,
+    evidence: JSON.stringify(reason === 'mss_confirmed' ? { entryZone: 'zn' } : {}),
+  });
+  await owner
+    .insertInto('analysis.setup_transitions')
+    .values([
+      transition(30, 10, null, 'forming', FROM + H, 'preconditions'),
+      transition(30, 11, 'forming', 'triggered', FROM + 90 * 60_000, 'sweeps_A'),
+      transition(30, 12, 'triggered', 'confirmed', FROM + 2 * H, 'mss_confirmed'),
+      transition(31, 13, null, 'forming', FROM + 3 * H, 'preconditions'),
+      transition(31, 14, 'entry_active', 'resolved', FROM + 5 * H, 'target1_reached'),
+      transition(32, 15, null, 'forming', FROM + 6 * H, 'preconditions'),
+    ])
+    .execute();
+  const items = [
+    'htf_bias',
+    'liquidity_marked',
+    'poi_present',
+    'sweep',
+    'mss',
+    'levels_defined',
+    'risk_reward',
+    'news_clear',
+  ];
+  const weights = [15, 10, 15, 15, 20, 5, 15, 5];
+  const credits = [0.5, 1, 0.5, 1, 1, 1, 1, 0];
+  await owner
+    .insertInto('analysis.setup_checklist_results')
+    .values([
+      ...items.map((item, i) => ({
+        setup_id: id(base + 30),
+        state: 'confirmed',
+        item,
+        credit: credits[i]!,
+        weight: weights[i]!,
+        mandatory: ['sweep', 'mss', 'levels_defined'].includes(item),
+        evidence: JSON.stringify(item === 'news_clear' ? { reason: 'calendar_unavailable' } : {}),
+      })),
+      ...items.map((item, i) => ({
+        setup_id: id(base + 30),
+        state: 'forming',
+        item,
+        credit: item === 'news_clear' ? 0 : i === 0 ? 0.5 : 0,
+        weight: weights[i]!,
+        mandatory: ['sweep', 'mss', 'levels_defined'].includes(item),
+        evidence: JSON.stringify({}),
+      })),
+    ])
+    .execute();
+  await owner
+    .insertInto('analysis.setup_outcomes')
+    .values({
+      setup_id: id(base + 31),
+      entry_touched_at: new Date(FROM + 4 * H),
+      resolved_at: new Date(FROM + 5 * H),
+      result: 'target_reached',
+      mfe_r: 1.25,
+      mae_r: 0.2,
+      bars_held: 13,
+      resolved_with_tf: null,
+    })
+    .execute();
 }
 
 /** The same three engine events in a run's log (for digests). */
@@ -451,7 +622,7 @@ describe('SMC endpoints', () => {
     expect(overlay.run).toMatchObject({
       id: LIVE,
       status: 'running',
-      profile: { name: 'crypto-majors', version: 3 },
+      profile: { name: 'crypto-majors', version: 4 },
     });
     expect(overlay.swings).toHaveLength(2);
     expect(overlay.structure).toHaveLength(1);
@@ -612,5 +783,190 @@ describe('smc channel', () => {
     expect(snapshot.zones.map((z) => z.id)).toEqual([id(123), id(120), id(121)]);
     expect(snapshot.levels.map((l) => l.type)).toEqual(['pdh', 'eqh']);
     expect(snapshot.ranges.map((r) => r.id)).toEqual([id(106)]);
+  });
+
+  it('delivers setup transitions on setups:{id} and setups, and snapshots the setups not resolved', async () => {
+    const own = `setups:${BTC}`;
+    const socket = connect();
+    await connected(socket);
+    const messages: Envelope[] = [];
+    socket.on('message', (m: Envelope) => messages.push(m));
+    const ack = (await socket.emitWithAck('subscribe', { channels: [own, 'setups'] })) as SubscribeAck;
+    expect([ack.results[own]!.mode, ack.results.setups!.mode]).toEqual(['live', 'live']);
+    const message = {
+      ...((await get(`/setups?instrumentId=${BTC}&state=confirmed`)).body as { items: SetupSummary[] })
+        .items[0]!,
+      transition: {
+        from: 'triggered',
+        to: 'confirmed',
+        reason: 'mss_confirmed',
+        candleTime: FROM + 115 * 60_000,
+        decidedAt: FROM + 2 * H,
+        processedAt: FROM + 2 * H + 900,
+        late: false,
+        evidence: {},
+      },
+    } as SetupTransitionMessage;
+    const seq = await redis.xadd('an:events', '*', 'type', 'setup', 'data', JSON.stringify(message));
+    await redis.xadd(
+      'an:events',
+      '*',
+      'type',
+      'setup',
+      'data',
+      JSON.stringify({ ...message, instrumentId: ETH }),
+    );
+    // BTC's transition reaches both channels; ETH's only the one for every instrument.
+    await expect.poll(() => messages.length).toBe(3);
+    const ts = Number(seq!.split('-')[0]);
+    expect(
+      messages
+        .slice(0, 2)
+        .map((m) => m.ch)
+        .sort(),
+    ).toEqual(['setups', own].sort());
+    expect(messages[0]).toMatchObject({ seq, ts, type: 'setup.transition', data: message });
+    expect(messages[2]).toMatchObject({ ch: 'setups', data: { instrumentId: ETH } });
+
+    // Replayed after a reconnect, and a snapshot when the stream no longer holds the point.
+    const replayed: Envelope[] = [];
+    const again = connect();
+    await connected(again);
+    again.on('message', (m: Envelope) => replayed.push(m));
+    const before = `${ts - 1}-0`;
+    const r = (await again.emitWithAck('subscribe', {
+      channels: [own],
+      since: { [own]: before },
+    })) as SubscribeAck;
+    expect(r.results[own]!.mode).toBe('replayed');
+    await expect.poll(() => replayed.length).toBe(1);
+    const old = (await socket.emitWithAck('subscribe', {
+      channels: [own],
+      since: { [own]: '1-0' },
+    })) as SubscribeAck;
+    const snapshot = old.results[own]!.snapshot as {
+      setups: SetupSummary[];
+      transitions: { setupId: string; to: string }[];
+    };
+    expect(snapshot.setups.map((s) => [s.id, s.displayLabel])).toEqual([
+      [id(132), 'Watching'],
+      [id(130), 'Confirmed'],
+    ]);
+    expect(snapshot.transitions.map((t) => [t.setupId, t.to])).toEqual([
+      [id(132), 'forming'],
+      [id(131), 'resolved'],
+      [id(131), 'forming'],
+      [id(130), 'confirmed'],
+      [id(130), 'triggered'],
+      [id(130), 'forming'],
+    ]);
+  });
+});
+
+describe('setups', () => {
+  const list = async (query: string) => {
+    const res = await get(`/setups?instrumentId=${BTC}${query}`);
+    expect(res.status).toBe(200);
+    return res.body as { items: SetupSummary[]; nextCursor: string | null };
+  };
+
+  it('lists the live run’s setups, newest change first, filtered and paged', async () => {
+    const all = await list('');
+    expect(all.items.map((s) => [s.id, s.pattern, s.state, s.displayLabel])).toEqual([
+      [id(132), 'eq_near_poi', 'forming', 'Watching'],
+      [id(131), 'sweep_outside_fill_inside', 'resolved', 'Resolved'],
+      [id(130), 'double_liquidity_trap', 'confirmed', 'Confirmed'],
+    ]);
+    expect(all.items[2]).toMatchObject({
+      runId: LIVE,
+      variant: 'A',
+      direction: 'bullish',
+      contextTf: '1h',
+      setupTf: '5m',
+      levels: { entry: '101', invalidation: '99.8', target1: '107', target2: null, rr: 5 },
+      score: 77.5,
+      mandatoryPassed: true,
+      qualityFlags: ['liquidity_unverified'],
+      createdAt: FROM + H,
+      updatedAt: FROM + 2 * H,
+      resolvedAt: null,
+      disclaimer: 'Educational analysis — not financial advice',
+    });
+    expect((await list('&state=confirmed,resolved')).items.map((s) => s.id)).toEqual([id(131), id(130)]);
+    expect((await list('&pattern=eq_near_poi')).items.map((s) => s.id)).toEqual([id(132)]);
+    expect((await list('&direction=bullish')).items.map((s) => s.id)).toEqual([id(130)]);
+    expect((await list('&minScore=70')).items.map((s) => s.id)).toEqual([id(131), id(130)]);
+    expect((await list(`&from=${FROM + 4 * H}&to=${FROM + 7 * H}`)).items.map((s) => s.id)).toEqual([
+      id(132),
+      id(131),
+    ]);
+    const page = await list('&limit=2');
+    expect(page.items.map((s) => s.id)).toEqual([id(132), id(131)]);
+    const next = await list(`&limit=2&cursor=${page.nextCursor}`);
+    expect([next.items.map((s) => s.id), next.nextCursor]).toEqual([[id(130)], null]);
+    expect((await list(`&runId=${REPLAY}`)).items.map((s) => s.id)).toEqual([id(232), id(231), id(230)]);
+    expect((await get(`/setups?pattern=head_and_shoulders`)).status).toBe(400);
+    expect((await get(`/setups?instrumentId=${id(998)}`)).status).toBe(404);
+    expect((await get(`/setups?runId=${id(997)}`)).status).toBe(404);
+  });
+
+  it('gives one setup in full: transitions, checklist, outcome and what it refers to', async () => {
+    const res = await get(`/setups/${id(130)}`);
+    expect(res.status).toBe(200);
+    const d = res.body as SetupDetail;
+    expect(d.transitions.map((t) => [t.from, t.to, t.reason, t.decidedAt - t.candleTime, t.late])).toEqual([
+      [null, 'forming', 'preconditions', 300_000, false],
+      ['forming', 'triggered', 'sweeps_A', 300_000, false],
+      ['triggered', 'confirmed', 'mss_confirmed', 300_000, false],
+    ]);
+    expect(d.checklist.map((c) => [c.item, c.credit])).toEqual([
+      ['htf_bias', 0.5],
+      ['liquidity_marked', 1],
+      ['poi_present', 0.5],
+      ['sweep', 1],
+      ['mss', 1],
+      ['levels_defined', 1],
+      ['risk_reward', 1],
+      ['news_clear', 0],
+    ]);
+    expect(d.checklist.at(-1)!.evidence).toEqual({ reason: 'calendar_unavailable' });
+    expect(Object.keys(d.checklistByState).sort()).toEqual(['confirmed', 'forming']);
+    expect(d.outcome).toBeNull();
+    expect(d.targets).toEqual({ target1: { kind: 'level', id: id(108), price: '107' }, target2: null });
+    expect(d.refs.sweeps.map((s) => s.id)).toEqual([id(110)]);
+    expect(d.refs.mss).toMatchObject({
+      anchorId: id(101),
+      anchorPrice: '105.5',
+      structureEvent: { id: id(104) },
+    });
+    expect(d.refs.entryZone?.id).toBe(id(123));
+    expect(d.refs.levels.map((l) => l.id)).toEqual([id(107), id(108)]);
+    expect(d.refs.range?.id).toBe(id(106));
+    expect(d.refs.poi).toBeNull();
+    const resolved = (await get(`/setups/${id(131)}`)).body as SetupDetail;
+    expect(resolved.outcome).toEqual({
+      result: 'target_reached',
+      entryTouchedAt: FROM + 4 * H,
+      resolvedAt: FROM + 5 * H,
+      mfeR: 1.25,
+      maeR: 0.2,
+      barsHeld: 13,
+      resolvedWithTf: null,
+    });
+    expect((await get(`/setups/${id(996)}`)).status).toBe(404);
+    expect((await get('/setups/nope')).status).toBe(400);
+  });
+
+  it('puts the setups alive in a window on the overlay of their setup timeframe', async () => {
+    const overlay = (await get(`/smc/${BTC}/overlay?tf=5m&from=${FROM}&to=${FROM + 10 * H}`))
+      .body as ChartOverlay;
+    expect(overlay.setups.map((s) => s.id)).toEqual([id(130), id(131)]);
+    // Resolved before the window: not shown.
+    const later = (await get(`/smc/${BTC}/overlay?tf=5m&from=${FROM + 6 * H}&to=${FROM + 10 * H}`))
+      .body as ChartOverlay;
+    expect(later.setups.map((s) => s.id)).toEqual([id(130)]);
+    const m15 = (await get(`/smc/${BTC}/overlay?tf=15m&from=${FROM}&to=${FROM + 10 * H}`))
+      .body as ChartOverlay;
+    expect(m15.setups.map((s) => s.id)).toEqual([id(132)]);
   });
 });

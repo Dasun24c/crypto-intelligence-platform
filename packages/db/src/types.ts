@@ -96,6 +96,10 @@ export interface Database {
   'analysis.liquidity_levels': LiquidityLevelsTable;
   'analysis.sweeps': SweepsTable;
   'analysis.poi_zones': PoiZonesTable;
+  'analysis.setups': SetupsTable;
+  'analysis.setup_transitions': SetupTransitionsTable;
+  'analysis.setup_checklist_results': SetupChecklistResultsTable;
+  'analysis.setup_outcomes': SetupOutcomesTable;
 }
 
 // ---------------------------------------------------------------- market (data model §4)
@@ -354,6 +358,7 @@ export interface DetectionEventsTable {
     | 'sweep'
     | 'zone_created'
     | 'zone_status'
+    | 'setup_transition'
     | 'gap_marker';
   entity_id: string | null;
   payload: ColumnType<unknown, string, never>;
@@ -469,6 +474,76 @@ export interface PoiZonesTable {
   flags: ColumnType<string[], string[] | undefined, string[]>;
 }
 
+/** Data model §5.2 (migration 0009): one row per setup, with its state after its latest transition. */
+export interface SetupsTable {
+  id: string;
+  run_id: string;
+  instrument_id: string;
+  pattern: 'double_liquidity_trap' | 'eq_near_poi' | 'htf_order_block' | 'sweep_outside_fill_inside';
+  variant: 'A' | 'B' | null;
+  direction: 'bullish' | 'bearish';
+  context_tf: SmcTimeframe;
+  setup_tf: SmcTimeframe;
+  state: 'forming' | 'triggered' | 'confirmed' | 'entry_active' | 'resolved';
+  resolution: SetupResolution | null;
+  entry_zone_id: string | null;
+  entry_price: string | null;
+  invalidation_price: string | null;
+  target1_price: string | null;
+  target2_price: string | null;
+  /** {kind, id, price}. */
+  target1_ref: ColumnType<unknown, string | null, string | null>;
+  target2_ref: ColumnType<unknown, string | null, string | null>;
+  rr_target1: number | null;
+  /** numeric(4,1): a string from node-postgres. */
+  confluence_score: ColumnType<string, string | number, string | number>;
+  mandatory_passed: boolean;
+  quality_flags: ColumnType<string[], string[] | undefined, string[]>;
+  flags: ColumnType<string[], string[] | undefined, string[]>;
+  refs: ColumnType<unknown, string, string>;
+  created_candle_time: Date;
+  updated_candle_time: Date;
+  resolved_candle_time: Date | null;
+}
+
+export type SetupResolution =
+  'target_reached' | 'invalidated' | 'expired_no_entry' | 'expired_open' | 'ambiguous' | 'expired';
+
+export interface SetupTransitionsTable {
+  id: GeneratedAlways<string>;
+  setup_id: string;
+  event_seq: ColumnType<string, string | number, never>;
+  from_state: string | null;
+  to_state: string;
+  /** Open time of the deciding candle, and its close. */
+  candle_time: Date;
+  decided_at: Date;
+  processed_at: Date;
+  reason: string;
+  evidence: ColumnType<unknown, string, string>;
+}
+
+export interface SetupChecklistResultsTable {
+  setup_id: string;
+  state: string;
+  item: string;
+  credit: number;
+  weight: number;
+  mandatory: boolean;
+  evidence: ColumnType<unknown, string, string>;
+}
+
+export interface SetupOutcomesTable {
+  setup_id: string;
+  entry_touched_at: Date | null;
+  resolved_at: Date;
+  result: SetupResolution;
+  mfe_r: number | null;
+  mae_r: number | null;
+  bars_held: number | null;
+  resolved_with_tf: '1m' | null;
+}
+
 export type InstrumentRow = Selectable<InstrumentsTable>;
 export type CandleRow = Selectable<CandlesTable>;
 export type NewCandle = Insertable<CandlesTable>;
@@ -486,6 +561,11 @@ export type LiquidityLevelRow = Selectable<LiquidityLevelsTable>;
 export type SweepRow = Selectable<SweepsTable>;
 export type PoiZoneRow = Selectable<PoiZonesTable>;
 export type NewPoiZone = Insertable<PoiZonesTable>;
+export type SetupRow = Selectable<SetupsTable>;
+export type NewSetup = Insertable<SetupsTable>;
+export type SetupTransitionRow = Selectable<SetupTransitionsTable>;
+export type SetupChecklistResultRow = Selectable<SetupChecklistResultsTable>;
+export type SetupOutcomeRow = Selectable<SetupOutcomesTable>;
 export type NewIndicatorValue = Insertable<IndicatorValuesTable>;
 
 export type UserRow = Selectable<UsersTable>;
