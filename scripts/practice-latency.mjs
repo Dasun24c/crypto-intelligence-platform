@@ -1,0 +1,245 @@
+#!/usr/bin/env node
+// NFR-16 / criterion 14.11: how soon practice fills are published (ADR 021).
+//
+//   - A market order's fill: from its `place` command on `practice:commands` (the api appends it
+//     once the order is stored) to the broker's `practice.fill` entry on `practice:events`.
+//   - A waiting order's fill (a resting limit, a target, a triggered stop): from the live trade that
+//     filled it (its `md:trades:{id}` entry, recorded in the fill's basis) to the `practice.fill` entry.
+//
+// Both ends are Redis stream ids, so one clock (the Redis server's) measures both. Target: p95 ≤ 1 s.
+//
+//   node scripts/practice-latency.mjs [minutes=30]                 measure fills published in the window
+//   node scripts/practice-latency.mjs --drive [orders=40] [minutes]  place practice orders first, then measure
+//
+// --drive signs in as the development viewer (seed-dev) through the api at API_URL (default
+// http://localhost:8080) and places, on Binance BTC/USDT: market buys and sells of the smallest
+// quantity worth the venue minimum, and limit buys and sells one price step inside the best prices,
+// which fill when a trade goes through them. Practice orders only: nothing reaches an exchange.
+// The seed password comes from DEV_SEED_PASSWORD, or the development default in apps/api/src/cli.ts.
+
+import { readFileSync } from 'node:fs';
+import net from 'node:net';
+
+const args = process.argv.slice(2);
+const drive = args[0] === '--drive';
+const rest = drive ? args.slice(1) : args;
+const orders = drive ? Number(rest[0] ?? 40) : 0;
+const minutes = Number((drive ? rest[1] : rest[0]) ?? 30);
+const url = new URL(process.env.REDIS_URL ?? 'redis://localhost:16379');
+const API = process.env.API_URL ?? 'http://localhost:8080';
+const TARGET_MS = 1000;
+
+// ---------------------------------------------------------------- a minimal RESP2 client
+
+function encode(list) {
+  return `*${list.length}\r\n${list.map((a) => `$${Buffer.byteLength(String(a))}\r\n${a}\r\n`).join('')}`;
+}
+
+function parse(buf, i) {
+  if (i >= buf.length) return null;
+  const nl = buf.indexOf('\r\n', i);
+  if (nl < 0) return null;
+  const type = String.fromCharCode(buf[i]);
+  const line = buf.toString('utf8', i + 1, nl);
+  if (type === '+') return { value: line, end: nl + 2 };
+  if (type === '-') return { value: new Error(line), end: nl + 2 };
+  if (type === ':') return { value: Number(line), end: nl + 2 };
+  if (type === '$') {
+    const n = Number(line);
+    if (n < 0) return { value: null, end: nl + 2 };
+    if (buf.length < nl + 2 + n + 2) return null;
+    return { value: buf.toString('utf8', nl + 2, nl + 2 + n), end: nl + 2 + n + 2 };
+  }
+  if (type === '*') {
+    const n = Number(line);
+    if (n < 0) return { value: null, end: nl + 2 };
+    const out = [];
+    let pos = nl + 2;
+    for (let k = 0; k < n; k++) {
+      const r = parse(buf, pos);
+      if (!r) return null;
+      out.push(r.value);
+      pos = r.end;
+    }
+    return { value: out, end: pos };
+  }
+  throw new Error(`unexpected RESP type ${type}`);
+}
+
+function connect() {
+  const socket = net.connect(Number(url.port || 6379), url.hostname);
+  let buffer = Buffer.alloc(0);
+  const queue = [];
+  socket.on('data', (d) => {
+    buffer = Buffer.concat([buffer, d]);
+    for (;;) {
+      if (queue.length === 0) return;
+      const r = parse(buffer, 0);
+      if (!r) return;
+      buffer = buffer.subarray(r.end);
+      const q = queue.shift();
+      if (r.value instanceof Error) q.reject(r.value);
+      else q.resolve(r.value);
+    }
+  });
+  return {
+    command: (...list) =>
+      new Promise((resolve, reject) => {
+        queue.push({ resolve, reject });
+        socket.write(encode(list));
+      }),
+    close: () => socket.end(),
+  };
+}
+
+// ---------------------------------------------------------------- helpers
+
+const fieldsOf = (list) =>
+  Object.fromEntries(list.flatMap((v, i) => (i % 2 === 0 ? [[v, list[i + 1]]] : [])));
+const idMs = (id) => Number(id.split('-')[0]);
+const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+
+function stats(values) {
+  if (values.length === 0) return { text: 'no samples', p95: null };
+  const s = [...values].sort((a, b) => a - b);
+  const q = (p) => s[Math.min(s.length - 1, Math.ceil(p * s.length) - 1)];
+  return { text: `n=${s.length} p50=${q(0.5)} ms p95=${q(0.95)} ms max=${s.at(-1)} ms`, p95: q(0.95) };
+}
+
+/** Exact decimal steps without floats: how many steps of `step` fit in `value`, rounded down or up. */
+function steps(value, step, up) {
+  const places = Math.max((value.split('.')[1] ?? '').length, (step.split('.')[1] ?? '').length);
+  const scale = (v) => BigInt(v.replace('.', '') + '0'.repeat(places - (v.split('.')[1] ?? '').length));
+  const v = scale(value);
+  const s = scale(step);
+  return up ? (v + s - 1n) / s : v / s;
+}
+function times(n, step) {
+  const places = (step.split('.')[1] ?? '').length;
+  const digits = (n * BigInt(step.replace('.', ''))).toString().padStart(places + 1, '0');
+  const out = places ? `${digits.slice(0, -places)}.${digits.slice(-places)}` : digits;
+  return out.includes('.') ? out.replace(/0+$/, '').replace(/\.$/, '') : out;
+}
+
+// ---------------------------------------------------------------- driving orders through the api
+
+function seedPassword() {
+  if (process.env.DEV_SEED_PASSWORD) return process.env.DEV_SEED_PASSWORD;
+  const source = readFileSync(new URL('../apps/api/src/cli.ts', import.meta.url), 'utf8');
+  const m = /DEV_SEED_PASSWORD:\s*z\.string\(\)\.default\('([^']+)'\)/.exec(source);
+  if (!m) throw new Error('set DEV_SEED_PASSWORD: the development default was not found');
+  return m[1];
+}
+
+async function call(token, method, path, body) {
+  const res = await fetch(`${API}/api/v1${path}`, {
+    method,
+    headers: {
+      ...(token ? { authorization: `Bearer ${token}` } : {}),
+      ...(body ? { 'content-type': 'application/json' } : {}),
+    },
+    body: body ? JSON.stringify(body) : undefined,
+  });
+  const text = await res.text();
+  return { status: res.status, body: text ? JSON.parse(text) : undefined };
+}
+
+async function driveOrders(redis) {
+  const login = await call(null, 'POST', '/auth/login', {
+    email: 'viewer@cip.test',
+    password: seedPassword(),
+  });
+  if (login.status !== 200 || !login.body.accessToken) throw new Error(`sign-in failed (${login.status})`);
+  const token = login.body.accessToken;
+  const instruments = (await call(token, 'GET', '/instruments')).body;
+  const btc = instruments.find((i) => i.venue === 'binance' && i.base === 'BTC' && i.quote === 'USDT');
+  if (!btc) throw new Error('no Binance BTC/USDT instrument');
+  const quote = async () => JSON.parse((await redis.command('GET', `ticker:${btc.id}`)) ?? 'null');
+  const t = await quote();
+  if (!t) throw new Error('no live BTC/USDT ticker: is the ingestor streaming?');
+  // The smallest quantity worth the venue minimum (and at least 1 USDT), at the ask.
+  const minimum = Number(btc.minNotional) > 0 ? btc.minNotional : '1';
+  const qty = times(
+    steps(((Number(minimum) * 1.2) / Number(t.ask)).toFixed(12), btc.qtyStep, true),
+    btc.qtyStep,
+  );
+  console.log(
+    `driving ${orders} practice orders of ${qty} BTC on Binance BTC/USDT (simulated, practice balances)`,
+  );
+  // Start from the starting balances, so sells have something to sell.
+  await call(token, 'POST', '/practice/account/reset', { venue: 'binance' });
+  let placed = 0;
+  let refused = 0;
+  // First a market buy of ten times the quantity, so the sells have something to sell; then, in
+  // turn, a market buy, a market sell, a limit buy and a limit sell.
+  const plan = [
+    { side: 'buy', market: true, quantity: times(steps(qty, btc.qtyStep, false) * 10n, btc.qtyStep) },
+  ];
+  for (let k = 1; k < orders; k++)
+    plan.push({
+      side: k % 4 === 1 || k % 4 === 3 ? 'buy' : 'sell',
+      market: k % 4 === 1 || k % 4 === 2,
+      quantity: qty,
+    });
+  for (const [k, step] of plan.entries()) {
+    const now = await quote();
+    const { side, market, quantity } = step;
+    const body = { clientOrderId: `latency-${Date.now()}-${k}`, instrumentId: btc.id, side, quantity };
+    if (market) Object.assign(body, { type: 'market' });
+    else {
+      // One step inside the touch: it rests, and fills when a trade goes through it.
+      const tick = btc.priceTick;
+      const price =
+        side === 'buy'
+          ? times(steps(now.bid, tick, false) - 1n, tick)
+          : times(steps(now.ask, tick, true) + 1n, tick);
+      Object.assign(body, { type: 'limit', limitPrice: price });
+    }
+    const res = await call(token, 'POST', '/practice/orders', body);
+    if (res.status === 201) placed++;
+    else {
+      refused++;
+      console.log(`  order ${k + 1}: ${res.status} ${res.body?.reason ?? res.body?.code ?? ''}`);
+    }
+    await sleep(400); // under the 5-per-second limit
+  }
+  console.log(`placed ${placed}, refused ${refused}; waiting 60 s for resting orders to meet trades`);
+  await sleep(60_000);
+}
+
+// ---------------------------------------------------------------- measurement
+
+const redis = connect();
+if (drive) await driveOrders(redis);
+const [sec] = await redis.command('TIME');
+const from = (Number(sec) - minutes * 60) * 1000;
+
+const commands = new Map();
+for (const [id, list] of await redis.command('XRANGE', 'practice:commands', String(from - 60_000), '+')) {
+  const f = fieldsOf(list);
+  if (f.type === 'place' && f.orderId) commands.set(f.orderId, idMs(id));
+}
+
+const market = [];
+const waiting = [];
+let unmatched = 0;
+for (const [id, list] of await redis.command('XRANGE', 'practice:events', String(from), '+')) {
+  const f = fieldsOf(list);
+  if (f.type !== 'practice.fill') continue;
+  const { fill } = JSON.parse(f.data);
+  const published = idMs(id);
+  const trade = fill.basis?.trade;
+  if (trade?.streamId) waiting.push(published - idMs(trade.streamId));
+  else if (commands.has(fill.orderId)) market.push(published - commands.get(fill.orderId));
+  else unmatched++;
+}
+redis.close();
+
+const m = stats(market);
+const w = stats(waiting);
+console.log(`practice fills published in the last ${minutes} min (Redis clock):`);
+console.log(`  market orders, submitted → fill published:      ${m.text}`);
+console.log(`  waiting orders, filling trade → fill published: ${w.text}`);
+if (unmatched) console.log(`  ${unmatched} fill(s) without their command in the window, not timed`);
+const met = (s) => (s.p95 === null ? 'no samples' : s.p95 <= TARGET_MS ? 'met' : 'NOT met');
+console.log(`NFR-16 (p95 ≤ ${TARGET_MS} ms): market ${met(m)}, waiting ${met(w)}`);

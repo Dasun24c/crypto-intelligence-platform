@@ -9,6 +9,7 @@ const TITLES: Record<ErrorCode, string> = {
   VALIDATION_FAILED: 'Validation failed',
   CONFLICT: 'Conflict',
   BUDGET_EXHAUSTED: 'Budget exhausted',
+  ORDER_REFUSED: 'Order refused',
   RATE_LIMITED: 'Too many requests',
   CHANNEL_UNKNOWN: 'Unknown channel',
   UNAVAILABLE: 'Service unavailable',
@@ -24,6 +25,7 @@ const STATUS: Record<ErrorCode, number> = {
   VALIDATION_FAILED: 400,
   CONFLICT: 409,
   BUDGET_EXHAUSTED: 409,
+  ORDER_REFUSED: 422,
   RATE_LIMITED: 429,
   CHANNEL_UNKNOWN: 400,
   UNAVAILABLE: 503,
@@ -43,7 +45,12 @@ export class ProblemError extends Error {
   constructor(
     readonly code: ErrorCode,
     readonly detail?: string,
-    readonly options: { errors?: FieldError[]; headers?: Record<string, string> } = {},
+    readonly options: {
+      errors?: FieldError[];
+      headers?: Record<string, string>;
+      /** `ORDER_REFUSED`: the refusal reason (Phase 14). */
+      reason?: string;
+    } = {},
   ) {
     super(detail ?? TITLES[code]);
     this.name = 'ProblemError';

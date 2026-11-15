@@ -2,6 +2,7 @@ import { useQuery } from '@tanstack/react-query';
 import { Link, useParams } from '@tanstack/react-router';
 import { type ReactNode, useMemo, useState } from 'react';
 import {
+  can,
   type Candle,
   type ChartOverlay,
   type ChecklistResult,
@@ -9,7 +10,7 @@ import {
   SETUP_DISCLAIMER,
   type SetupDetail,
 } from '@cip/contracts';
-import { DEFAULT_RISK_PCT, positionSize, SUGGESTED_RISK_PCT, TF_MS } from '@cip/domain';
+import { dec, DEFAULT_RISK_PCT, positionSize, SUGGESTED_RISK_PCT, TF_MS } from '@cip/domain';
 import {
   Alert,
   Badge,
@@ -30,6 +31,7 @@ import { OVERLAY_KINDS } from '../charts/overlay-items.js';
 import { PaxgDisclaimer } from '../components/paxg-disclaimer.js';
 import { useSetupDetail } from '../live/smc-hooks.js';
 import { formatInstant } from '../lib/format.js';
+import { floorToStep } from '../lib/practice.js';
 import {
   CHECKLIST_LABELS,
   creditText,
@@ -40,7 +42,7 @@ import {
   RESOLUTION_TITLE,
   STATE_TITLE,
 } from '../lib/setups.js';
-import { useDisplayTimeZone, useSession } from '../session.js';
+import { useCurrentUser, useDisplayTimeZone, useSession } from '../session.js';
 
 /** Candles of context before the setup started, and after it ended. */
 const BEFORE = 60;
@@ -86,6 +88,7 @@ function LevelsCard({ setup }: { setup: SetupDetail }) {
  * and risk % imply at this setup's hypothetical entry and invalidation. Calculation only.
  */
 function CalculatorCard({ setup, instrument }: { setup: SetupDetail; instrument: Instrument | null }) {
+  const user = useCurrentUser();
   const [account, setAccount] = useState('10000');
   const [risk, setRisk] = useState(DEFAULT_RISK_PCT);
   const { entry, invalidation, target1 } = setup.levels;
@@ -166,8 +169,59 @@ function CalculatorCard({ setup, instrument }: { setup: SetupDetail; instrument:
           Calculation only: nothing is linked to an exchange account and no order is placed.{' '}
           {SETUP_DISCLAIMER}.
         </p>
+        {can(user.role, 'practice.own') ? (
+          <PractiseThisSetup setup={setup} instrument={instrument} quantity={result?.quantity ?? null} />
+        ) : null}
       </CardContent>
     </Card>
+  );
+}
+
+/**
+ * "Practise this setup" (criterion 14.6): opens a practice order ticket filled in with the setup's
+ * levels (on the pair's price steps) and the calculator's quantity. It places nothing: the user checks
+ * the ticket and confirms it there. Practice trading is spot only, so only bullish setups qualify.
+ */
+function PractiseThisSetup({
+  setup,
+  instrument,
+  quantity,
+}: {
+  setup: SetupDetail;
+  instrument: Instrument | null;
+  quantity: string | null;
+}) {
+  const { entry, invalidation, target1 } = setup.levels;
+  if (setup.direction !== 'bullish')
+    return (
+      <p className="text-xs text-fg-muted">
+        Practice trading buys and sells spot only, so a bearish setup cannot be practised by selling short.
+      </p>
+    );
+  if (!instrument || entry === null || invalidation === null || quantity === null || dec(quantity).lte(0))
+    return null;
+  const tick = instrument.priceTick;
+  return (
+    <div className="space-y-1 border-t border-border pt-3">
+      <Link
+        to="/practice"
+        search={{
+          instrument: setup.instrumentId,
+          setup: setup.id,
+          quantity,
+          limit: floorToStep(entry, tick),
+          stop: floorToStep(invalidation, tick),
+          ...(target1 !== null ? { target: floorToStep(target1, tick) } : {}),
+        }}
+        className="inline-flex h-8 items-center rounded-md border border-practice/60 px-3 text-sm font-medium text-practice hover:bg-practice/10"
+      >
+        Practise this setup
+      </Link>
+      <p className="text-xs text-fg-muted">
+        Opens a practice order ticket with these levels and this quantity. Nothing is placed until you confirm
+        it there. Practice trading is simulated: no real money.
+      </p>
+    </div>
   );
 }
 

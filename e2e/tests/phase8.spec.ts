@@ -263,6 +263,19 @@ test.describe('Phase 8', () => {
 
     // Each kind: its first alert, in the inbox and pushed to the open page.
     const pending = new Set(Object.keys(ids));
+    // The gold market's own calendar: when it is already closed before our closure starts (a weekend
+    // or the daily break), there is no closing to see, so the gold kind can't be checked in this run.
+    // The analyzer's integration test checks it at a fixed weekday.
+    const goldCalendar = (await (
+      await api.get('/api/v1/market/closures?calendar=gold', { headers })
+    ).json()) as { from: number; to: number }[];
+    if (goldCalendar.some((c) => c.from < closesAt && c.to > now)) {
+      pending.delete('gold_market_session');
+      test.info().annotations.push({
+        type: 'gold_market_session',
+        description: 'not checked: the gold market was already closed, so no closing could be seen',
+      });
+    }
     const started = Date.now();
     await expect
       .poll(
@@ -281,11 +294,11 @@ test.describe('Phase 8', () => {
               description: `fired ${Math.round((first.firedAt - started) / 1000)} s after the rules were active: ${first.title}`,
             });
           }
-          return [...pending].sort().join(', ') || 'all twelve delivered';
+          return [...pending].sort().join(', ') || 'all delivered';
         },
         { message: 'every kind fired and was delivered', timeout: 15 * 60_000, intervals: [5_000] },
       )
-      .toBe('all twelve delivered');
+      .toBe('all delivered');
   });
 
   test('8.3 100 identical triggers inside the cooldown produce exactly one notification', async () => {

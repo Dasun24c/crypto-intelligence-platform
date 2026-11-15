@@ -20,6 +20,7 @@ const EnvSchema = z.object({
   DB_PASSWORD_SVC_INGESTOR: z.string().optional(),
   DB_PASSWORD_SVC_ANALYZER: z.string().optional(),
   DB_PASSWORD_SVC_JOBS: z.string().optional(),
+  DB_PASSWORD_SVC_BROKER: z.string().optional(),
   LOG_LEVEL: z.string().default('info'),
 });
 
@@ -41,6 +42,7 @@ async function main(command: string | undefined): Promise<number> {
           svc_ingestor: env.DB_PASSWORD_SVC_INGESTOR,
           svc_analyzer: env.DB_PASSWORD_SVC_ANALYZER,
           svc_jobs: env.DB_PASSWORD_SVC_JOBS,
+          svc_broker: env.DB_PASSWORD_SVC_BROKER,
         });
         log.info({ applied: applied.length, loginRoles: roles }, 'database is up to date');
         return 0;

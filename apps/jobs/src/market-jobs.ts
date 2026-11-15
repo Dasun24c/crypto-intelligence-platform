@@ -42,7 +42,7 @@ export async function refreshPairStatus(
   const now = deps.now?.() ?? Date.now();
   const rows = await db
     .selectFrom('market.instruments')
-    .select(['id', 'venue_id', 'venue_symbol', 'venue_status', 'price_tick', 'qty_step'])
+    .select(['id', 'venue_id', 'venue_symbol', 'venue_status', 'price_tick', 'qty_step', 'min_notional'])
     .where('enabled', '=', true)
     .where('venue_id', 'in', ['binance', 'coinbase'])
     .execute();
@@ -83,16 +83,24 @@ export async function refreshPairStatus(
     const status = pair?.status ?? 'delisted';
     const tick = pair?.priceTick ?? r.price_tick;
     const step = pair?.qtyStep ?? r.qty_step;
+    const minNotional = pair?.minNotional ?? r.min_notional;
     if (
       status === r.venue_status &&
       Number(tick) === Number(r.price_tick) &&
-      Number(step) === Number(r.qty_step)
+      Number(step) === Number(r.qty_step) &&
+      Number(minNotional) === Number(r.min_notional)
     )
       continue;
     changed.push(key);
     await db
       .updateTable('market.instruments')
-      .set({ venue_status: status, price_tick: tick, qty_step: step, updated_at: new Date(now) })
+      .set({
+        venue_status: status,
+        price_tick: tick,
+        qty_step: step,
+        min_notional: minNotional,
+        updated_at: new Date(now),
+      })
       .where('id', '=', r.id)
       .execute();
     // The first confirmation of a new pair is not news; any other status change is.

@@ -10,3 +10,4 @@ export * from './smc-params.js';
 export * from './smc.js';
 export * from './calendar.js';
 export * from './alerts.js';
+export * from './practice.js';

@@ -1,8 +1,8 @@
 import type { Kysely } from 'kysely';
 import { type AlertSource, type InstrumentRef, SOURCE_OF } from '@cip/alerts';
 import type { AlertRule, LevelType } from '@cip/contracts';
-import type { Database } from '@cip/db';
-import { displayName, TF_MS, type Timeframe } from '@cip/domain';
+import { averagePrice, type Database } from '@cip/db';
+import { dec, displayName, TF_MS, type Timeframe } from '@cip/domain';
 
 const MIN = 60_000;
 const t = (d: Date) => d.getTime();
@@ -465,6 +465,57 @@ export async function historySources(
       return {
         sources,
         note: 'Delays and disconnections of a live feed are not stored, so only gaps, halts and delistings are listed.',
+      };
+    }
+    case 'practice': {
+      // The rule owner's own practice orders (ADR 021), as each stands now, at its last change.
+      const rows = await db
+        .selectFrom('trading.orders as o')
+        .innerJoin('trading.accounts as a', 'a.id', 'o.account_id')
+        .select([
+          'o.id',
+          'o.instrument_id',
+          'o.side',
+          'o.type',
+          'o.status',
+          'o.filled_quantity',
+          'o.filled_value',
+          'o.updated_at',
+        ])
+        .where('a.user_id', '=', rule.ownerId)
+        .where('o.instrument_id', 'in', ids)
+        .where('o.filled_quantity', '>', '0')
+        .where('o.updated_at', '>=', new Date(from))
+        .where('o.updated_at', '<=', new Date(to))
+        .orderBy('o.updated_at')
+        .execute();
+      for (const r of rows) {
+        const event =
+          r.type === 'stop'
+            ? 'stop_filled'
+            : r.type === 'target'
+              ? 'target_filled'
+              : r.status === 'filled' || r.status === 'cancelled'
+                ? 'order_done'
+                : null;
+        const price = averagePrice(r.filled_value, r.filled_quantity);
+        if (!event || price === null) continue;
+        sources.push({
+          kind: 'practice',
+          userId: rule.ownerId,
+          instrument: refs.get(r.instrument_id)!,
+          at: t(r.updated_at),
+          event,
+          orderId: r.id,
+          side: r.side,
+          quantity: dec(r.filled_quantity).toString(),
+          price,
+          processedAt: t(r.updated_at),
+        });
+      }
+      return {
+        sources,
+        note: 'Practice orders as they stand now, each at the time of its last change.',
       };
     }
   }

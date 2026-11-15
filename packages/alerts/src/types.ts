@@ -3,7 +3,7 @@ import type { AlertRule } from '@cip/contracts';
 /** The parts of a rule that evaluation reads. */
 export type EvaluableRule = Pick<
   AlertRule,
-  'id' | 'name' | 'scope' | 'condition' | 'severity' | 'cooldownSec'
+  'id' | 'ownerId' | 'name' | 'scope' | 'condition' | 'severity' | 'cooldownSec'
 >;
 
 /** One occurrence a rule matched. */

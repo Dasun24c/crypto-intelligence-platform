@@ -35,6 +35,7 @@ const MIN = 60_000;
 function rule(condition: AlertCondition, extra: Partial<EvaluableRule> = {}): EvaluableRule {
   return {
     id: 'rule-1',
+    ownerId: 'owner-1',
     name: 'test rule',
     scope: {},
     condition,
@@ -330,7 +331,8 @@ describe('conditions (criterion 8.1, unit)', () => {
   });
 
   it('covers every condition kind, each reading one source kind', () => {
-    expect(Object.keys(SOURCE_OF).sort()).toHaveLength(12);
+    // Twelve from Phase 8, and the two practice-trading kinds of Phase 14.
+    expect(Object.keys(SOURCE_OF).sort()).toHaveLength(14);
   });
 });
 
@@ -648,5 +650,69 @@ describe('stored rows', () => {
     const result = await dryRun(r, [gap, { ...gap, at: T + 1 }]);
     expect(result.wouldHaveFired).toHaveLength(1);
     expect(result.suppressed).toBe(0);
+  });
+});
+
+describe('practice trading alerts (ADR 021)', () => {
+  const practice = (over: Partial<Extract<AlertSource, { kind: 'practice' }>> = {}): AlertSource => ({
+    kind: 'practice',
+    userId: 'owner-1',
+    instrument: BTC,
+    at: T,
+    event: 'order_done',
+    orderId: 'order-1',
+    side: 'buy',
+    quantity: '0.1',
+    price: '100.5',
+    processedAt: T,
+    ...over,
+  });
+
+  it("fire for the owner's own orders only, once per order and outcome", () => {
+    const e = new AlertEvaluator();
+    const filled = rule({ kind: 'practice_order_filled' });
+    const [hit] = e.evaluate([filled], practice());
+    expect(hit?.match).toMatchObject({
+      dedupeKey: 'practice:order-1:done',
+      subject: 'order-1',
+      title: 'BTC · Binance BTC/USDT: practice buy filled',
+      body: 'Bought 0.1 at 100.5 on average. Practice trading: simulated, no real money.',
+      instrumentId: BTC.id,
+      late: false,
+    });
+    expect(e.evaluate([filled], practice({ userId: 'someone-else' }))).toEqual([]);
+    expect(e.evaluate([filled], practice({ event: 'stop_filled' }))).toEqual([]);
+    // Read long after it filled (the analyzer catching up): labelled late.
+    const [caughtUp] = e.evaluate(
+      [filled],
+      practice({ orderId: 'order-2', processedAt: T + LATE_AFTER_MS + 1 }),
+    );
+    expect(caughtUp?.match.late).toBe(true);
+  });
+
+  it('tell a stop from a target, as the rule asks', () => {
+    const e = new AlertEvaluator();
+    const stops = rule({ kind: 'practice_exit', on: ['stop'] });
+    const both = rule({ kind: 'practice_exit', on: ['stop', 'target'] }, { id: 'rule-2' });
+    const stop = practice({ event: 'stop_filled', side: 'sell', orderId: 'leg-1' });
+    const target = practice({ event: 'target_filled', side: 'sell', orderId: 'leg-2' });
+    expect(e.evaluate([stops, both], stop).map((m) => [m.rule.id, m.match.title])).toEqual([
+      ['rule-1', 'BTC · Binance BTC/USDT: practice stop reached'],
+      ['rule-2', 'BTC · Binance BTC/USDT: practice stop reached'],
+    ]);
+    expect(e.evaluate([stops, both], target).map((m) => [m.rule.id, m.match.dedupeKey])).toEqual([
+      ['rule-2', 'practice:leg-2:target'],
+    ]);
+    expect(e.evaluate([stops], practice())).toEqual([]);
+    expect(e.evaluate([both], target)[0]?.match.body).toBe(
+      'Sold 0.1 at 100.5 on average. Practice trading: simulated, no real money.',
+    );
+  });
+
+  it('respect the rule scope by instrument', () => {
+    const e = new AlertEvaluator();
+    const onlyEth = rule({ kind: 'practice_order_filled' }, { scope: { instrumentIds: [ETH.id] } });
+    expect(e.evaluate([onlyEth], practice())).toEqual([]);
+    expect(e.evaluate([onlyEth], practice({ instrument: ETH }))).toHaveLength(1);
   });
 });

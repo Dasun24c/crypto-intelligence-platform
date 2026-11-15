@@ -48,3 +48,32 @@ export function readScannerSearch(search: unknown): ScannerSearch {
     ...(isSetupSort(s['sort']) ? { sort: s['sort'] } : {}),
   };
 }
+
+/** `/practice?instrument&setup&quantity&limit&stop&target`: a ticket that "Practise this setup" filled in. */
+export interface PracticeSearch {
+  instrument?: string;
+  setup?: string;
+  quantity?: string;
+  limit?: string;
+  stop?: string;
+  target?: string;
+}
+
+const ID = /^[0-9a-f-]{36}$/;
+const DECIMAL_TEXT = /^\d+(\.\d+)?$/;
+
+export function readPracticeSearch(search: unknown): PracticeSearch {
+  const s = (search ?? {}) as Record<string, unknown>;
+  const out: PracticeSearch = {};
+  for (const key of ['instrument', 'setup'] as const) {
+    const v = s[key];
+    if (typeof v === 'string' && ID.test(v)) out[key] = v;
+  }
+  for (const key of ['quantity', 'limit', 'stop', 'target'] as const) {
+    // The router reads "0.5" typed into the address bar as a number; a link passes a string.
+    const v = s[key];
+    const text = typeof v === 'number' && Number.isFinite(v) ? String(v) : v;
+    if (typeof text === 'string' && DECIMAL_TEXT.test(text)) out[key] = text;
+  }
+  return out;
+}

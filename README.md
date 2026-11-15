@@ -2,7 +2,7 @@
 
 Real-time monitoring and analysis of crypto markets, and of gold through the PAXG token: market data from Binance and Coinbase, technical indicators, Smart Money Concepts detection, AI analysis with Grok, alerts, and a web and desktop app.
 
-**Status:** Phase 14 (Practice trading: buying and selling with simulated orders and no real money, [proposal 001](docs/proposals/001-trading.md)) is being built. Phases 1–8 are accepted. In Phase 8 (Alerts and notifications), every user keeps their own alert rules in the Alert Center: twelve kinds, from price crossings and indicator thresholds to SMC events, setup transitions, the PAXG spread, upcoming economic releases, gold-market sessions, large trades, order-book walls and feed health. The analyzer evaluates them, de-duplicated, with cooldowns and quiet hours; the jobs service puts each alert in the user's inbox and pushes it to their open apps, where the web and desktop apps show native notifications, and alerts missed while away arrive as one summary. A dry run lists what a rule would have fired over the last 24 hours. See the [Phase 8 acceptance report](docs/phase-8/acceptance-report.md), the [Phase 7 report](docs/phase-7/acceptance-report.md) and the [implementation plan](docs/phase-0/08-implementation-plan.md).
+**Status:** Phases 1–8 and 14 are accepted; see the [Phase 14 acceptance report](docs/phase-14/acceptance-report.md). In Phase 14 (Practice trading), every user got a practice account per venue: they buy and sell with market and limit orders, attach a protective stop and a target, cancel, and see balances, holdings, profit and loss and their history. Orders are simulated inside the platform by a new broker service, which fills them from the venues' live trades and order books, with fees, slippage and the venues' order rules; nothing reaches an exchange and no real money is involved. A person places every order: "Practise this setup" only fills in the ticket. Practice fills can raise alerts. See the [Phase 8 report](docs/phase-8/acceptance-report.md) for alerts and notifications, and the [implementation plan](docs/phase-0/08-implementation-plan.md).
 
 ## Quick start
 
@@ -53,6 +53,12 @@ COMPOSE_FILE=compose.yaml:infra/docker/compose.replay.yaml docker compose -p cip
 | `docker compose exec analyzer node apps/analyzer/dist/cli.js replay <instrumentId> <from> <to>` | Replays a stored period (ISO times or epoch ms) and compares its digest with the live run's ([ADR 017](docs/adr/017-smc-runtime-boundaries-ids-digests-replays.md)) |
 | `docker compose exec analyzer node apps/analyzer/dist/cli.js digest <runId> <from> <to>` | Prints a run's digest over a period |
 
+| Practice trading command | Effect |
+|---|---|
+| `node scripts/practice-latency.mjs [minutes]` | Submitted → published latency of practice fills (NFR-16: p95 ≤ 1 s), market orders and waiting orders, on the Redis clock |
+| `node scripts/practice-latency.mjs --drive [orders] [minutes]` | Places practice orders as the development viewer first (simulated; practice balances only), then measures |
+| `docker compose exec broker node apps/broker/dist/cli.js replay [--since <seq>]` | Replays the practice journal and compares every fill with what was stored (criterion 14.3); read-only |
+
 ### HTTPS for the desktop app (optional)
 
 The desktop app's release builds accept only `https://` servers, and the local stack serves plain HTTP. To connect an installed desktop app to the local stack:
@@ -91,15 +97,16 @@ pnpm downloads Node.js 26.13.0 for this project (`devEngines` in `package.json`)
 ### Layout
 
 ```
-apps/        api, ingestor, analyzer, jobs (NestJS); web (Vite); desktop (Tauri 2)
+apps/        api, ingestor, analyzer, jobs (NestJS); broker (practice fills); web (Vite); desktop (Tauri 2)
 packages/    contracts (zod), db (migrations, Kysely), observability, app (React), ui (design system), config,
              domain (candles, decimals, closures), exchange-adapters (venues, replay), market-data (books, candles, detection),
              indicators (RSI, MACD, EMA, ATR, VWAP, volume anomaly, trend; checked against TA-Lib),
-             smc-engine (the SMC rulebook as a deterministic reducer; golden fixtures, property tests)
+             smc-engine (the SMC rulebook as a deterministic reducer; golden fixtures, property tests),
+             alerts (rule evaluation), paper-engine (practice orders and fills as a deterministic reducer)
 tools/       recorder for venue messages; reference-data (TA-Lib datasets, dev-only Python)
 infra/docker Dockerfile, Compose stack, Caddyfile, dev secret generation
 e2e/         Playwright smoke tests
-scripts/     CI guards (no exchange private endpoints, artefact scan), live smoke test, analysis latency
+scripts/     CI guards (no exchange private endpoints, artefact scan), live smoke test, analysis and practice latency
 docs/        Phase 0 design, ADRs, phase acceptance reports
 ```
 
@@ -117,7 +124,8 @@ Workspace packages are consumed from source through the `@cip/source` export con
 - [Phase 6 acceptance report](docs/phase-6/acceptance-report.md)
 - [Phase 7 acceptance report](docs/phase-7/acceptance-report.md)
 - [Phase 8 acceptance report](docs/phase-8/acceptance-report.md)
+- [Phase 14 acceptance report](docs/phase-14/acceptance-report.md)
 - [Proposal 001: buying and selling](docs/proposals/001-trading.md) (approved 2026-11-13): practice trading, then exchange test networks; no real money in the initial release
 - [Desktop app](apps/desktop/README.md)
 
-The platform is for analysis and education. It holds no exchange API keys, implements no trading, and never presents analysis as a guaranteed prediction.
+The platform is for analysis and education. It holds no exchange API keys and places no order on any exchange: practice trading is simulated inside the platform, with practice balances and no real money. It never presents analysis, or simulated results, as a guaranteed prediction.

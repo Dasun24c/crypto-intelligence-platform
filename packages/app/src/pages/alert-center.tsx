@@ -873,6 +873,22 @@ function ConditionFields({
           onChange={(v) => onChange({ ...c, events: v ?? [] })}
         />
       );
+    case 'practice_order_filled':
+      return (
+        <p className="text-sm text-fg-muted">
+          When one of your own practice buys or sells has filled. Practice trading is simulated: no real
+          money, and no order reaches an exchange.
+        </p>
+      );
+    case 'practice_exit':
+      return (
+        <Checks
+          legend="When your practice order's"
+          options={['stop', 'target'] as const}
+          selected={c.on}
+          onChange={(v) => onChange({ ...c, on: v ?? [] })}
+        />
+      );
   }
 }
 

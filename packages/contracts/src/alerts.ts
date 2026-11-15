@@ -98,6 +98,10 @@ export const AlertConditionSchema = z.discriminatedUnion('kind', [
     events: nonEmpty(z.enum(WALL_EVENTS)),
   }),
   z.strictObject({ kind: z.literal('feed_health'), events: nonEmpty(z.enum(FEED_HEALTH_EVENTS)) }),
+  /** Practice trading (REQUIREMENTS §11): one of the owner's own practice orders filled. */
+  z.strictObject({ kind: z.literal('practice_order_filled') }),
+  /** Practice trading: the owner's protective stop or target sold. */
+  z.strictObject({ kind: z.literal('practice_exit'), on: nonEmpty(z.enum(['stop', 'target'])) }),
 ]);
 export type AlertCondition = z.infer<typeof AlertConditionSchema>;
 export type AlertConditionKind = AlertCondition['kind'];

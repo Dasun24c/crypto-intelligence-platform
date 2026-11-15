@@ -12,6 +12,9 @@ import {
   AlertRulesController,
   NotificationsController,
 } from './alerts/alerts.controller.js';
+import { AdminPracticeSettingsController, PracticeController } from './practice/practice.controller.js';
+import { PracticeRepository } from './practice/practice.repository.js';
+import { PracticeService } from './practice/practice.service.js';
 import { AlertsRepository } from './alerts/alerts.repository.js';
 import { CalendarController, CalendarSyncQueue } from './calendar/calendar.controller.js';
 import { CalendarRepository } from './calendar/calendar.repository.js';
@@ -89,6 +92,8 @@ export class AppModule {
         AlertRulesController,
         AlertEventsController,
         NotificationsController,
+        PracticeController,
+        AdminPracticeSettingsController,
         SystemController,
         ProbesController,
       ],
@@ -132,6 +137,8 @@ export class AppModule {
         ReplayService,
         CalendarRepository,
         AlertsRepository,
+        PracticeRepository,
+        PracticeService,
         CalendarSyncQueue,
         LiveGateway,
       ],

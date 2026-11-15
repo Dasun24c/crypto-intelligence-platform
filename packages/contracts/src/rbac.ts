@@ -11,6 +11,7 @@ export type Role = z.infer<typeof RoleSchema>;
 export const CAPABILITIES = [
   'dashboards.view', // dashboards, charts, setups, AI history, system health
   'alerts.own', // personal alert rules and notifications
+  'practice.own', // practice trading on their own account (Phase 14)
   'ai.request', // on-demand AI analysis (budgeted)
   'replays.run', // run replays
   'fixtures.label', // label SMC fixtures
@@ -23,11 +24,12 @@ export const CapabilitySchema = z.enum(CAPABILITIES);
 export type Capability = z.infer<typeof CapabilitySchema>;
 
 export const ROLE_CAPABILITIES: Readonly<Record<Role, readonly Capability[]>> = {
-  viewer: ['dashboards.view', 'alerts.own'],
-  analyst: ['dashboards.view', 'alerts.own', 'ai.request', 'replays.run', 'fixtures.label'],
+  viewer: ['dashboards.view', 'alerts.own', 'practice.own'],
+  analyst: ['dashboards.view', 'alerts.own', 'practice.own', 'ai.request', 'replays.run', 'fixtures.label'],
   admin: [
     'dashboards.view',
     'alerts.own',
+    'practice.own',
     'ai.request',
     'replays.run',
     'fixtures.label',

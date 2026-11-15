@@ -16,6 +16,7 @@ export const ERROR_CODES = [
   'VALIDATION_FAILED',
   'CONFLICT',
   'BUDGET_EXHAUSTED',
+  'ORDER_REFUSED',
   'RATE_LIMITED',
   'CHANNEL_UNKNOWN',
   'UNAVAILABLE',
@@ -32,6 +33,8 @@ export const ProblemSchema = z.object({
   code: ErrorCodeSchema,
   detail: z.string().optional(),
   errors: z.array(z.object({ path: z.string(), message: z.string() })).optional(),
+  /** `ORDER_REFUSED`: why the practice order was refused, one of `REFUSAL_REASONS` (Phase 14). */
+  reason: z.string().optional(),
   correlationId: z.string().optional(),
 });
 export type Problem = z.infer<typeof ProblemSchema>;

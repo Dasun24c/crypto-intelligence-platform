@@ -33,6 +33,7 @@ const roles = {
   svc_ingestor: 'svc_ingestor',
   svc_analyzer: 'svc_analyzer',
   svc_jobs: 'svc_jobs',
+  svc_broker: 'svc_broker',
 };
 for (const [user, name] of Object.entries(roles)) {
   const password = ensure(`db-password-${name}`, () => randomBytes(18).toString('base64url'));

@@ -178,6 +178,18 @@ export function describe(
         title: `${source.instrument.name}: feed ${FEED[source.event]}`,
         body: source.detail,
       };
+    case 'practice': {
+      const what =
+        source.event === 'order_done'
+          ? `practice ${source.side} filled`
+          : source.event === 'stop_filled'
+            ? 'practice stop reached'
+            : 'practice target reached';
+      return {
+        title: `${source.instrument.name}: ${what}`,
+        body: `${source.side === 'buy' ? 'Bought' : 'Sold'} ${source.quantity} at ${source.price} on average. Practice trading: simulated, no real money.`,
+      };
+    }
   }
   return { title: rule.name, body: '' };
 }

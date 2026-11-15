@@ -584,6 +584,9 @@ importers:
       '@cip/observability':
         specifier: workspace:*
         version: link:../../packages/observability
+      '@cip/paper-engine':
+        specifier: workspace:*
+        version: link:../../packages/paper-engine
       '@cip/smc-engine':
         specifier: workspace:*
         version: link:../../packages/smc-engine
@@ -690,6 +693,79 @@ importers:
       unplugin-swc:
         specifier: 'catalog:'
         version: 2.0.0(@swc/core@1.16.22)(rolldown@1.2.16)(vite@8.3.6(@types/node@26.6.6)(jiti@2.7.0)(yaml@2.9.1))
+      vitest:
+        specifier: 'catalog:'
+        version: 5.1.0(@opentelemetry/api@1.10.0)(@types/node@26.6.6)(@vitest/coverage-v8@5.1.0)(jsdom@31.0.0)(vite@8.3.6(@types/node@26.6.6)(jiti@2.7.0)(yaml@2.9.1))
+
+  apps/broker:
+    dependencies:
+      '@cip/contracts':
+        specifier: workspace:*
+        version: link:../../packages/contracts
+      '@cip/db':
+        specifier: workspace:*
+        version: link:../../packages/db
+      '@cip/domain':
+        specifier: workspace:*
+        version: link:../../packages/domain
+      '@cip/observability':
+        specifier: workspace:*
+        version: link:../../packages/observability
+      '@cip/paper-engine':
+        specifier: workspace:*
+        version: link:../../packages/paper-engine
+      '@opentelemetry/api':
+        specifier: 'catalog:'
+        version: 1.10.0
+      ioredis:
+        specifier: 'catalog:'
+        version: 6.0.0(supports-color@7.2.0)
+      kysely:
+        specifier: 'catalog:'
+        version: 0.29.8
+      pg:
+        specifier: 'catalog:'
+        version: 8.23.1
+      zod:
+        specifier: 'catalog:'
+        version: 4.6.7
+    devDependencies:
+      '@cip/config':
+        specifier: workspace:*
+        version: link:../../packages/config
+      '@swc-node/register':
+        specifier: 'catalog:'
+        version: 1.12.1(@swc/core@1.16.22)(@swc/types@0.1.28)(@typescript/typescript6@6.0.2)(supports-color@7.2.0)
+      '@swc/cli':
+        specifier: 'catalog:'
+        version: 0.8.2(@swc/core@1.16.22)(supports-color@7.2.0)
+      '@swc/core':
+        specifier: 'catalog:'
+        version: 1.16.22
+      '@testcontainers/postgresql':
+        specifier: 'catalog:'
+        version: 12.2.1(bare-buffer@3.7.1)(supports-color@7.2.0)
+      '@types/node':
+        specifier: 'catalog:'
+        version: 26.6.6
+      '@types/pg':
+        specifier: 'catalog:'
+        version: 8.23.1
+      '@typescript/native':
+        specifier: 'catalog:'
+        version: typescript@7.0.2
+      '@vitest/coverage-v8':
+        specifier: 'catalog:'
+        version: 5.1.0(vitest@5.1.0)
+      testcontainers:
+        specifier: 'catalog:'
+        version: 12.2.1(bare-buffer@3.7.1)(supports-color@7.2.0)
+      typescript:
+        specifier: 'catalog:'
+        version: '@typescript/typescript6@6.0.2'
+      uuid:
+        specifier: 'catalog:'
+        version: 14.0.3
       vitest:
         specifier: 'catalog:'
         version: 5.1.0(@opentelemetry/api@1.10.0)(@types/node@26.6.6)(@vitest/coverage-v8@5.1.0)(jsdom@31.0.0)(vite@8.3.6(@types/node@26.6.6)(jiti@2.7.0)(yaml@2.9.1))
@@ -1107,6 +1183,9 @@ importers:
 
   packages/db:
     dependencies:
+      '@cip/contracts':
+        specifier: workspace:*
+        version: link:../contracts
       '@cip/domain':
         specifier: workspace:*
         version: link:../domain
@@ -1341,6 +1420,40 @@ importers:
       testcontainers:
         specifier: 'catalog:'
         version: 12.2.1(bare-buffer@3.7.1)(supports-color@7.2.0)
+      vitest:
+        specifier: 'catalog:'
+        version: 5.1.0(@opentelemetry/api@1.10.0)(@types/node@26.6.6)(@vitest/coverage-v8@5.1.0)(jsdom@31.0.0)(vite@8.3.6(@types/node@26.6.6)(jiti@2.7.0)(yaml@2.9.1))
+
+  packages/paper-engine:
+    dependencies:
+      '@cip/contracts':
+        specifier: workspace:*
+        version: link:../contracts
+      '@cip/domain':
+        specifier: workspace:*
+        version: link:../domain
+    devDependencies:
+      '@cip/config':
+        specifier: workspace:*
+        version: link:../config
+      '@swc/cli':
+        specifier: 'catalog:'
+        version: 0.8.2(@swc/core@1.16.22)(supports-color@7.2.0)
+      '@swc/core':
+        specifier: 'catalog:'
+        version: 1.16.22
+      '@types/node':
+        specifier: 'catalog:'
+        version: 26.6.6
+      '@typescript/native':
+        specifier: 'catalog:'
+        version: typescript@7.0.2
+      '@vitest/coverage-v8':
+        specifier: 'catalog:'
+        version: 5.1.0(vitest@5.1.0)
+      fast-check:
+        specifier: 'catalog:'
+        version: 4.10.2
       vitest:
         specifier: 'catalog:'
         version: 5.1.0(@opentelemetry/api@1.10.0)(@types/node@26.6.6)(@vitest/coverage-v8@5.1.0)(jsdom@31.0.0)(vite@8.3.6(@types/node@26.6.6)(jiti@2.7.0)(yaml@2.9.1))

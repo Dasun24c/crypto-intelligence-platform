@@ -15,8 +15,8 @@ import { CHANNEL_PATTERN, channels, CONFIG_CHANNELS, isDurableChannel } from './
 const ID = '019a7000-0000-7000-8000-000000000001';
 
 describe('alert contracts (Phase 8)', () => {
-  it('has twelve condition kinds, each with its own fields', () => {
-    expect(ALERT_CONDITION_KINDS).toHaveLength(12);
+  it('has fourteen condition kinds, each with its own fields (twelve from Phase 8, two for practice trading)', () => {
+    expect(ALERT_CONDITION_KINDS).toHaveLength(14);
     const valid = [
       { kind: 'price_cross', price: '100000', direction: 'above' },
       { kind: 'price_change_pct', windowMin: 60, pct: 2 },
@@ -42,8 +42,15 @@ describe('alert contracts (Phase 8)', () => {
       { kind: 'large_trade', minUsd: '1000000', sides: ['buy'] },
       { kind: 'wall', events: ['pulled'] },
       { kind: 'feed_health', events: ['halted'] },
+      { kind: 'practice_order_filled' },
+      { kind: 'practice_exit', on: ['stop', 'target'] },
     ];
     expect(valid.map((c) => AlertConditionSchema.safeParse(c).success)).toEqual(valid.map(() => true));
+    expect(AlertConditionSchema.safeParse({ kind: 'practice_exit', on: [] }).success).toBe(false);
+    expect(AlertConditionSchema.safeParse({ kind: 'practice_exit', on: ['entry'] }).success).toBe(false);
+    expect(AlertConditionSchema.safeParse({ kind: 'practice_order_filled', side: 'buy' }).success).toBe(
+      false,
+    );
     expect(new Set(valid.map((c) => c.kind))).toEqual(new Set(ALERT_CONDITION_KINDS));
     const invalid = [
       { kind: 'price_cross', price: '0', direction: 'above' },

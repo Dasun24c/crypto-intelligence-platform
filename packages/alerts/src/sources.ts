@@ -104,6 +104,24 @@ export type AlertSource =
       event: FeedHealthEvent;
       detail: string;
       processedAt: number;
+    }
+  /**
+   * One of a user's practice orders (ADR 021): a buy or sell that ended with fills (`order_done`), or
+   * a stop or target that sold. Only the order's owner's rules may match it.
+   */
+  | {
+      kind: 'practice';
+      userId: string;
+      instrument: InstrumentRef;
+      at: number;
+      event: 'order_done' | 'stop_filled' | 'target_filled';
+      orderId: string;
+      side: 'buy' | 'sell';
+      /** What it filled, and at what average price. */
+      quantity: string;
+      price: string;
+      /** When the analyzer read it: a fill read long after (a catch-up) is labelled late. */
+      processedAt: number;
     };
 
 export type AlertSourceKind = AlertSource['kind'];
@@ -122,6 +140,8 @@ export const SOURCE_OF: Readonly<Record<AlertConditionKind, AlertSourceKind>> = 
   large_trade: 'large_trade',
   wall: 'wall',
   feed_health: 'feed',
+  practice_order_filled: 'practice',
+  practice_exit: 'practice',
 };
 
 /** Rulebook §8 `late_detection`: processed more than 120 s after the deciding candle closed. */
@@ -137,6 +157,7 @@ export function isLate(source: AlertSource): boolean {
     case 'large_trade':
     case 'wall':
     case 'feed':
+    case 'practice':
       return source.processedAt - source.at > LATE_AFTER_MS;
     default:
       // Tickers, the spread and the clock are evaluated as they happen.

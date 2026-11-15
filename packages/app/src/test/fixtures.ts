@@ -37,6 +37,7 @@ function instrument(
     displayName: `${gold ? 'PAXG (gold-backed token)' : base} · ${venueName} ${base}/${quote}`,
     priceTick: base === 'USDT' ? '0.00001' : '0.01',
     qtyStep: '0.00001',
+    minNotional: '5',
     isPrimaryVenue: venue === 'binance',
     venueStatus: 'trading',
     enabled: true,
@@ -85,7 +86,7 @@ export function feed(instrumentId: string, stream: FeedStatus['stream'], extra: 
 
 export function health(feeds: FeedStatus[], extra: Partial<SystemHealth> = {}): SystemHealth {
   const now = Date.now();
-  const instance = (service: 'api' | 'ingestor' | 'analyzer' | 'jobs') => ({
+  const instance = (service: 'api' | 'ingestor' | 'analyzer' | 'jobs' | 'broker') => ({
     service,
     instance: `${service}-1`,
     version: '0.2.0',
@@ -102,7 +103,7 @@ export function health(feeds: FeedStatus[], extra: Partial<SystemHealth> = {}): 
       { name: 'database', status: 'ok', latencyMs: 2, detail: 'reachable' },
       { name: 'redis', status: 'ok', latencyMs: 1, detail: 'reachable' },
     ],
-    services: (['api', 'ingestor', 'analyzer', 'jobs'] as const).map((s) => ({
+    services: (['api', 'ingestor', 'analyzer', 'jobs', 'broker'] as const).map((s) => ({
       service: s,
       status: 'ok' as const,
       instances: [instance(s)],

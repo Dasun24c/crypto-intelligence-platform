@@ -209,6 +209,22 @@ Roles: **V** viewer, **A** analyst, **Ad** admin. Every endpoint needs authentic
 > - **Audited**: orders placed, cancelled, refused and filled, and account resets.
 > - **Settings.** Admins set the fees per venue and the default starting balances under `/admin/settings/practice`.
 
+> **As implemented in Phase 14** ([ADR 021](../adr/021-practice-trading-engine-and-broker.md)):
+>
+> - **`GET /practice/account`** → `{ accounts, fees }`. One account per venue (Binance, Coinbase, and the replay venue), opened with the starting balances on first use. Each balance shows what is free and what open orders hold. `fees` gives each venue's maker and taker rates as fractions.
+> - **`GET /practice/orders/{id}`** (added): one of the user's orders.
+> - **`POST /practice/orders`**:
+>   - `201` with the new order, `new` until the broker takes it up (usually well within a second; the `practice` channel brings the rest).
+>   - `200` with the original order for a retried `clientOrderId`; `409` if that key was used for a different order.
+>   - `400` for a stop not below, or a target not above, the price it buys at.
+>   - `422 ORDER_REFUSED` with `reason`. The refused order is kept, with its reason, in the history.
+>   - The api checks, in the broker's order: the pair, its live data, the open-order limit, a market to fill against, the venue's rules, and the balance with fees. The broker checks again when it takes the order up; if it refuses then, the order shows as refused with the reason.
+> - **`POST /practice/orders/{id}/cancel`** and **`POST /practice/account/reset`** (`{ venue }`) send a command to the broker. They answer `200` with the outcome once the broker has applied it (they wait up to 2 s), else `202` with the order or account as it is. Cancelling a finished order answers `409`.
+> - **`GET /practice/positions`** → `PracticePosition[]`, for each account's current period, by average cost. A buy adds its cost and fee; a sell realises its proceeds less its fee and the average cost of what it sold. Unrealised profit values what is held at the last trade price, against its cost with fees.
+> - **`GET` and `PUT /admin/settings/practice`** (`settings.manage`): `{ fees, startingBalances }`, audited as `settings.updated`.
+> - **Audit actions**: `practice_order.placed`, `.refused` (`by`: `api` or `broker`), `.cancel_requested`, `.cancelled` (with its `cause`) and `.filled`; `practice_account.reset_requested` and `.reset`.
+> - **Rate limit**: 5 orders per second per user (a token bucket in Redis); at most 200 open orders per account, attached stops and targets included.
+
 ### System and administration
 
 | Method | Path | Role | Returns |
@@ -428,7 +444,7 @@ interface Envelope<T> { ch: string; seq?: string; ts: Ts; type: string; data: T;
 | `setups`, `setups:{instrumentId}` | `setup.transition` (carries a full `SetupSummary`) | Yes | On event |
 | `ai` | `ai.queued`, `ai.started`, `ai.completed`, `ai.rejected`, `ai.failed`, `ai.budget` | Yes | On event |
 | `alerts` (implicit, per user) | `alert.fired`, `notification.read` | Yes | On event |
-| `practice` (implicit, per user; Phase 14) | `practice.order`, `practice.fill`, `practice.account` | Yes | On event |
+| `practice` (implicit, per user; Phase 14) | `practice.order` (`{ order }`), `practice.fill` (`{ fill, order }`), `practice.account` (`{ account }`); the snapshot is `{ accounts, openOrders }` | Yes | On event |
 | `calendar` | `calendar.updated` | Yes (as implemented: no, see below) | On change |
 | `system:activity` | `activity.snapshot`, `activity.pulse` | No | ≤ 4 Hz + pulses |
 | `system:health` | `health.update` | No | On change, at least every 10 s |
@@ -555,7 +571,7 @@ Applied in this order. Any failure in V1–V5 rejects the response (after one re
 | `VALIDATION_FAILED` | 400 | Request failed schema validation; `errors[]` lists the fields |
 | `CONFLICT` | 409 | State conflict, for example a replay already running for that range |
 | `BUDGET_EXHAUSTED` | 409 | AI spending cap reached |
-| `ORDER_REFUSED` | 422 | A practice order was refused; `reason` is `data_delayed`, `data_gap`, `pair_halted`, `insufficient_balance` or `venue_rule` (Phase 14) |
+| `ORDER_REFUSED` | 422 | A practice order was refused; `reason` is `data_delayed`, `data_gap`, `pair_halted`, `no_market`, `insufficient_balance`, `price_step`, `quantity_step`, `min_value`, `not_practice_pair` or `too_many_open_orders` (Phase 14; as implemented, the planned `venue_rule` is the three venue-rule reasons) |
 | `RATE_LIMITED` | 429 | Too many requests; `Retry-After` header set |
 | `CHANNEL_UNKNOWN` | — | WebSocket subscribe to an unknown channel |
 | `UNAVAILABLE` | 503 | Dependency down, for example the database |

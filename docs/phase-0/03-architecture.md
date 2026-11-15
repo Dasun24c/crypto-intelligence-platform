@@ -534,3 +534,9 @@ Approved 2026-11-13 ([proposal 001](../proposals/001-trading.md)). ADR 021 settl
 - **Refusals.** New orders on a pair whose data is delayed or has a gap, or that is halted, are refused with the reason. Open orders on it don't fill meanwhile.
 - **Determinism.** Fills depend only on the recorded market data and the orders, so a replay reproduces them, checked with a digest as for the SMC engine.
 - **Boundaries.** Setups, alerts, the AI and jobs can't create orders (a dependency rule). The AI context never includes orders or balances. The no-trading CI check is unchanged.
+
+> **As implemented in Phase 14** ([ADR 021](../adr/021-practice-trading-engine-and-broker.md)):
+>
+> - The api stores an accepted order as `new`, with its stop and target, and appends a `place` command. The broker holds the balance when it takes the order up, in the same transaction as any immediate fill. Database policies stop the api from writing anything but new or refused orders and starting balances.
+> - Determinism covers the configuration too: the broker journals the pairs' order rules and the fees when they change, so a replay is exact after the pair-status job or an admin has changed them. `docker compose exec broker node apps/broker/dist/cli.js replay` checks a stack's journal.
+> - The practice page is in `packages/app`, so the web and desktop apps both have it; every practice screen carries the practice banner and colour.

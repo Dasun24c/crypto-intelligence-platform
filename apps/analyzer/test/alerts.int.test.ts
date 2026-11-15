@@ -1,10 +1,21 @@
 import { randomUUID } from 'node:crypto';
 import { Redis } from 'ioredis';
 import { afterAll, beforeAll, beforeEach, describe, expect, inject, it } from 'vitest';
-import type { AlertCondition, IndicatorPoint, SetupTransitionMessage } from '@cip/contracts';
+import {
+  type AlertCondition,
+  type IndicatorPoint,
+  PRACTICE_EVENTS_STREAM,
+  type PracticeOrder,
+  type SetupTransitionMessage,
+} from '@cip/contracts';
 import { createDb } from '@cip/db';
 import { createLogger } from '@cip/observability';
-import { AlertService, type DeliveryQueue, MARKET_CURSOR_KEY } from '../src/alerts/alert-service.ts';
+import {
+  AlertService,
+  type DeliveryQueue,
+  MARKET_CURSOR_KEY,
+  PRACTICE_CURSOR_KEY,
+} from '../src/alerts/alert-service.ts';
 
 const BTC = '019a6f00-0000-7000-8000-000000000001';
 const ETH = '019a6f00-0000-7000-8000-000000000002';
@@ -49,7 +60,7 @@ afterAll(async () => {
 beforeEach(async () => {
   await service?.stop();
   await owner.updateTable('alerts.rules').set({ enabled: false }).execute();
-  await redis.del('lease:analyzer:alerts', MARKET_CURSOR_KEY);
+  await redis.del('lease:analyzer:alerts', MARKET_CURSOR_KEY, PRACTICE_CURSOR_KEY);
   jobs = [];
   clock = Date.now();
 });
@@ -252,6 +263,10 @@ describe('alert evaluation in the analyzer (ADR 020)', () => {
     const spread = await addRule({ kind: 'spread_threshold', baseAsset: 'PAXG', absBps: 30 });
     const releases = await addRule({ kind: 'economic_event_upcoming', minImpact: 'high', minutesBefore: 30 });
     const gold = await addRule({ kind: 'gold_market_session', on: ['close'] });
+    // A Wednesday afternoon with no stored closure around it. Today's date would not do: the SMC
+    // tests store the gold calendar for real weeks, and on a weekend the market would already be
+    // closed when this test starts, so no closing could be seen.
+    clock = Date.UTC(2026, 11, 16, 15, 0);
     await start();
     const releaseId = randomUUID();
     await owner
@@ -388,5 +403,74 @@ describe('alert evaluation in the analyzer (ADR 020)', () => {
     expect((await fired(confirmed)).map((e) => [e.dedupe_key, e.late])).toEqual([
       [`setup:${setupId}:confirmed`, true],
     ]);
+  });
+
+  it('reads practice:events for the owners’ practice fills: once per order and outcome, never for others (14.9)', async () => {
+    const filled = await addRule({ kind: 'practice_order_filled' });
+    const stops = await addRule({ kind: 'practice_exit', on: ['stop'] });
+    await start();
+    const order = (over: Partial<PracticeOrder> = {}): PracticeOrder => ({
+      id: randomUUID(),
+      clientOrderId: `c-${randomUUID()}`,
+      venue: 'binance',
+      instrumentId: BTC,
+      side: 'buy',
+      type: 'market',
+      quantity: '0.5',
+      limitPrice: null,
+      stopPrice: null,
+      filledQuantity: '0.5',
+      averagePrice: '100.25',
+      status: 'filled',
+      refusalReason: null,
+      parentId: null,
+      ocoGroup: null,
+      source: 'manual',
+      setupId: null,
+      underlyingClosed: false,
+      createdAt: clock,
+      updatedAt: clock,
+      ...over,
+    });
+    const publish = (user: string, o: PracticeOrder) =>
+      redis.xadd(
+        PRACTICE_EVENTS_STREAM,
+        '*',
+        'type',
+        'practice.order',
+        'user',
+        user,
+        'data',
+        JSON.stringify({ order: o }),
+      );
+    const buy = order();
+    await publish(userId, buy);
+    await publish(userId, buy); // the same update again (a re-read): one alert
+    await publish(randomUUID(), order()); // another user's order: not this owner's rules
+    await publish(
+      userId,
+      order({ type: 'limit', limitPrice: '90', status: 'open', filledQuantity: '0', averagePrice: null }),
+    );
+    const stop = order({
+      side: 'sell',
+      type: 'stop',
+      stopPrice: '95',
+      averagePrice: '94.9',
+      parentId: buy.id,
+      ocoGroup: randomUUID(),
+    });
+    await publish(userId, stop);
+    await redis.xadd(PRACTICE_EVENTS_STREAM, '*', 'type', 'practice.account', 'user', userId, 'data', '{}');
+    await tick();
+
+    expect((await fired(filled)).map((e) => [e.dedupe_key, e.title, e.late])).toEqual([
+      [`practice:${buy.id}:done`, 'BTC · Binance BTC/USDT: practice buy filled', false],
+    ]);
+    expect((await fired(stops)).map((e) => [e.dedupe_key, e.title])).toEqual([
+      [`practice:${stop.id}:stop`, 'BTC · Binance BTC/USDT: practice stop reached'],
+    ]);
+    expect(await redis.get(PRACTICE_CURSOR_KEY)).toBe(
+      (await redis.xrevrange(PRACTICE_EVENTS_STREAM, '+', '-', 'COUNT', 1))[0]![0],
+    );
   });
 });

@@ -2,7 +2,7 @@
 
 | | |
 |---|---|
-| Status | **Approved 2026-11-13** with the recommended choice for each of T1–T7, and applied to REQUIREMENTS.md (revision 4) and the Phase 0 documents. Nothing is built yet: Phase 14 starts after Phase 8 is accepted. |
+| Status | **Approved 2026-11-13** with the recommended choice for each of T1–T7, and applied to REQUIREMENTS.md (revision 4) and the Phase 0 documents. Phase 14 (practice trading) was built on 2026-11-14 and 15 and waits for acceptance: see its [acceptance report](../phase-14/acceptance-report.md). Phase 15 is decided after it. |
 | Date | 2026-11-13 |
 | Changed | [REQUIREMENTS.md](../../REQUIREMENTS.md) (revision 4), the [requirements analysis](../phase-0/01-requirements-analysis.md), the [implementation plan](../phase-0/08-implementation-plan.md), the [architecture](../phase-0/03-architecture.md), the [risk register](../phase-0/04-risks-and-dependencies.md), the [data model](../phase-0/05-data-model.md) and the [API contracts](../phase-0/06-api-contracts.md) |
 | Decisions | T1–T7, in [§8](#8-decisions-for-you) |

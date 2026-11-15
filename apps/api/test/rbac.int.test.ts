@@ -222,6 +222,27 @@ const ENDPOINTS: Endpoint[] = [
     policy: 'alerts.own',
     route: '/api/v1/notifications/:id/read',
   },
+  // Phase 14: practice trading on the user's own account (every role), and its settings.
+  { method: 'GET', path: '/api/v1/practice/account', policy: 'practice.own' },
+  { method: 'POST', path: '/api/v1/practice/account/reset', policy: 'practice.own', body: {} },
+  { method: 'GET', path: '/api/v1/practice/orders', policy: 'practice.own' },
+  { method: 'POST', path: '/api/v1/practice/orders', policy: 'practice.own', body: {} },
+  {
+    method: 'GET',
+    path: `/api/v1/practice/orders/${NOBODY}`,
+    policy: 'practice.own',
+    route: '/api/v1/practice/orders/:id',
+  },
+  {
+    method: 'POST',
+    path: `/api/v1/practice/orders/${NOBODY}/cancel`,
+    policy: 'practice.own',
+    route: '/api/v1/practice/orders/:id/cancel',
+  },
+  { method: 'GET', path: '/api/v1/practice/fills', policy: 'practice.own' },
+  { method: 'GET', path: '/api/v1/practice/positions', policy: 'practice.own' },
+  { method: 'GET', path: '/api/v1/admin/settings/practice', policy: 'settings.manage' },
+  { method: 'PUT', path: '/api/v1/admin/settings/practice', policy: 'settings.manage', body: {} },
   { method: 'GET', path: '/api/v1/admin/instruments', policy: 'instruments.manage' },
   { method: 'POST', path: '/api/v1/admin/instruments', policy: 'instruments.manage', body: {} },
   { method: 'PATCH', path: `/api/v1/admin/instruments/${NOBODY}`, policy: 'instruments.manage', body: {} },
@@ -280,6 +301,8 @@ describe('RBAC matrix', () => {
     for (const role of [null, ...ROLES] as (Role | null)[]) {
       const ok = allowed(endpoint.policy, role);
       it(`${endpoint.method} ${endpoint.path.replace(NOBODY, ':id')} as ${role ?? 'anonymous'} → ${ok ? 'allowed' : 'refused'}`, async () => {
+        // Keep each user within the REST limit (20/s, burst 60): the table has more endpoints than the burst.
+        h.clock.advance(100);
         const res = await call(h.base, endpoint.method, endpoint.path, {
           ...(role ? { token: tokens[role] } : {}),
           ...(endpoint.body !== undefined ? { body: endpoint.body } : {}),

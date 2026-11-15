@@ -8,6 +8,10 @@
     ".": {
       "@cip/source": "./src/index.ts",
       "default": "./dist/index.js"
+    },
+    "./practice-commands": {
+      "@cip/source": "./src/practice-commands.ts",
+      "default": "./dist/practice-commands.js"
     }
   },
   "scripts": {

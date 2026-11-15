@@ -1,22 +1,24 @@
 import type { AlertSource, InstrumentRef } from '@cip/alerts';
-import type {
-  FeedStatusEvent,
-  GapOpenedEvent,
-  IndicatorPoint,
-  LargeTrade,
-  SetupTransitionMessage,
-  SmcEventMessage,
-  StructureEvent,
-  Sweep,
-  Tf,
-  Wall,
-  ZoneStatusChange,
+import {
+  type FeedStatusEvent,
+  type GapOpenedEvent,
+  type IndicatorPoint,
+  type LargeTrade,
+  PracticeOrderMessageSchema,
+  type SetupTransitionMessage,
+  type SmcEventMessage,
+  type StructureEvent,
+  type Sweep,
+  type Tf,
+  type Wall,
+  type ZoneStatusChange,
 } from '@cip/contracts';
-import { TF_MS } from '@cip/domain';
+import { dec, TF_MS } from '@cip/domain';
 
 /**
- * Turns what the analyzer published, what the ingestor and jobs put on `md:events`, and tickers into
- * the alert evaluator's sources (ADR 020). Anything a rule cannot match becomes nothing.
+ * Turns what the analyzer published, what the ingestor and jobs put on `md:events`, what the broker
+ * puts on `practice:events`, and tickers into the alert evaluator's sources (ADR 020). Anything a
+ * rule cannot match becomes nothing.
  */
 
 /** What an actor published, handed to the alert service right after (never warm-up or replays). */
@@ -215,4 +217,46 @@ export function fromMarketEvent(
     default:
       return null;
   }
+}
+
+/**
+ * A `practice:events` entry (ADR 021) as an alert source for the order's owner: a buy or sell that
+ * ended with fills (filled, or cancelled after filling in part), or a protective stop or target that
+ * sold. Orders placed or still working, fills of orders still open, and balances raise nothing; the
+ * rule's dedupe key keeps each order's outcome to one alert.
+ */
+export function fromPracticeEvent(
+  type: string,
+  userId: string,
+  data: unknown,
+  ref: (instrumentId: string) => InstrumentRef | null,
+  processedAt: number,
+): AlertSource | null {
+  if (type !== 'practice.order' || !userId) return null;
+  const parsed = PracticeOrderMessageSchema.safeParse(data);
+  if (!parsed.success) return null;
+  const o = parsed.data.order;
+  const instrument = ref(o.instrumentId);
+  if (!instrument || o.averagePrice === null || dec(o.filledQuantity).lte(0)) return null;
+  const event =
+    o.type === 'stop'
+      ? 'stop_filled'
+      : o.type === 'target'
+        ? 'target_filled'
+        : o.status === 'filled' || o.status === 'cancelled'
+          ? 'order_done'
+          : null;
+  if (!event) return null;
+  return {
+    kind: 'practice',
+    userId,
+    instrument,
+    at: o.updatedAt,
+    event,
+    orderId: o.id,
+    side: o.side,
+    quantity: o.filledQuantity,
+    price: o.averagePrice,
+    processedAt,
+  };
 }

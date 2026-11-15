@@ -24,3 +24,4 @@ An Architecture Decision Record (ADR) records one significant decision: the cont
 | [018](018-charts-on-lightweight-charts.md) | Charts are Lightweight Charts with our own overlay primitives, and report what they drew | Accepted | 2026-11-12 |
 | [019](019-economic-calendar-as-known.md) | The economic calendar keeps every version, and the engine reads it as it was known | Accepted | 2026-11-12 |
 | [020](020-alerts-evaluation-and-delivery.md) | Alerts are evaluated in the analyzer by one shared evaluator and delivered through the notifications queue | Accepted | 2026-11-12 |
+| [021](021-practice-trading-engine-and-broker.md) | Practice trading is a pure fill engine run by one broker service on the platform's own live data, never a venue | Accepted | 2026-11-14 |

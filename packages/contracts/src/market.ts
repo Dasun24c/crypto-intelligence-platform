@@ -12,6 +12,7 @@ export type Tf = z.infer<typeof TimeframeSchema>;
 
 export const VENUES = ['binance', 'coinbase', 'replay'] as const;
 export const VenueSchema = z.enum(VENUES);
+export type Venue = z.infer<typeof VenueSchema>;
 export const ASSET_CLASSES = ['crypto', 'tokenised_gold', 'stablecoin'] as const;
 export const AssetClassSchema = z.enum(ASSET_CLASSES);
 export const InstrumentRoleSchema = z.enum(['monitored', 'reference']);
@@ -29,6 +30,8 @@ export const InstrumentSchema = z.object({
   displayName: z.string(),
   priceTick: DecimalSchema,
   qtyStep: DecimalSchema,
+  /** The smallest order value in the quote currency; "0" while unknown (practice trading, ADR 021). */
+  minNotional: DecimalSchema,
   isPrimaryVenue: z.boolean(),
   venueStatus: VenueStatusSchema,
   enabled: z.boolean(),
@@ -293,22 +296,25 @@ export const channels = {
   calendar: 'calendar',
   /** The signed-in user's alerts (Phase 8): implicit per user, so the name carries no id. */
   alerts: 'alerts',
+  /** The signed-in user's practice orders, fills and balances (Phase 14): implicit per user. */
+  practice: 'practice',
   systemHealth: 'system:health',
 } as const;
 
 const UUID = '[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}';
 export const CHANNEL_PATTERN = new RegExp(
-  `^(?:(?:ticker|book|trades|market|smc):${UUID}|(?:candles|indicators):${UUID}:(?:1m|5m|15m|1h|4h|1d)|setups(?::${UUID})?|calendar|alerts|system:health)$`,
+  `^(?:(?:ticker|book|trades|market|smc):${UUID}|(?:candles|indicators):${UUID}:(?:1m|5m|15m|1h|4h|1d)|setups(?::${UUID})?|calendar|alerts|practice|system:health)$`,
 );
 
 /**
  * Durable channels carry `seq` (the id of the stream entry behind the message: md:events for
- * trades and market, an:events for indicators, smc and setups, alerts:events for alerts) and can be
- * replayed after a reconnect.
+ * trades and market, an:events for indicators, smc and setups, alerts:events for alerts,
+ * practice:events for practice) and can be replayed after a reconnect.
  */
 export function isDurableChannel(channel: string): boolean {
   return (
     channel === 'alerts' ||
+    channel === 'practice' ||
     channel.startsWith('trades:') ||
     channel.startsWith('market:') ||
     channel.startsWith('indicators:') ||
@@ -411,6 +417,9 @@ export type MarketMessageType =
   | 'calendar.updated'
   | 'alert.fired'
   | 'notification.read'
+  | 'practice.order'
+  | 'practice.fill'
+  | 'practice.account'
   | 'health.update';
 
 /** A stored or live candle in its wire form (structural, so this package stays dependency-free). */

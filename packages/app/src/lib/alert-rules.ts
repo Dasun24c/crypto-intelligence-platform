@@ -1,7 +1,7 @@
 import type { AlertCondition, AlertConditionKind, AlertRule } from '@cip/contracts';
 import { PATTERN_SHORT, STATE_TITLE } from './setups.js';
 
-/** The twelve condition kinds, in the order the rule form offers them. */
+/** The fourteen condition kinds, in the order the rule form offers them. */
 export const KIND_LABELS: Record<AlertConditionKind, string> = {
   price_cross: 'Price crosses a level',
   price_change_pct: 'Price moves by a percentage',
@@ -15,6 +15,8 @@ export const KIND_LABELS: Record<AlertConditionKind, string> = {
   large_trade: 'Large trade',
   wall: 'Order-book wall',
   feed_health: 'Data feed health',
+  practice_order_filled: 'Practice order filled (simulated)',
+  practice_exit: 'Practice stop or target reached (simulated)',
 };
 export const KINDS = Object.keys(KIND_LABELS) as AlertConditionKind[];
 
@@ -50,6 +52,10 @@ export function defaultCondition(kind: AlertConditionKind): AlertCondition {
       return { kind, events: ['appeared', 'pulled'] };
     case 'feed_health':
       return { kind, events: ['gap', 'halted', 'delisted', 'disconnected'] };
+    case 'practice_order_filled':
+      return { kind };
+    case 'practice_exit':
+      return { kind, on: ['stop', 'target'] };
   }
 }
 
@@ -106,6 +112,10 @@ export function describeCondition(c: AlertCondition): string {
       return `Wall ${list(c.events)}${c.minUsd ? `, at least $${c.minUsd}` : ''}`;
     case 'feed_health':
       return `Feed ${list(c.events)}`;
+    case 'practice_order_filled':
+      return 'One of your practice orders filled (simulated)';
+    case 'practice_exit':
+      return `Your practice ${c.on.join(' or ')} sold (simulated)`;
   }
 }
 

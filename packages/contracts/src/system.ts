@@ -8,7 +8,7 @@ export const HEALTH_STATUSES = ['ok', 'degraded', 'down'] as const;
 export const HealthStatusSchema = z.enum(HEALTH_STATUSES);
 export type HealthStatus = z.infer<typeof HealthStatusSchema>;
 
-export const SERVICE_NAMES = ['api', 'ingestor', 'analyzer', 'jobs'] as const;
+export const SERVICE_NAMES = ['api', 'ingestor', 'analyzer', 'jobs', 'broker'] as const;
 export const ServiceNameSchema = z.enum(SERVICE_NAMES);
 export type ServiceName = z.infer<typeof ServiceNameSchema>;
 

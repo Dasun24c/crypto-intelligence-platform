@@ -20,6 +20,7 @@
     "@cip/domain": "workspace:*",
     "@cip/exchange-adapters": "workspace:*",
     "@cip/observability": "workspace:*",
+    "@cip/paper-engine": "workspace:*",
     "@cip/smc-engine": "workspace:*",
     "@nestjs/common": "catalog:",
     "@nestjs/core": "catalog:",

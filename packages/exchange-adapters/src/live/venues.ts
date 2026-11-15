@@ -37,6 +37,8 @@ export interface PairStatus {
   status: 'trading' | 'halted' | 'delisted';
   priceTick: string;
   qtyStep: string;
+  /** The smallest order value in the quote currency; "0" when the venue states none (ADR 021). */
+  minNotional: string;
 }
 
 const dispatch = (hooks: VenueHooks, result: MarketEvent | Unparsed | null) => {
@@ -178,9 +180,16 @@ export class BinanceVenue {
       symbols: {
         symbol: string;
         status: string;
-        filters: { filterType: string; tickSize?: string; stepSize?: string }[];
+        filters: { filterType: string; tickSize?: string; stepSize?: string; minNotional?: string }[];
       }[];
     }>(`/api/v3/exchangeInfo?symbols=${encodeURIComponent(JSON.stringify(symbols))}`, 20);
+    // NOTIONAL replaced MIN_NOTIONAL in 2023; read whichever the pair has.
+    const minNotional = (filters: { filterType: string; minNotional?: string }[]) =>
+      normalizeDecimal(
+        filters.find((f) => f.filterType === 'NOTIONAL')?.minNotional ??
+          filters.find((f) => f.filterType === 'MIN_NOTIONAL')?.minNotional ??
+          '0',
+      );
     return body.symbols.map((s) => ({
       symbol: s.symbol,
       status:
@@ -191,6 +200,7 @@ export class BinanceVenue {
             : 'delisted',
       priceTick: normalizeDecimal(s.filters.find((f) => f.filterType === 'PRICE_FILTER')?.tickSize ?? '0'),
       qtyStep: normalizeDecimal(s.filters.find((f) => f.filterType === 'LOT_SIZE')?.stepSize ?? '0'),
+      minNotional: minNotional(s.filters),
     }));
   }
 }
@@ -289,6 +299,7 @@ export class CoinbaseVenue {
       cancel_only: boolean;
       quote_increment: string;
       base_increment: string;
+      min_market_funds?: string;
     }>(`/products/${product}`);
     return {
       symbol: p.id,
@@ -300,6 +311,7 @@ export class CoinbaseVenue {
             : 'trading',
       priceTick: normalizeDecimal(p.quote_increment),
       qtyStep: normalizeDecimal(p.base_increment),
+      minNotional: normalizeDecimal(p.min_market_funds ?? '0'),
     };
   }
 }

@@ -19,6 +19,7 @@ describe('RBAC matrix (architecture §14)', () => {
   const expected: Record<string, readonly string[]> = {
     'dashboards.view': ['viewer', 'analyst', 'admin'],
     'alerts.own': ['viewer', 'analyst', 'admin'],
+    'practice.own': ['viewer', 'analyst', 'admin'],
     'ai.request': ['analyst', 'admin'],
     'replays.run': ['analyst', 'admin'],
     'fixtures.label': ['analyst', 'admin'],

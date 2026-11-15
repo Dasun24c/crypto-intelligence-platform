@@ -108,6 +108,7 @@ export class AdminInstrumentsController {
             role: body.role,
             price_tick: pair.priceTick,
             qty_step: pair.qtyStep,
+            min_notional: pair.minNotional,
             // Analysed from the start with its asset class's launch profile (migration 0006).
             profile_id: launchProfileFor(body.assetClass),
             underlying_calendar_id: body.underlyingCalendar,

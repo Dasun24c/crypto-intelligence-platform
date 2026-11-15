@@ -103,6 +103,8 @@ export class AlertEvaluator {
     const out: { rule: EvaluableRule; match: AlertMatch }[] = [];
     for (const rule of rules) {
       if (SOURCE_OF[rule.condition.kind] !== source.kind || !inScope(rule, source)) continue;
+      // A practice order concerns its owner alone.
+      if (source.kind === 'practice' && rule.ownerId !== source.userId) continue;
       const found = this.find(rule, source);
       if (!found) continue;
       const { title, body } = describe(rule, source, found);
@@ -307,8 +309,32 @@ export class AlertEvaluator {
           facts: {},
         };
       }
+      case 'practice_order_filled': {
+        if (source.kind !== 'practice' || source.event !== 'order_done') return null;
+        return practiceFound(source, 'done');
+      }
+      case 'practice_exit': {
+        if (source.kind !== 'practice') return null;
+        const leg =
+          source.event === 'stop_filled' ? 'stop' : source.event === 'target_filled' ? 'target' : null;
+        if (!leg || !c.on.includes(leg)) return null;
+        return practiceFound(source, leg);
+      }
     }
   }
+}
+
+/** Once per order and outcome: the order's end, or its stop's or target's first sale. */
+function practiceFound(
+  source: Extract<AlertSource, { kind: 'practice' }>,
+  what: 'done' | 'stop' | 'target',
+): Found {
+  return {
+    dedupeKey: `practice:${source.orderId}:${what}`,
+    subject: source.orderId,
+    refs: { instrumentId: source.instrument.id, orderId: source.orderId },
+    facts: { side: source.side, quantity: source.quantity, price: source.price, leg: what },
+  };
 }
 
 function round(n: number, dp: number): number {

@@ -213,6 +213,7 @@ describe('venues', () => {
               filters: [
                 { filterType: 'PRICE_FILTER', tickSize: '0.01000000' },
                 { filterType: 'LOT_SIZE', stepSize: '0.00010000' },
+                { filterType: 'NOTIONAL', minNotional: '5.00000000' },
               ],
             },
           ],
@@ -229,6 +230,7 @@ describe('venues', () => {
         cancel_only: true,
         quote_increment: '0.01',
         base_increment: '0.00001',
+        min_market_funds: '1',
       });
     });
     const hooks = { onEvent: () => undefined, onUnparsed: () => undefined, onStatus: () => undefined };
@@ -250,7 +252,7 @@ describe('venues', () => {
       },
     ]);
     expect(await b.pairStatus(['PAXGUSDT'])).toEqual([
-      { symbol: 'PAXGUSDT', status: 'halted', priceTick: '0.01', qtyStep: '0.0001' },
+      { symbol: 'PAXGUSDT', status: 'halted', priceTick: '0.01', qtyStep: '0.0001', minNotional: '5' },
     ]);
     const c = new CoinbaseVenue(hooks, {
       WebSocketImpl: FakeSocket,
@@ -260,5 +262,6 @@ describe('venues', () => {
       120_000, 180_000,
     ]);
     expect((await c.pairStatus('PAXG-USD')).status).toBe('halted');
+    expect((await c.pairStatus('PAXG-USD')).minNotional).toBe('1');
   });
 });

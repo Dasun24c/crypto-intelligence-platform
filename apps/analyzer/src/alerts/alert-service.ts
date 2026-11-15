@@ -11,7 +11,7 @@ import {
   ruleFromRow,
   SOURCE_OF,
 } from '@cip/alerts';
-import type { AlertRule, Ticker } from '@cip/contracts';
+import { type AlertRule, PRACTICE_EVENTS_STREAM, type Ticker } from '@cip/contracts';
 import { activeAlertRules, alertRulesFingerprint, type Database, insertAlertEvent } from '@cip/db';
 import { displayName } from '@cip/domain';
 import type { Logger } from '@cip/observability';
@@ -19,6 +19,7 @@ import { InstrumentLease } from '../analysis/lease.js';
 import {
   fromIndicator,
   fromMarketEvent,
+  fromPracticeEvent,
   fromSetup,
   fromSmc,
   type Published,
@@ -55,6 +56,8 @@ export interface AlertServiceOptions {
 
 /** Where the global evaluator has read `md:events` to, so a new lease holder carries on (ADR 020). */
 export const MARKET_CURSOR_KEY = 'alerts:md-cursor';
+/** The same for `practice:events`, the users' practice orders (ADR 021). */
+export const PRACTICE_CURSOR_KEY = 'alerts:practice-cursor';
 export const cooldownRedisKey = (key: string) => `alerts:cooldown:${key}`;
 const SLOW_MS = 5_000;
 const RELOAD_MS = 60_000;
@@ -75,8 +78,9 @@ export class RedisCooldown implements CooldownGate {
  *
  * - The instruments this instance holds: their published analysis (from the actors) and their price
  *   (the `ticker:{id}` key, once a second).
- * - With `lease:analyzer:alerts`: `md:events` (feed health, gaps, large trades, walls), the stored
- *   PAXG spread, the economic calendar and the gold-market sessions.
+ * - With `lease:analyzer:alerts`: `md:events` (feed health, gaps, large trades, walls),
+ *   `practice:events` (practice fills, for their owners' rules), the stored PAXG spread, the economic
+ *   calendar and the gold-market sessions.
  *
  * Work runs one item at a time, so the evaluator's memory (previous prices, edges) sees sources in order.
  */
@@ -94,7 +98,8 @@ export class AlertService {
   private timer: NodeJS.Timeout | undefined;
   private ticking = false;
   private lastSlow = 0;
-  private cursor: string | null = null;
+  /** Where this lease holder has read each stream to (`md:events`, `practice:events`). */
+  private readonly cursors = new Map<string, string>();
   private spreadAfter = 0;
   private calendar: { at: number; events: Extract<AlertSource, { kind: 'economic_event' }>['event'][] } = {
     at: 0,
@@ -171,13 +176,14 @@ export class AlertService {
         await this.lease.refresh();
         if (was && !this.lease.held) this.o.log.warn('alerts lease lost to another instance');
         if (!this.lease.held) {
-          this.cursor = null;
+          this.cursors.clear();
           this.goldClosed = null;
         }
       }
       this.enqueue(() => this.prices());
       if (this.lease.held) {
         this.enqueue(() => this.marketEvents());
+        this.enqueue(() => this.practiceEvents());
         if (slow) this.enqueue(() => this.globalClock(now));
       }
       await this.chain;
@@ -308,15 +314,50 @@ export class AlertService {
 
   /** New `md:events` entries since the shared cursor (catch-up after a restart is labelled late). */
   private async marketEvents(): Promise<void> {
-    if (this.cursor === null) {
-      const stored = await this.o.redis.get(MARKET_CURSOR_KEY);
-      const latest = stored ? null : await this.o.redis.xrevrange('md:events', '+', '-', 'COUNT', 1);
-      this.cursor = stored ?? latest?.[0]?.[0] ?? '0-0';
+    await this.follow('md:events', MARKET_CURSOR_KEY, (entryId, f, data, processedAt) =>
+      fromMarketEvent(entryId, f['type'] ?? '', data, (id) => this.refs.get(id) ?? null, processedAt),
+    );
+  }
+
+  /** New `practice:events` entries: the owners' practice fills (criterion 14.9). */
+  private async practiceEvents(): Promise<void> {
+    await this.follow(PRACTICE_EVENTS_STREAM, PRACTICE_CURSOR_KEY, (_entryId, f, data, processedAt) =>
+      fromPracticeEvent(
+        f['type'] ?? '',
+        f['user'] ?? '',
+        data,
+        (id) => this.refs.get(id) ?? null,
+        processedAt,
+      ),
+    );
+  }
+
+  /**
+   * Evaluates a stream's entries after the shared cursor, oldest first, a batch at a time; the
+   * cursor moves on after each batch, so a new lease holder carries on from there. A first holder
+   * starts at the stream's end.
+   */
+  private async follow(
+    stream: string,
+    cursorKey: string,
+    toSource: (
+      entryId: string,
+      fields: Record<string, string>,
+      data: unknown,
+      processedAt: number,
+    ) => AlertSource | null,
+  ): Promise<void> {
+    let cursor = this.cursors.get(stream);
+    if (cursor === undefined) {
+      const stored = await this.o.redis.get(cursorKey);
+      const latest = stored ? null : await this.o.redis.xrevrange(stream, '+', '-', 'COUNT', 1);
+      cursor = stored ?? latest?.[0]?.[0] ?? '0-0';
+      this.cursors.set(stream, cursor);
     }
     for (let batch = 0; batch < 10; batch++) {
       // Entries after the cursor (`(` excludes it), oldest first. (Typed through `unknown`: the
       // linter's type checker resolves this ioredis overload to `any`.)
-      const raw: unknown = await this.o.redis.xrange('md:events', `(${this.cursor}`, '+', 'COUNT', 500);
+      const raw: unknown = await this.o.redis.xrange(stream, `(${cursor}`, '+', 'COUNT', 500);
       const entries = raw as [id: string, fields: string[]][];
       if (!entries.length) return;
       const processedAt = this.now();
@@ -330,18 +371,13 @@ export class AlertService {
         } catch {
           continue;
         }
-        const s = fromMarketEvent(
-          entryId,
-          f['type'] ?? '',
-          data,
-          (id) => this.refs.get(id) ?? null,
-          processedAt,
-        );
+        const s = toSource(entryId, f, data, processedAt);
         if (s) sources.push(s);
       }
       await this.evaluate(sources);
-      this.cursor = entries.at(-1)![0];
-      await this.o.redis.set(MARKET_CURSOR_KEY, this.cursor);
+      cursor = entries.at(-1)![0];
+      this.cursors.set(stream, cursor);
+      await this.o.redis.set(cursorKey, cursor);
       if (entries.length < 500) return;
     }
   }

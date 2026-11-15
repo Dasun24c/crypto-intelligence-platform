@@ -1,0 +1,4 @@
+{
+  "extends": "@cip/config/tsconfig/node.json",
+  "include": ["src", "test", "*.config.ts"]
+}

@@ -106,6 +106,12 @@ export interface Database {
   'alerts.rules': AlertRulesTable;
   'alerts.events': AlertEventsTable;
   'alerts.notifications': AlertNotificationsTable;
+  'trading.accounts': TradingAccountsTable;
+  'trading.orders': TradingOrdersTable;
+  'trading.fills': TradingFillsTable;
+  'trading.ledger': TradingLedgerTable;
+  'trading.journal': TradingJournalTable;
+  'trading.broker_state': TradingBrokerStateTable;
 }
 
 // ---------------------------------------------------------------- market (data model §4)
@@ -153,6 +159,8 @@ export interface InstrumentsTable {
   role: ColumnType<'monitored' | 'reference', 'monitored' | 'reference' | undefined>;
   price_tick: string;
   qty_step: string;
+  /** The smallest order value in the quote currency; "0" while unknown (migration 0012). */
+  min_notional: ColumnType<string, string | undefined, string>;
   profile_id: string | null;
   underlying_calendar_id: string | null;
   is_primary_venue: Generated<boolean>;
@@ -397,6 +405,104 @@ export interface AlertNotificationsTable {
   last_error: string | null;
   created_at: Generated<Date>;
   read_at: Date | null;
+}
+
+// ---------------------------------------------------------------- trading (data model §10, Phase 14)
+
+type Json = Record<string, unknown>;
+
+/** A user's practice account on one venue; `starting_balances` is {asset: amount} of the current period. */
+export interface TradingAccountsTable {
+  id: string;
+  user_id: string;
+  venue_id: Venue;
+  starting_balances: ColumnType<Record<string, string>, Record<string, string>, Record<string, string>>;
+  reset_epoch: Generated<number>;
+  created_at: Generated<Date>;
+  updated_at: Generated<Date>;
+}
+
+export type PracticeOrderStatusDb =
+  'new' | 'pending' | 'open' | 'partially_filled' | 'filled' | 'cancelled' | 'refused';
+
+export interface TradingOrdersTable {
+  id: string;
+  account_id: string;
+  instrument_id: string;
+  client_order_id: string;
+  side: 'buy' | 'sell';
+  type: 'market' | 'limit' | 'stop' | 'target';
+  quantity: string;
+  limit_price: string | null;
+  stop_price: string | null;
+  status: PracticeOrderStatusDb;
+  refusal_reason: string | null;
+  filled_quantity: ColumnType<string, string | undefined, string>;
+  filled_value: ColumnType<string, string | undefined, string>;
+  reserved: ColumnType<string, string | undefined, string>;
+  parent_id: string | null;
+  oco_group: string | null;
+  source: 'manual' | 'setup';
+  setup_id: string | null;
+  underlying_closed: Generated<boolean>;
+  reset_epoch: number;
+  seq: ColumnType<string | null, string | number | null | undefined, string | number | null>;
+  accepted_after: string | null;
+  fill_count: Generated<number>;
+  created_at: Generated<Date>;
+  updated_at: Generated<Date>;
+}
+
+export interface TradingFillsTable {
+  id: string;
+  order_id: string;
+  account_id: string;
+  instrument_id: string;
+  side: 'buy' | 'sell';
+  price: string;
+  quantity: string;
+  fee: string;
+  fee_asset: string;
+  liquidity: 'maker' | 'taker';
+  flags: Generated<string[]>;
+  basis: ColumnType<Json, Json, Json>;
+  reset_epoch: number;
+  filled_at: Date;
+  created_at: Generated<Date>;
+}
+
+/** One change of an available balance; balances are sums of these for the current period. */
+export interface TradingLedgerTable {
+  id: Generated<string>;
+  account_id: string;
+  reset_epoch: number;
+  asset: string;
+  amount: string;
+  reason: 'start' | 'reserve' | 'release' | 'fill' | 'fee';
+  order_id: string | null;
+  fill_id: string | null;
+  created_at: Generated<Date>;
+}
+
+/** The broker's journal of inputs that changed something, for replays (criterion 14.3). */
+export interface TradingJournalTable {
+  seq: Generated<string>;
+  at: Generated<Date>;
+  kind: 'load' | 'place' | 'cancel' | 'reset' | 'trade';
+  input: ColumnType<Json, Json, Json>;
+  fills: ColumnType<string[], string[] | undefined, string[]>;
+}
+
+export interface TradingBrokerStateTable {
+  id: number;
+  lease_epoch: ColumnType<string, string | number | undefined, string | number>;
+  commands_cursor: Generated<string>;
+  trade_cursors: ColumnType<
+    Record<string, string>,
+    Record<string, string> | undefined,
+    Record<string, string>
+  >;
+  updated_at: Generated<Date>;
 }
 
 // ---------------------------------------------------------------- analysis (data model §5)
@@ -688,6 +794,12 @@ export type NewIndicatorValue = Insertable<IndicatorValuesTable>;
 export type AlertRuleRow = Selectable<AlertRulesTable>;
 export type AlertEventRow = Selectable<AlertEventsTable>;
 export type AlertNotificationRow = Selectable<AlertNotificationsTable>;
+export type TradingAccountRow = Selectable<TradingAccountsTable>;
+export type TradingOrderRow = Selectable<TradingOrdersTable>;
+export type NewTradingOrder = Insertable<TradingOrdersTable>;
+export type TradingFillRow = Selectable<TradingFillsTable>;
+export type NewTradingFill = Insertable<TradingFillsTable>;
+export type NewTradingLedgerEntry = Insertable<TradingLedgerTable>;
 
 export type UserRow = Selectable<UsersTable>;
 export type NewUser = Insertable<UsersTable>;

@@ -10,10 +10,13 @@ import {
   type CalendarUpdated,
   CalendarUpdatedSchema,
   can,
+  type Capability,
   CHANNEL_PATTERN,
   CONFIG_CHANNELS,
   type Envelope,
   isDurableChannel,
+  PRACTICE_EVENTS_STREAM,
+  type PracticeSnapshot,
   type SetupTransitionMessage,
   type SmcEventMessage,
   type SubscribeAck,
@@ -34,6 +37,7 @@ import type { AuthenticatedUser } from '../common/access.js';
 import { ProblemError } from '../common/problem.js';
 import { TAURI_ORIGINS, type ApiConfig } from '../config.js';
 import { MarketRepository } from '../market/market.repository.js';
+import { PracticeRepository } from '../practice/practice.repository.js';
 import { HealthService } from '../system/health.service.js';
 import { API_CONFIG, CLOCK, type Clock, LOGGER, REDIS } from '../tokens.js';
 import { effectiveStatus, toSummary, UsersRepository } from '../users/users.repository.js';
@@ -41,23 +45,56 @@ import { effectiveStatus, toSummary, UsersRepository } from '../users/users.repo
 /** Where the ingestor publishes non-durable messages (ADR 014). */
 const LIVE_PATTERN = 'live:*';
 /**
- * The durable streams: market events from the ingestor, analysis events from the analyzer, and the
- * users' alert messages from the jobs service and the API (Phase 8, ADR 020).
+ * The durable streams: market events from the ingestor, analysis events from the analyzer, the
+ * users' alert messages from the jobs service and the API (Phase 8, ADR 020), and their practice
+ * orders, fills and balances from the broker (Phase 14, ADR 021).
  */
 const MARKET_EVENTS = 'md:events';
-const STREAMS = [MARKET_EVENTS, ANALYSIS_EVENTS_STREAM, ALERTS_STREAM] as const;
+const STREAMS = [MARKET_EVENTS, ANALYSIS_EVENTS_STREAM, ALERTS_STREAM, PRACTICE_EVENTS_STREAM] as const;
 type DurableStream = (typeof STREAMS)[number];
+
+/**
+ * Channels implicit per user, so their names carry no id: each takes its user's entries from a
+ * stream of `type`, `user`, `data` and delivers them to a room of that user's sockets, for roles
+ * with the capability.
+ */
+const USER_CHANNELS = {
+  alerts: {
+    stream: ALERTS_STREAM,
+    capability: 'alerts.own',
+    types: ['alert.fired', 'notification.read'],
+  },
+  practice: {
+    stream: PRACTICE_EVENTS_STREAM,
+    capability: 'practice.own',
+    types: ['practice.order', 'practice.fill', 'practice.account'],
+  },
+} as const satisfies Record<
+  string,
+  { stream: DurableStream; capability: Capability; types: readonly string[] }
+>;
+export type UserChannel = keyof typeof USER_CHANNELS;
+export const isUserChannel = (ch: string): ch is UserChannel => Object.hasOwn(USER_CHANNELS, ch);
+const USER_CHANNEL_OF_STREAM = new Map<string, UserChannel>(
+  (Object.keys(USER_CHANNELS) as UserChannel[]).map((ch) => [USER_CHANNELS[ch].stream, ch]),
+);
+/** A user's sockets subscribed to one of their implicit channels. */
+export const userRoom = (ch: UserChannel, userId: string) => `_${ch}:${userId}`;
+
 /** The stream a durable channel's messages come from. */
 export const streamOf = (ch: string): DurableStream =>
-  ch === 'alerts'
-    ? ALERTS_STREAM
+  isUserChannel(ch)
+    ? USER_CHANNELS[ch].stream
     : ch.startsWith('indicators:') || ch.startsWith('smc:') || ch === 'setups' || ch.startsWith('setups:')
       ? ANALYSIS_EVENTS_STREAM
       : MARKET_EVENTS;
 /** Channels that carry every instrument: no instrument id to check. */
-const GLOBAL_CHANNELS = new Set(['system:health', 'setups', 'calendar', 'alerts']);
-/** A user's sockets subscribed to `alerts` (the channel is implicit per user, so its name carries no id). */
-export const alertsRoom = (userId: string) => `_alerts:${userId}`;
+const GLOBAL_CHANNELS = new Set<string>([
+  'system:health',
+  'setups',
+  'calendar',
+  ...Object.keys(USER_CHANNELS),
+]);
 const MARKET_TYPES = new Set(['gap.opened', 'gap.closed', 'feed.status', 'wall.appeared', 'wall.ended']);
 const MAX_CHANNELS = 200;
 const MAX_REPLAY = 10_000;
@@ -102,6 +139,7 @@ export class LiveGateway implements OnApplicationBootstrap, OnApplicationShutdow
     'md:events': '0-0',
     'an:events': '0-0',
     'alerts:events': '0-0',
+    'practice:events': '0-0',
   };
   private readonly lastLive = new Map<string, string>();
   private instrumentIds: { at: number; ids: Set<string> } | null = null;
@@ -124,6 +162,7 @@ export class LiveGateway implements OnApplicationBootstrap, OnApplicationShutdow
     private readonly setups: SetupsRepository,
     private readonly calendar: CalendarRepository,
     private readonly alerts: AlertsRepository,
+    private readonly practice: PracticeRepository,
   ) {}
 
   onApplicationBootstrap(): void {
@@ -228,7 +267,7 @@ export class LiveGateway implements OnApplicationBootstrap, OnApplicationShutdow
       const parsed = UnsubscribeRequestSchema.safeParse(payload);
       if (parsed.success)
         for (const ch of parsed.data.channels)
-          void socket.leave(ch === 'alerts' ? alertsRoom(socket.data.user.id) : ch);
+          void socket.leave(isUserChannel(ch) ? userRoom(ch, socket.data.user.id) : ch);
     });
   }
 
@@ -252,8 +291,8 @@ export class LiveGateway implements OnApplicationBootstrap, OnApplicationShutdow
         results[ch] = { mode: 'live', error: 'CHANNEL_UNKNOWN' };
         continue;
       }
-      const room = ch === 'alerts' ? alertsRoom(socket.data.user.id) : ch;
-      if (ch === 'alerts' && !can(socket.data.user.role, 'alerts.own')) {
+      const room = isUserChannel(ch) ? userRoom(ch, socket.data.user.id) : ch;
+      if (isUserChannel(ch) && !can(socket.data.user.role, USER_CHANNELS[ch].capability)) {
         results[ch] = { mode: 'live', error: 'FORBIDDEN' };
         continue;
       }
@@ -295,10 +334,10 @@ export class LiveGateway implements OnApplicationBootstrap, OnApplicationShutdow
       : [];
     if (replayable && entries.length < MAX_REPLAY) {
       for (const [seq, fields] of entries) {
-        if (ch === 'alerts') {
+        if (isUserChannel(ch)) {
           // Only the user's own messages.
-          const a = toAlertEnvelope(seq, fields);
-          if (a && a.user === socket.data.user.id) socket.emit('message', a.envelope);
+          const u = toUserEnvelope(ch, seq, fields);
+          if (u && u.user === socket.data.user.id) socket.emit('message', u.envelope);
           continue;
         }
         for (const envelope of toEnvelopes(seq, fields))
@@ -309,13 +348,25 @@ export class LiveGateway implements OnApplicationBootstrap, OnApplicationShutdow
     return {
       mode: 'snapshot',
       seq: latest,
-      snapshot:
-        ch === 'alerts' ? await this.alertsSnapshot(socket.data.user.id) : await this.durableSnapshot(ch),
+      snapshot: isUserChannel(ch)
+        ? await this.userSnapshot(ch, socket.data.user.id)
+        : await this.durableSnapshot(ch),
     };
   }
 
-  /** The unread count and the latest inbox items (the client replaces its own with them). */
-  private async alertsSnapshot(userId: string): Promise<AlertsSnapshot> {
+  /**
+   * A user channel's state, which the client puts in place of its own: for `alerts` the unread
+   * count and the latest inbox items; for `practice` the balances and the open orders (criterion
+   * 14.9: resynchronised after a disconnect).
+   */
+  private async userSnapshot(ch: UserChannel, userId: string): Promise<AlertsSnapshot | PracticeSnapshot> {
+    if (ch === 'practice') {
+      const [accounts, openOrders] = await Promise.all([
+        this.practice.accounts(userId),
+        this.practice.openOrders(userId),
+      ]);
+      return { accounts, openOrders };
+    }
     const [unread, latest] = await Promise.all([
       this.alerts.unreadCount(userId),
       this.alerts.latest(userId, 20),
@@ -382,7 +433,7 @@ export class LiveGateway implements OnApplicationBootstrap, OnApplicationShutdow
     this.nsp.to(ch).except(SLOW_ROOM).emit('message', JSON.parse(message));
   }
 
-  /** Tails `md:events` and `an:events` and delivers each entry on its durable channel. */
+  /** Tails the durable streams and delivers each entry on its channel (a user's, to their room). */
   private async readEvents(): Promise<void> {
     const reader = this.reader!;
     for (const stream of STREAMS) {
@@ -406,12 +457,13 @@ export class LiveGateway implements OnApplicationBootstrap, OnApplicationShutdow
         for (const [stream, entries] of res ?? [])
           for (const [seq, fields] of entries) {
             this.lastSeq[stream as DurableStream] = seq;
-            if (stream === ALERTS_STREAM) {
-              const a = toAlertEnvelope(seq, fields);
-              const room = a ? alertsRoom(a.user) : '';
-              if (a && this.nsp?.adapter.rooms.has(room)) {
+            const userChannel = USER_CHANNEL_OF_STREAM.get(stream);
+            if (userChannel) {
+              const u = toUserEnvelope(userChannel, seq, fields);
+              const room = u ? userRoom(userChannel, u.user) : '';
+              if (u && this.nsp?.adapter.rooms.has(room)) {
                 this.delivered++;
-                this.nsp.to(room).emit('message', a.envelope);
+                this.nsp.to(room).emit('message', u.envelope);
               }
               continue;
             }
@@ -534,17 +586,22 @@ export function toEnvelope(seq: string, fields: string[]): Envelope | null {
 }
 
 /**
- * An `alerts:events` entry (`type`, `user`, `data`) as the envelope of its user's `alerts` channel:
- * `alert.fired` or `notification.read` (ADR 020).
+ * An entry of a per-user stream (`type`, `user`, `data`) as the envelope of its user's channel:
+ * `alerts` (`alert.fired`, `notification.read`; ADR 020) or `practice` (`practice.order`,
+ * `practice.fill`, `practice.account`; ADR 021). Null for a type the channel does not carry.
  */
-export function toAlertEnvelope(seq: string, fields: string[]): { user: string; envelope: Envelope } | null {
+export function toUserEnvelope(
+  ch: UserChannel,
+  seq: string,
+  fields: string[],
+): { user: string; envelope: Envelope } | null {
   const f: Record<string, string> = {};
   for (let i = 0; i + 1 < fields.length; i += 2) f[fields[i]!] = fields[i + 1]!;
   const { type, user, data } = f;
-  if ((type !== 'alert.fired' && type !== 'notification.read') || !user || !data) return null;
+  if (!type || !(USER_CHANNELS[ch].types as readonly string[]).includes(type) || !user || !data) return null;
   const parsed = safeJson(data);
   if (parsed === null) return null;
-  return { user, envelope: { ch: 'alerts', seq, ts: Number(seq.split('-')[0]), type, data: parsed } };
+  return { user, envelope: { ch, seq, ts: Number(seq.split('-')[0]), type, data: parsed } };
 }
 
 /** Orders Redis stream ids ("ms-seq"). */

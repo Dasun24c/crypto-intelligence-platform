@@ -1,0 +1,43 @@
+{
+  "name": "@cip/broker",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "description": "Practice trading (Phase 14, ADR 021): takes up practice orders and fills them with the paper engine from the platform's own live trades and books. Holds no venue client: nothing here reaches an exchange.",
+  "scripts": {
+    "build": "swc src -d dist --strip-leading-paths --config-file ../../.swcrc --ignore \"**/*.test.ts\"",
+    "typecheck": "tsc -p tsconfig.json",
+    "test": "vitest run",
+    "dev": "node --env-file-if-exists=.env --watch --conditions=@cip/source --import @swc-node/register/esm-register src/main.ts",
+    "start": "node dist/main.js",
+    "cli": "node dist/cli.js",
+    "test:integration": "vitest run --config vitest.int.config.ts"
+  },
+  "dependencies": {
+    "@cip/contracts": "workspace:*",
+    "@cip/db": "workspace:*",
+    "@cip/domain": "workspace:*",
+    "@cip/observability": "workspace:*",
+    "@cip/paper-engine": "workspace:*",
+    "@opentelemetry/api": "catalog:",
+    "ioredis": "catalog:",
+    "kysely": "catalog:",
+    "pg": "catalog:",
+    "zod": "catalog:"
+  },
+  "devDependencies": {
+    "@cip/config": "workspace:*",
+    "@swc-node/register": "catalog:",
+    "@swc/cli": "catalog:",
+    "@swc/core": "catalog:",
+    "@testcontainers/postgresql": "catalog:",
+    "@types/node": "catalog:",
+    "@types/pg": "catalog:",
+    "@typescript/native": "catalog:",
+    "@vitest/coverage-v8": "catalog:",
+    "testcontainers": "catalog:",
+    "typescript": "catalog:",
+    "uuid": "catalog:",
+    "vitest": "catalog:"
+  }
+}
