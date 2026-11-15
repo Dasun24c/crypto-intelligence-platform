@@ -2,7 +2,7 @@
 
 | | |
 |---|---|
-| Status | **Built; awaiting your approval** |
+| Status | **Accepted 2026-11-12** (you asked to start Phase 7), with these items carried forward: the review of rulebook §14 notes I25–I37 (and I1–I24); recorded fixtures reviewed by a second person, now also for setups (6.1 is met with synthetic fixtures only); a 7-day run of purely live time (6.7); the 1m warm-up for ambiguous outcomes in old warm-up history, and whether MAE should stop at the deciding minute; and the Phase 2 and 3 items. Committed as 678d239, pushed, and opened as pull request #2 |
 | Date | 2026-11-11 |
 | Scope | [Implementation plan, Phase 6](../phase-0/08-implementation-plan.md#phase-6--patterns-checklist-and-outcomes) |
 | Evidence | This machine (Windows 11, Docker Desktop, Node.js 26.13.0); the local Compose stack streaming live public data from Binance and Coinbase; nine live runs (ruleset `indicators-1+smc-0.3.0`, profiles version 4), live from 13:46 UTC (PAXG-USD from 13:48); checks to 14:12 UTC |
@@ -289,6 +289,8 @@ Two smaller changes came out of the same checks:
 ## Tests and coverage
 
 1,687 automated tests, all passing: 1,303 unit, 379 integration and 5 end to end.
+
+> **Correction (Phase 7):** each package's integration run also repeats its unit tests, so these totals counted 51 unit tests twice. The right figures are 1,636 tests: 1,303 unit, 328 integration and 5 end to end. In the table, the second figure of each package is its integration run, unit tests included.
 
 - `pnpm verify` passes, before and after the evidence fix: formatting, lint, typecheck, dependency rules, the no-trading check, unit tests with coverage gates, the build and the artefact scan.
 - The integration suites of all six packages that have them pass with coverage, rerun after the evidence fix.

@@ -31,23 +31,34 @@ export interface StepInput {
   missing?: readonly Timeframe[];
 }
 
-/** A scheduled economic release, as checklist item 8 needs it (rulebook §7). */
+/**
+ * A scheduled economic release, as checklist item 8 needs it (rulebook §7). One version of it: a
+ * release that was rescheduled or cancelled has one version for each period the platform knew it
+ * that way (rulebook I38).
+ */
 export interface EconomicEventRef {
   id: string;
   /** Epoch ms. */
   scheduledAt: number;
   currency: string;
   impact: 'low' | 'medium' | 'high';
+  /** Epoch ms from which this version was known; absent: always. */
+  knownFrom?: number;
+  /** Epoch ms from which a later version (or a cancellation) replaced it; absent or null: still current. */
+  knownUntil?: number | null;
 }
 
 /**
  * What else is known at `time` (rulebook §1): the gold-market closure calendar and the economic
  * calendar. `economicEvents` absent or null means the calendar is unavailable: checklist item 8
- * then fails with `calendar_unavailable`.
+ * then fails with `calendar_unavailable`. Item 8 reads only the event versions known at the
+ * decision time, and counts the calendar as unavailable before `calendarAvailableFrom` (I38).
  */
 export interface StepContext {
   closures: readonly Closure[];
   economicEvents?: readonly EconomicEventRef[] | null;
+  /** Epoch ms from which the calendar is available (its first complete sync); absent: always. */
+  calendarAvailableFrom?: number;
 }
 
 export type Direction = 'bullish' | 'bearish';

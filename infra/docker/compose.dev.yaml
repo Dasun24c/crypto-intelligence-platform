@@ -97,6 +97,7 @@ services:
       DB_PASSWORD_SVC_INGESTOR_FILE: /secrets/db-password-svc_ingestor
       DB_PASSWORD_SVC_ANALYZER_FILE: /secrets/db-password-svc_analyzer
       DB_PASSWORD_SVC_JOBS_FILE: /secrets/db-password-svc_jobs
+      DB_PASSWORD_SVC_BROKER_FILE: /secrets/db-password-svc_broker
       DEV_SEED_PASSWORD: ${DEV_SEED_PASSWORD:-local-dev-password}
     volumes:
       - ../../.secrets:/secrets:ro
@@ -152,8 +153,24 @@ services:
     environment:
       <<: *service-env
       DATABASE_URL_FILE: /secrets/db-url-svc_jobs
+      # The economic calendar's FRED key: put it in .secrets/fred-api-key (empty: FRED is skipped).
+      FRED_API_KEY_FILE: /secrets/fred-api-key
     healthcheck:
       test: ['CMD', 'node', 'infra/healthcheck.mjs', 'http://127.0.0.1:9467/readyz']
+      interval: 5s
+      timeout: 4s
+      retries: 24
+
+  # Practice trading (Phase 14, ADR 021): fills simulated orders from the platform's own live data.
+  # It has no venue client and no exchange keys.
+  broker:
+    <<: *server
+    command: ['node', 'apps/broker/dist/main.js']
+    environment:
+      <<: *service-env
+      DATABASE_URL_FILE: /secrets/db-url-svc_broker
+    healthcheck:
+      test: ['CMD', 'node', 'infra/healthcheck.mjs', 'http://127.0.0.1:9468/readyz']
       interval: 5s
       timeout: 4s
       retries: 24
@@ -171,6 +188,10 @@ services:
       SITE_ADDRESS: ':8080'
     ports:
       - '127.0.0.1:${CIP_WEB_PORT:-8080}:8080'
+      # HTTPS for the desktop app's release builds, once scripts/dev-tls.mjs has written .secrets/tls.
+      - '127.0.0.1:${CIP_WEB_TLS_PORT:-8443}:8443'
+    volumes:
+      - ../../.secrets/tls:/secrets/tls:ro
     depends_on:
       api:
         condition: service_healthy

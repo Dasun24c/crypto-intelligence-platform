@@ -13,6 +13,7 @@ import {
   ticker,
 } from '../test/fixtures.js';
 import { type ApiRoutes, mockApi, problem, renderApp, signedIn } from '../test/harness.js';
+import { calendarStatus, economicEvent } from '../test/smc-fixtures.js';
 
 const MINUTE = 60_000;
 const HOUR = 60 * MINUTE;
@@ -107,6 +108,32 @@ describe('Command Center', () => {
     });
     expect(await within(btc).findByText('Feed down · trades: disconnected')).toBeTruthy();
     expect(within(btc).getByText('Last known price: the feed is down.')).toBeTruthy();
+  });
+
+  it("lists the next 48 hours of US events in the gold panel, with gold's blackout around high-impact ones", async () => {
+    const now = Date.now();
+    const cpi = economicEvent(1, { scheduledAt: now + 20 * MINUTE });
+    const gdp = economicEvent(2, {
+      title: 'GDP (Advance Estimate)',
+      impact: 'medium',
+      release: 'gdp',
+      scheduledAt: now + 30 * HOUR,
+    });
+    const { find } = api({
+      'GET /api/v1/calendar/events': [cpi, gdp],
+      'GET /api/v1/calendar/status': calendarStatus(),
+    });
+    const { session, user } = await signedIn();
+    renderApp('/', session, user);
+    const section = (await screen.findByRole('heading', { name: 'Upcoming US events' })).closest('section')!;
+    const cpiItem = await within(section).findByText('Consumer Price Index (CPI)');
+    // 20 minutes away: inside gold's 60-minute blackout already.
+    expect(cpiItem.parentElement!.textContent).toMatch(/Gold blackout .* \(now\)/);
+    expect(within(section).getByText('GDP (Advance Estimate)')).toBeTruthy();
+    expect(within(section).queryAllByText(/Gold blackout/)).toHaveLength(1);
+    const q = find('GET', '/api/v1/calendar/events')[0]!.url.searchParams;
+    expect(q.get('minImpact')).toBe('medium');
+    expect(Number(q.get('to')) - Number(q.get('from'))).toBe(48 * HOUR);
   });
 
   it('shows the gold market closed until it reopens, and the live cross-venue spread', async () => {

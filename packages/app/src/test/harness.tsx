@@ -87,6 +87,11 @@ export class FakeLiveServer {
    * messages are no longer in the stream. Without an entry the resubscribe goes on live.
    */
   readonly resyncSnapshots: Record<string, unknown> = {};
+  /**
+   * Durable channel → the messages a resubscribe (one with `since`) replays before its ack, as when
+   * they are still in the stream (mode `replayed`).
+   */
+  readonly resyncReplays: Record<string, { type: string; data: unknown }[]> = {};
   readonly sockets = fakeSockets();
   private seq = 2_000;
 
@@ -104,6 +109,14 @@ export class FakeLiveServer {
               seq: `${this.seq++}-0`,
               snapshot: this.resyncSnapshots[ch],
             };
+          else if (ch in this.resyncReplays) {
+            let seq = `${this.seq}-0`;
+            for (const m of this.resyncReplays[ch]!) {
+              seq = `${this.seq++}-0`;
+              socket.send({ ch, seq, ts: Date.now(), type: m.type, data: m.data });
+            }
+            ack.results[ch] = { mode: 'replayed', seq };
+          }
         return ack;
       }
       if (event === 'auth:renew') return { ok: true };
@@ -142,10 +155,13 @@ const platform: Platform = {
 };
 
 /** A signed-in session whose live connection talks to a FakeLiveServer. */
-export async function signedIn(role: Role = 'viewer', opts: { devTools?: boolean } = {}) {
+export async function signedIn(
+  role: Role = 'viewer',
+  opts: { devTools?: boolean; platform?: Partial<Platform> } = {},
+) {
   const server = new FakeLiveServer();
   const session = new Session(
-    { ...platform, devTools: opts.devTools ?? false },
+    { ...platform, devTools: opts.devTools ?? false, ...opts.platform },
     { createSocket: server.create },
   );
   const user: UserSummary = { id: 'user-1', email: `${role}@cip.test`, displayName: 'Test User', role };

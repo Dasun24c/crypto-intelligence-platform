@@ -25,8 +25,8 @@ ARG CIP_PUBLIC_DEV_TOOLS=false
 COPY . .
 RUN --mount=type=cache,id=pnpm-store,target=/pnpm/store --mount=type=cache,id=pnpm-cache,target=/root/.cache/pnpm \
     pnpm install --offline --frozen-lockfile --store-dir /pnpm/store \
-      --filter "./packages/*" --filter "./apps/{api,ingestor,analyzer,jobs,web}"
-RUN pnpm --filter "./packages/{contracts,observability,db,domain,exchange-adapters,market-data,indicators,smc-engine}" --filter "./apps/{api,ingestor,analyzer,jobs}" run build \
+      --filter "./packages/*" --filter "./apps/{api,ingestor,analyzer,jobs,broker,web}"
+RUN pnpm --filter "./packages/{contracts,observability,db,domain,exchange-adapters,market-data,indicators,smc-engine,alerts,paper-engine}" --filter "./apps/{api,ingestor,analyzer,jobs,broker}" run build \
  && CIP_PUBLIC_DEV_TOOLS=$CIP_PUBLIC_DEV_TOOLS pnpm --filter @cip/web run build
 
 # Production dependencies only, for the server packages. This stage starts clean: `pnpm fetch` fills
@@ -37,7 +37,7 @@ COPY --from=fetch /repo/pnpm-lock.yaml /tmp/fetched.lock
 COPY . .
 RUN --mount=type=cache,id=pnpm-store,target=/pnpm/store --mount=type=cache,id=pnpm-cache,target=/root/.cache/pnpm \
     pnpm install --offline --frozen-lockfile --prod --store-dir /pnpm/store \
-      --filter "@cip/api..." --filter "@cip/ingestor..." --filter "@cip/analyzer..." --filter "@cip/jobs..." --filter "@cip/db..." \
+      --filter "@cip/api..." --filter "@cip/ingestor..." --filter "@cip/analyzer..." --filter "@cip/jobs..." --filter "@cip/broker..." --filter "@cip/db..." \
  && find packages apps -mindepth 2 -maxdepth 2 -name src -type d -prune -exec rm -rf {} + \
  && rm -rf apps/web apps/desktop packages/app packages/ui packages/config
 
@@ -55,10 +55,13 @@ COPY --from=build --chown=node:node /repo/packages/exchange-adapters/dist ./pack
 COPY --from=build --chown=node:node /repo/packages/market-data/dist ./packages/market-data/dist
 COPY --from=build --chown=node:node /repo/packages/indicators/dist ./packages/indicators/dist
 COPY --from=build --chown=node:node /repo/packages/smc-engine/dist ./packages/smc-engine/dist
+COPY --from=build --chown=node:node /repo/packages/alerts/dist ./packages/alerts/dist
+COPY --from=build --chown=node:node /repo/packages/paper-engine/dist ./packages/paper-engine/dist
 COPY --from=build --chown=node:node /repo/apps/api/dist ./apps/api/dist
 COPY --from=build --chown=node:node /repo/apps/ingestor/dist ./apps/ingestor/dist
 COPY --from=build --chown=node:node /repo/apps/analyzer/dist ./apps/analyzer/dist
 COPY --from=build --chown=node:node /repo/apps/jobs/dist ./apps/jobs/dist
+COPY --from=build --chown=node:node /repo/apps/broker/dist ./apps/broker/dist
 COPY --chown=node:node infra/docker/dev-secrets.mjs ./infra/dev-secrets.mjs
 COPY --chown=node:node infra/docker/healthcheck.mjs ./infra/healthcheck.mjs
 USER node

@@ -53,10 +53,47 @@ module.exports = {
       },
     },
     {
+      name: 'alerts-stays-pure',
+      severity: 'error',
+      comment: 'alerts (rule evaluation, ADR 020) depends only on contracts and domain.',
+      from: { path: '^packages/alerts/src/', pathNot: '[.]test[.]ts$' },
+      to: {
+        pathNot: ['^packages/(alerts|contracts|domain)/', 'node_modules/(zod|big[.]js)/'],
+        dependencyTypesNot: ['core'],
+      },
+    },
+    {
+      name: 'only-the-api-and-broker-handle-practice-orders',
+      severity: 'error',
+      comment:
+        "TRD-05: only a person's request through the api places, changes or cancels a practice order; setups, alerts, the AI and jobs cannot (ADR 021).",
+      from: {
+        pathNot: ['^apps/api/src/practice/', '^apps/broker/', '^packages/contracts/', '[.]test[.]ts$'],
+      },
+      to: { path: '^packages/contracts/src/practice-commands[.]ts$' },
+    },
+    {
+      name: 'broker-has-no-venue-client',
+      severity: 'error',
+      comment: 'The broker never reaches an exchange (ADR 021, criterion 14.10).',
+      from: { path: '^apps/broker/' },
+      to: { path: '^packages/exchange-adapters/' },
+    },
+    {
+      name: 'paper-engine-stays-pure',
+      severity: 'error',
+      comment: 'paper-engine (practice trading, ADR 021) depends only on contracts and domain.',
+      from: { path: '^packages/paper-engine/src/', pathNot: '[.]test[.]ts$' },
+      to: {
+        pathNot: ['^packages/(paper-engine|contracts|domain)/', 'node_modules/(zod|big[.]js)/'],
+        dependencyTypesNot: ['core'],
+      },
+    },
+    {
       name: 'pure-packages-no-node-io',
       severity: 'error',
       from: {
-        path: '^packages/(domain|indicators|market-data|smc-engine|contracts)/src/',
+        path: '^packages/(domain|indicators|market-data|smc-engine|contracts|alerts|paper-engine)/src/',
         pathNot: '[.]test[.]ts$',
       },
       to: { dependencyTypes: ['core'] },
@@ -67,7 +104,7 @@ module.exports = {
       comment: 'app and ui may import only contracts and domain from the server side.',
       from: { path: '^packages/(app|ui)/' },
       to: {
-        path: '^(packages/(db|observability|exchange-adapters|market-data|indicators|smc-engine|ai)/|apps/)',
+        path: '^(packages/(db|observability|exchange-adapters|market-data|indicators|smc-engine|ai|alerts)/|apps/)',
       },
     },
     {

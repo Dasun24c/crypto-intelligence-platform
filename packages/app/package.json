@@ -17,11 +17,13 @@
   },
   "dependencies": {
     "@cip/contracts": "workspace:*",
+    "@cip/domain": "workspace:*",
     "@cip/ui": "workspace:*",
     "@fontsource-variable/inter": "catalog:",
     "@hookform/resolvers": "catalog:",
     "@tanstack/react-query": "catalog:",
     "@tanstack/react-router": "catalog:",
+    "lightweight-charts": "catalog:",
     "lucide-react": "catalog:",
     "react-hook-form": "catalog:",
     "socket.io-client": "catalog:",

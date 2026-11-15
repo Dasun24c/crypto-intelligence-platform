@@ -6,9 +6,10 @@ import { TF_MS, TIMEFRAMES, type Timeframe } from '@cip/domain';
  */
 /**
  * 0.2.0: Phase 5 adds the points of interest (rulebook §4). 0.3.0: Phase 6 adds the patterns, the
- * confluence checklist and outcomes (§5–§8).
+ * confluence checklist and outcomes (§5–§8). 0.3.1: Phase 7's economic calendar; checklist item 8
+ * reads the calendar as known at the decision time (I38).
  */
-export const RULESET_VERSION = '0.3.0';
+export const RULESET_VERSION = '0.3.1';
 
 /** The four patterns of rulebook §6, in the order the engine evaluates them. */
 export const PATTERNS = [

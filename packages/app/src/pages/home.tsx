@@ -11,6 +11,8 @@ import {
 import { Alert, Badge, Card, CardContent, cn, Spinner, StatusBadge } from '@cip/ui';
 import { useGoldClosures, useInstruments } from '../api/queries.js';
 import { FeedBadge, type FeedView, VenueBadge, VenueStatusBadge } from '../components/market-badges.js';
+import { PaxgDisclaimer } from '../components/paxg-disclaimer.js';
+import { useCalendarEvents, useCalendarStatus } from '../live/smc-hooks.js';
 import { type LiveValue, useLatest, useLiveConnection } from '../live/hooks.js';
 import { type MarketValue, useFeedStatuses, useTicker } from '../live/market-hooks.js';
 import { formatBps, formatDecimal, formatPct, formatUsd, spreadBps, stepDecimals } from '../lib/decimal.js';
@@ -276,6 +278,73 @@ function SpreadSummary({
   );
 }
 
+/** The next 48 hours of US releases (medium and high impact), and gold's blackout around each high one. */
+function UpcomingEvents({ now }: { now: number }) {
+  const timeZone = useDisplayTimeZone();
+  // A stable window, so the query does not change every second.
+  const from = Math.floor(now / 600_000) * 600_000;
+  const events = useCalendarEvents({ from, to: from + 48 * 3_600_000, minImpact: 'medium' });
+  const status = useCalendarStatus();
+  const gold = status.data?.blackouts.find((b) => b.profile === 'gold') ?? null;
+  const headingId = useId();
+  let body: ReactNode;
+  if (events.isPending) body = <Spinner label="Loading the economic calendar" />;
+  else if (events.isError)
+    body = (
+      <p className="text-sm text-warn">The economic calendar could not be loaded: {events.error.message}</p>
+    );
+  else if (events.data.length === 0)
+    body = (
+      <p className="text-sm text-fg-muted">No medium- or high-impact US release in the next 48 hours.</p>
+    );
+  else
+    body = (
+      <ul className="space-y-2">
+        {events.data.slice(0, 6).map((e) => {
+          const blackout =
+            gold && e.impact === 'high' && gold.currencies.includes(e.currency)
+              ? { from: e.scheduledAt - gold.beforeMin * 60_000, to: e.scheduledAt + gold.afterMin * 60_000 }
+              : null;
+          const active = blackout !== null && now >= blackout.from && now <= blackout.to;
+          return (
+            <li key={e.id} className="flex items-baseline justify-between gap-3 text-sm" data-event-id={e.id}>
+              <span>
+                {e.title}
+                {blackout ? (
+                  <span className={cn('block text-xs', active ? 'font-medium text-warn' : 'text-fg-muted')}>
+                    Gold blackout {formatInstant(blackout.from, timeZone)} to{' '}
+                    {formatInstant(blackout.to, timeZone)}
+                    {active ? ' (now)' : ''}
+                  </span>
+                ) : null}
+              </span>
+              <span className="shrink-0 text-right font-mono text-xs tabular-nums">
+                {formatInstant(e.scheduledAt, timeZone)}
+                <Badge tone={e.impact === 'high' ? 'crit' : 'warn'} className="ml-2">
+                  {e.impact}
+                </Badge>
+              </span>
+            </li>
+          );
+        })}
+      </ul>
+    );
+  return (
+    <section aria-labelledby={headingId} className="space-y-2 md:col-span-2">
+      <h3 id={headingId} className="text-sm font-medium">
+        Upcoming US events
+      </h3>
+      {status.data && !status.data.available ? (
+        <p className="text-xs text-warn">{status.data.detail}</p>
+      ) : null}
+      {body}
+      <Link to="/calendar" className="text-xs text-accent underline">
+        Economic Calendar
+      </Link>
+    </section>
+  );
+}
+
 /** The gold panel (requirements §6): PAXG on both venues, their spread, and gold-market hours. */
 function GoldPanel({ instruments }: { instruments: readonly Instrument[] }) {
   const primary = instruments.find((i) => i.isPrimaryVenue) ?? instruments[0] ?? null;
@@ -291,11 +360,8 @@ function GoldPanel({ instruments }: { instruments: readonly Instrument[] }) {
       <CardContent className="grid grid-cols-1 gap-6 md:grid-cols-2">
         <GoldMarketHours now={now} />
         <SpreadSummary value={spread} now={now} instruments={byId} />
-        <p className="text-xs text-fg-muted md:col-span-2">
-          PAXG is a token backed by physical gold, not spot gold: its price can differ from spot gold and from
-          a broker&apos;s XAUUSD quotes, so PAXG levels cannot be copied one-to-one onto an XAUUSD chart.
-          Upcoming US economic events will appear here once the economic calendar is available (Phase 7).
-        </p>
+        <UpcomingEvents now={now} />
+        <PaxgDisclaimer className="md:col-span-2" />
       </CardContent>
     </Card>
   );

@@ -7,3 +7,4 @@ export * from './heartbeat.js';
 export * from './instance.js';
 export * from './service.js';
 export * from './nest-logger.js';
+export * from './lease.js';

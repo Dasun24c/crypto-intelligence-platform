@@ -1,4 +1,7 @@
-import type { Platform } from './platform.js';
+import type { NotificationPermission, Platform } from './platform.js';
+
+const permission = (): NotificationPermission =>
+  typeof Notification === 'undefined' ? 'unsupported' : Notification.permission;
 
 /** The browser host: same-origin API, refresh token in an httpOnly cookie, Notification API. */
 export function createWebPlatform(appVersion: string, opts: { devTools?: boolean } = {}): Platform {
@@ -8,10 +11,15 @@ export function createWebPlatform(appVersion: string, opts: { devTools?: boolean
     devTools: opts.devTools ?? false,
     getServerUrl: () => Promise.resolve(''),
     secureStore: null,
-    async notify({ title, body }) {
-      if (typeof Notification === 'undefined') return;
-      if (Notification.permission === 'default') await Notification.requestPermission();
-      if (Notification.permission === 'granted') new Notification(title, { body });
+    notify({ title, body }) {
+      // Permission is asked for from a click in the Alert Center (browsers ignore it otherwise).
+      if (permission() === 'granted') new Notification(title, { body });
+      return Promise.resolve();
+    },
+    notificationPermission: () => Promise.resolve(permission()),
+    async requestNotificationPermission() {
+      if (permission() === 'default') await Notification.requestPermission();
+      return permission();
     },
     openExternal(url) {
       if (url.startsWith('https://')) window.open(url, '_blank', 'noopener,noreferrer');

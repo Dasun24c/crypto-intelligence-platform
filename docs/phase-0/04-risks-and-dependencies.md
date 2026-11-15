@@ -2,7 +2,7 @@
 
 | | |
 |---|---|
-| Status | Approved 2026-11-10 (Phase 0 sign-off, recommended defaults) |
+| Status | Approved 2026-11-10 (Phase 0 sign-off, recommended defaults). Amended 2026-11-13: trading risks R31–R37 and the test-network dependencies ([proposal 001](../proposals/001-trading.md)). |
 | Date | 2026-11-09 |
 | Review | At the end of every phase, as part of its acceptance report |
 
@@ -30,7 +30,7 @@ Likelihood (L) and impact (I) are rated High, Medium or Low.
 | R09 | Parameters overfit to recent history | M | M | Versioned, immutable profiles; no automatic tuning; statistics per version; review on periods not used for calibration | 6, 12 |
 | R10 | Many false positives in ranging or thin markets (PAXG weekends) | H | M | Mandatory checklist items; quality flags; no confirmations during gold-market closures; thin-book sweeps don't count | 4–6 |
 | R11 | Computation cost grows with instruments × timeframes | L | M | Incremental engine; benchmarks with a p95 budget; analyzer partitioning by instrument | 4, 13 |
-| R12 | Users treat setups or AI output as trading advice | M | H | "Educational analysis — not financial advice" on every setup; hypothetical levels labelled as such; no execution features; AI policy lint; legal review before access widens beyond the organisation | 6–9 |
+| R12 | Users treat setups or AI output as trading advice | M | H | "Educational analysis — not financial advice" on every setup; hypothetical levels labelled as such; no real-money execution; practice trading labelled as simulated; nothing trades automatically; AI policy lint; legal review before access widens beyond the organisation | 6–9, 14 |
 | R13 | PAXG-specific issues: premium or discount to spot gold, USDT de-pegging, delisting, weekend behaviour | M | M | USDT-USD conversion; cross-venue spread monitoring and alerts; delisting handling; gold profile; spot-gold feed available as a later option | 2, 6 |
 
 ### AI
@@ -55,10 +55,32 @@ Likelihood (L) and impact (I) are rated High, Medium or Low.
 | R24 | TimescaleDB licence (no database-as-a-service) and renamed columnstore API | L | M | Self-hosted use only; confirm function names in the first migration; use the Community image | 1 |
 | R25 | Toolchain freshness: Node 26 LTS is two weeks old; TypeScript 7 + NestJS decorators unproven; Socket.IO Redis packages last released 2023–24 | M | M | Phase 1 spikes with fallbacks: Node 24, TypeScript 6, alternative adapter | 1 |
 | R26 | Security: stolen credentials, token leakage, XSS in the desktop WebView, supply-chain compromise | M | H | Controls in architecture §14; ASVS Level 2 review; SBOM and image scanning | 1, 13 |
-| R27 | Scope and schedule: 13 gated phases | H | M | Relative sizing; risky items tackled early as spikes; acceptance reports keep scope visible | All |
+| R27 | Scope and schedule: 14 gated phases, plus Phase 15 if approved | H | M | Relative sizing; risky items tackled early as spikes; acceptance reports keep scope visible | All |
 | R28 | Data growth (trades, book metrics) | M | L | Retention and columnstore policies; per-instrument raw-trade storage flag; capacity monitoring | 2 |
 | R29 | A single VM is a single point of failure | M | M | Fits the 99.5% target; backups and restore drills; documented rebuild; scaling path | 13 |
 | R30 | Labelling SMC fixtures by hand takes real analyst time | H | M | Labelling page in Phase 4; synthetic fixtures for edge cases; two-reviewer rule only for recorded fixtures | 4–6 |
+
+### Trading (proposal 001, 2026-11-13)
+
+| ID | Risk | L | I | Mitigation | Phase |
+|---|---|---|---|---|---|
+| R31 | Practice results are taken as proof that a setup or a strategy works | M | H | Banners; "simulated" on every result; no leaderboards or performance claims; setup statistics stay "historical observations" (Phase 12) | 14 |
+| R32 | Simulated fills are better than real fills would be: no market impact, no queue, thin PAXG books | H | M | Limits fill only on trades through the price; partial fills capped by the traded quantity; slippage from the book; a "thin book" flag; the limits stated in the app | 14 |
+| R33 | Order screens next to the analysis turn the platform into a signal service | M | H | A person places every manual order; automatic trading only under a user's own rules, on practice balances (revision 5); the AI kept out of orders; a dependency rule (14.6) | 14 onward |
+| R34 | A test-network key leaks, or some code path reaches a production exchange | L | H | Keys created and kept on the server, encrypted; host allow-list; the narrowed CI check; one isolated broker service | 15 |
+| R35 | The platform's order state drifts from the venue's (lost acknowledgements, reconnects) | M | M | Idempotent client order ids; user-data stream plus REST reconciliation; chaos tests | 15 |
+| R36 | Test-network resets, about monthly and without notice, wipe orders and balances | H | L | Detect resets, mark the affected orders, tell the user | 15 |
+| R37 | Real money: financial loss from a bug, and regulatory exposure | — | H | Not in the initial release; the entry conditions in proposal 001 §6 | After the initial release |
+
+### Automatic practice trading (proposal 002, 2026-11-15)
+
+| ID | Risk | L | I | Mitigation | Phase |
+|---|---|---|---|---|---|
+| R38 | Automatic practice results are taken as proof that the rules work | H | H | "Simulated" on every result; the number of trades and the period shown with every figure; no performance claims; proposal 002 §3's caution in the app | 16 |
+| R39 | Rules trade too often, or lose quickly | M | M | Off by default; limits on open trades, orders per day and daily loss; the stop button | 16 |
+| R40 | Pressure to point the automatic trader at real money | M | H | Real money stays out; it would need its own proposal and proposal 001's stage C conditions | 16 onward |
+| R41 | A decision bug: the wrong pair, size or level | L | M | A pure, deterministic decider; property tests; replays; the decision log and audit | 16 |
+| R42 | A new analysis ruleset changes which setups qualify | M | L | The ruleset and rules versions recorded with every decision | 16 |
 
 ## 2. Third-party dependency register
 
@@ -82,6 +104,8 @@ Likelihood (L) and impact (I) are rated High, Medium or Low.
 | GitHub (Actions, Container Registry) | CI/CD and images | Organisation account | Depends on plan | GitHub terms | Runner minutes | GitLab CI | Assumed (D7) |
 | Hosting provider | Production and staging VMs | Account | Quote needed | — | Must be a Binance-accessible region | Another provider | Pending (D2) |
 | Let's Encrypt (through Caddy) | TLS certificates | Automatic | Free | — | Issuance rate limits | Commercial certificate | Standard |
+| Binance Spot Test Network | Test-network orders (Phase 15, if approved) | API key created on the test network | Free | Test-network terms (to be read before Phase 15) | Reset about monthly, without notice; prices independent of the live exchange | Binance Demo Mode (needs a real Binance account) | Verified 2026-11-13: BTCUSDT, ETHUSDT, SOLUSDT and PAXGUSDT listed as trading |
+| Coinbase Advanced Trade sandbox | Request and response format checks (Phase 15, if approved) | Public, no key | Free | Coinbase terms | Static, pre-defined responses; no matching engine | — | Verified 2026-11-13 (documentation) |
 
 ## 3. Watch list
 
@@ -91,3 +115,4 @@ Likelihood (L) and impact (I) are rated High, Medium or Low.
 - Tauri 2.x releases (stay off the v3 alpha until it's stable).
 - TimescaleDB release notes: API renames.
 - BullMQ release notes: Valkey support.
+- Binance Spot Test Network changelog: resets and changes (Phase 15, if approved).

@@ -57,8 +57,21 @@ export interface Case {
   /** More timeframes, each starting at `start` unless given its own. */
   more?: (Series & { start?: number })[];
   closures?: { from: number; to: number; reason: 'weekend' | 'daily_break' | 'holiday' }[];
-  /** Economic calendar (checklist item 8); null is an unavailable calendar. Default: none scheduled. */
-  economicEvents?: { id: string; at: number; currency: string; impact: 'low' | 'medium' | 'high' }[] | null;
+  /**
+   * Economic calendar (checklist item 8); null is an unavailable calendar. Default: none scheduled.
+   * A version may say when it was known, and the calendar when it became available (rulebook I38).
+   */
+  economicEvents?:
+    | {
+        id: string;
+        at: number;
+        currency: string;
+        impact: 'low' | 'medium' | 'high';
+        knownFrom?: number;
+        knownUntil?: number | null;
+      }[]
+    | null;
+  calendarAvailableFrom?: number;
   expected: Exp[];
   notExpected?: Exp[];
   /** Event filters every matching event of which must be among `expected`. */

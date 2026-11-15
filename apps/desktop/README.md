@@ -10,6 +10,7 @@ browser cannot do lives here.
 | `src/platform.ts` | The `Platform` implementation: server address, OS keychain, notifications, external links, sleep/wake |
 | `vite.config.ts` | Frontend build for the WebView (dev server on port 1420, output in `dist/`) |
 | `src-tauri/src/secure_store.rs` | `secure_store_get`, `secure_store_set`, `secure_store_delete`: the refresh token in the OS keychain |
+| `src-tauri/src/settings.rs` | `settings_get_server_url`, `settings_set_server_url`: the server address in `settings.json`, written atomically |
 | `src-tauri/src/tray.rs` | Tray icon with Show and Quit, and `set_tray_status`, which puts the connection status in its tooltip |
 | `src-tauri/tauri.conf.json` | Window, CSP and bundle settings |
 | `src-tauri/capabilities/default.json` | Everything the WebView is allowed to call |
@@ -62,7 +63,9 @@ frontend first. `Cargo.lock` is committed because this is an application.
 
 The app asks for the server address, then for a login. Addresses must use `https://`; development
 builds (`tauri dev`) also accept `http://localhost` and `http://127.0.0.1` for a local stack, release
-builds never do. Only the origin is kept, so an address with a path, a query or credentials is refused.
+builds never do. A release build reaches the local stack on `https://localhost:8443` once its
+certificate is set up (the root README, "HTTPS for the desktop app"). Only the origin is kept, so an
+address with a path, a query or credentials is refused.
 
 In `tauri dev` the page comes from Vite, so its origin is `http://localhost:1420` rather than a Tauri
 origin. A local API must allow it: `CORS_ORIGINS=http://localhost:5173,http://localhost:1420`.
@@ -70,7 +73,7 @@ origin. A local API must allow it: `CORS_ORIGINS=http://localhost:5173,http://lo
 | Data | Where | Notes |
 |---|---|---|
 | Refresh token | OS keychain: Keychain Services (macOS), Credential Manager (Windows), Secret Service (Linux). Service `org.cip.desktop` (the bundle identifier), account `refresh_token` | The only secret the client keeps (ADR 009). The Rust commands accept no other key and never log values |
-| Server address | WebView local storage, key `cip.serverUrl` | Not a secret |
+| Server address | `settings.json` in the app's config folder (`%APPDATA%\org.cip.desktop` on Windows, `~/Library/Application Support/org.cip.desktop` on macOS), written atomically by the Rust side | Not a secret. Versions up to Phase 8 kept it in WebView local storage (`cip.serverUrl`), which a forced stop could lose. The app copies such a value to the file on its first start, and still writes the old key too, so an older installer put back keeps working |
 | Access token | Memory only | Gone when the app quits; the refresh token gets a new one |
 | Window size and position | `.window-state.json` in the app's config folder | Written by the window-state plugin |
 

@@ -1,0 +1,31 @@
+{
+  "name": "@cip/alerts",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "description": "Alert rule evaluation (ADR 020): which source events match a rule, their de-duplication keys, cooldowns, quiet hours and messages, and the dry run over stored events. Shared by the analyzer (live) and the api (rule test). Pure: no I/O, no framework.",
+  "exports": {
+    ".": {
+      "@cip/source": "./src/index.ts",
+      "default": "./dist/index.js"
+    }
+  },
+  "scripts": {
+    "build": "swc src -d dist --strip-leading-paths --config-file ../../.swcrc --ignore \"**/*.test.ts\"",
+    "typecheck": "tsc -p tsconfig.json",
+    "test": "vitest run"
+  },
+  "dependencies": {
+    "@cip/contracts": "workspace:*",
+    "@cip/domain": "workspace:*"
+  },
+  "devDependencies": {
+    "@cip/config": "workspace:*",
+    "@swc/cli": "catalog:",
+    "@swc/core": "catalog:",
+    "@types/node": "catalog:",
+    "@typescript/native": "catalog:",
+    "@vitest/coverage-v8": "catalog:",
+    "vitest": "catalog:"
+  }
+}

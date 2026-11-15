@@ -2,7 +2,7 @@ import { readFileSync } from 'node:fs';
 import { metrics } from '@opentelemetry/api';
 import { Redis } from 'ioredis';
 import { afterAll, beforeAll, describe, expect, inject, it } from 'vitest';
-import type { BookSnapshot, Envelope, FeedStatus, Ticker } from '@cip/contracts';
+import { type BookSnapshot, type Envelope, type FeedStatus, type Ticker, tradesStream } from '@cip/contracts';
 import { createDb, seedReplayInstruments } from '@cip/db';
 import { parseRecording } from '@cip/exchange-adapters';
 import { createLogger } from '@cip/observability';
@@ -84,6 +84,38 @@ describe('the ingestor on the replay venue', () => {
         { timeout: 10_000 },
       )
       .toBeGreaterThan(10);
+
+    // Practice trading (ADR 021): each trade of a monitored pair also goes to the broker's stream.
+    const entries = await redis.xrange(tradesStream(REPLAY_BTC), '-', '+');
+    expect(entries.length).toBeGreaterThan(10);
+    const fields = entries.at(-1)![1];
+    const trade = Object.fromEntries(
+      fields.flatMap((v, i) => (i % 2 ? [] : [[v, fields[i + 1]!]])),
+    ) as Record<string, string>;
+    expect(Object.keys(trade)).toEqual(['id', 'ts', 'price', 'qty', 'side']);
+    expect(['buy', 'sell']).toContain(trade['side']);
+    await expect
+      .poll(
+        async () =>
+          db
+            .selectFrom('market.trades')
+            .select(['price', 'qty'])
+            .where('instrument_id', '=', REPLAY_BTC)
+            .where('trade_id', '=', trade['id']!)
+            .executeTakeFirst(),
+        { timeout: 5_000 },
+      )
+      .toBeDefined();
+    const stored = await db
+      .selectFrom('market.trades')
+      .select(['price', 'qty'])
+      .where('instrument_id', '=', REPLAY_BTC)
+      .where('trade_id', '=', trade['id']!)
+      .executeTakeFirstOrThrow();
+    expect([Number(stored.price), Number(stored.qty)]).toEqual([
+      Number(trade['price']),
+      Number(trade['qty']),
+    ]);
 
     await expect
       .poll(() => received.some((m) => m.ch === `book:${REPLAY_BTC}`), { timeout: 5_000 })

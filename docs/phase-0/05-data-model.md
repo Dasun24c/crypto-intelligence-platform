@@ -2,7 +2,7 @@
 
 | | |
 |---|---|
-| Status | Approved 2026-11-10 (Phase 0 sign-off, recommended defaults) |
+| Status | Approved 2026-11-10 (Phase 0 sign-off, recommended defaults). Amended 2026-11-13: the `trading` schema (§10, practice trading). |
 | Date | 2026-11-09 |
 | Database | PostgreSQL 18 + TimescaleDB 2.31 ([feasibility §7](02-feasibility.md#7-stack-versions-and-licences)) |
 
@@ -16,7 +16,7 @@ This is the logical schema. Phase 1 turns it into SQL migrations. TimescaleDB re
 - **Enumerations**: `text` with a `CHECK` constraint, which is easier to extend than PostgreSQL enums.
 - **Detections belong to a run.** Every SMC and indicator row has a `run_id`. A run fixes the instrument, profile version, ruleset version and parameter hash, and is either `live` or `replay`. Replays never mix with live data.
 - **Event log + projections.** `analysis.detection_events` is the append-only record of everything the engine emitted, and the source for determinism digests. Tables such as `liquidity_levels`, `poi_zones` and `setups` are queryable projections of the current state. Both are written in the same transaction.
-- **Schemas**: `app` (users, auth, audit, settings), `market`, `analysis`, `ai`, `alerts`, `ops`.
+- **Schemas**: `app` (users, auth, audit, settings), `market`, `analysis`, `ai`, `alerts`, `ops`, and from Phase 14 `trading` (practice trading, §10).
 
 ## 2. Overview
 
@@ -38,6 +38,10 @@ erDiagram
   users ||--o{ rules : owns
   rules ||--o{ events : fires
   events ||--o{ notifications : delivers
+  users ||--o{ accounts : "practice (Phase 14)"
+  accounts ||--o{ orders : places
+  orders ||--o{ fills : "filled by"
+  accounts ||--o{ ledger : balances
 ```
 
 ## 3. `app`: users, authentication, audit, settings
@@ -310,6 +314,8 @@ CREATE TABLE market.economic_events (
 );
 CREATE INDEX ON market.economic_events (scheduled_at);
 ```
+
+> **As implemented in Phase 7** (migration 0010, ADR 019): `economic_events` adds `release`, `status` (`scheduled`, `cancelled`, `superseded`), `revision`, `created_by` and `created_at`; `source` is `fred`, `bea` or `manual` (FOMC statements are manual). Rows are never deleted. Triggers append every version to `market.economic_event_revisions` (`event_id`, `revision`, `recorded_at`, and the fields item 8 and the calendar show), which nothing else can write; the engine reads the calendar as known at each decision from it (rulebook I38). `market.calendar_syncs` records each sync attempt per source (`running`, `ok`, `failed`, `skipped`, with counts and the error). `svc_api` and `svc_jobs` may insert and update events; every service reads all three tables.
 
 ## 5. `analysis`: runs, indicators and SMC detections
 
@@ -647,6 +653,16 @@ CREATE TABLE alerts.notifications (
 );
 CREATE INDEX ON alerts.notifications (user_id, read_at, created_at DESC);
 
+```
+
+> **As implemented in Phase 8** (migration 0011, ADR 020):
+>
+> - **Rules.** `alerts.rules` adds `deleted_at`: removing a rule keeps its row, so its alerts stay in the inbox. Its checks keep `cooldown_sec` between 0 and 86 400 and `in_app` in `channels`.
+> - **Events.** `alerts.events` adds `created_at`.
+> - **Notifications.** `alerts.notifications` adds `UNIQUE (event_id, user_id, channel)`, so delivery can be retried. The `in_app` row is the inbox item; `desktop` and `web` rows are `sent` once pushed on the user's channel.
+> - **Grants.** `svc_api` inserts and updates rules and updates only `read_at`; `svc_analyzer` inserts events; `svc_jobs` inserts and updates notifications. All three read every table.
+
+```sql
 CREATE TABLE ops.system_events (                        -- hypertable on ts
   ts         timestamptz NOT NULL,
   component  text NOT NULL,
@@ -731,11 +747,96 @@ Segment-by for the columnstore is `instrument_id` (plus `timeframe` for candles 
 | Role | Used by | Rights |
 |---|---|---|
 | `owner` | Migrations only | DDL, owns all objects |
-| `svc_api` | api | Read everything except secrets. Write `app.users`, `app.refresh_tokens`, `app.user_preferences`, `app.settings`, `alerts.rules`, `alerts.notifications.read_at`, and the admin-managed parts of `market` (`instruments`, `instrument_profiles`, manual `underlying_market_closures`, manual `economic_events`). Insert into `app.audit_log`. |
+| `svc_api` | api | Read everything except secrets. Write `app.users`, `app.refresh_tokens`, `app.user_preferences`, `app.settings`, `alerts.rules`, `alerts.notifications.read_at`, and the admin-managed parts of `market` (`instruments`, `instrument_profiles`, manual `underlying_market_closures`, manual `economic_events`), and from Phase 14 practice orders, balance reserves and account resets in `trading`. Insert into `app.audit_log`. |
 | `svc_ingestor` | ingestor | Read reference tables. Write market time series, `large_trades`, `orderbook_walls`, `data_gaps` and `feed_events`. |
 | `svc_analyzer` | analyzer | Read `market.*`. Write `analysis.*` and `alerts.events`. Insert into `app.audit_log`. |
 | `svc_jobs` | jobs | Write `ai.*`, `alerts.notifications`, `market.economic_events`, generated `underlying_market_closures`, `market.data_gaps`, backfilled candles, and `market.instruments.venue_status`. Write replay runs in `analysis.*`. Insert into `app.audit_log`. Delete expired `app.refresh_tokens` (maintenance, Phase 1). |
+| `svc_broker` | broker (Phase 14) | Read `market.instruments` and `trading.*`. Insert `trading.fills` and `trading.ledger`; update `trading.orders` status. Insert into `app.audit_log`. |
 
 No service role has UPDATE or DELETE on `app.audit_log`.
 
 Phase 1 implementation: migrations run as the owner role (`cip_owner`); migration `0004` creates the four service roles as `NOLOGIN`, and the migration CLI enables login and sets each role's password from its secret. A role whose password is not configured cannot connect.
+
+## 10. `trading`: practice trading (Phase 14)
+
+Planned with [proposal 001](../proposals/001-trading.md), approved 2026-11-13. This is the logical schema; the Phase 14 migration may refine it, and ADR 021 records any change. Balances are never stored on their own: they are sums of ledger entries, so they can always be checked against fills and fees.
+
+```sql
+CREATE TABLE trading.accounts (                          -- one per user and venue
+  id                uuid PRIMARY KEY,
+  user_id           uuid NOT NULL REFERENCES app.users(id),
+  venue             text NOT NULL,
+  quote_asset       text NOT NULL,                       -- USDT (Binance), USD (Coinbase)
+  starting_balance  numeric NOT NULL,
+  reset_epoch       int NOT NULL DEFAULT 0,              -- raised by each reset
+  created_at        timestamptz NOT NULL DEFAULT now(),
+  UNIQUE (user_id, venue)
+);
+
+CREATE TABLE trading.orders (
+  id               uuid PRIMARY KEY,
+  account_id       uuid NOT NULL REFERENCES trading.accounts(id),
+  instrument_id    uuid NOT NULL REFERENCES market.instruments(id),
+  client_order_id  text NOT NULL,                        -- the client's idempotency key
+  side             text NOT NULL CHECK (side IN ('buy','sell')),
+  type             text NOT NULL CHECK (type IN ('market','limit','stop','target')),
+  quantity         numeric NOT NULL,
+  limit_price      numeric,
+  stop_price       numeric,
+  parent_order_id  uuid REFERENCES trading.orders(id),   -- a stop or target attached to a buy
+  oco_group        uuid,                                 -- a stop and target that cancel each other
+  status           text NOT NULL CHECK (status IN ('open','partially_filled','filled','cancelled','refused')),
+  refusal_reason   text,
+  source           text NOT NULL CHECK (source IN ('manual','setup')),
+  setup_id         uuid,                                 -- when "Practise this setup" filled in the ticket
+  reset_epoch      int NOT NULL,
+  created_at       timestamptz NOT NULL DEFAULT now(),
+  updated_at       timestamptz NOT NULL DEFAULT now(),
+  UNIQUE (account_id, client_order_id)
+);
+
+CREATE TABLE trading.fills (
+  id         uuid PRIMARY KEY,
+  order_id   uuid NOT NULL REFERENCES trading.orders(id),
+  price      numeric NOT NULL,
+  quantity   numeric NOT NULL,
+  fee        numeric NOT NULL,
+  fee_asset  text NOT NULL,
+  liquidity  text NOT NULL CHECK (liquidity IN ('maker','taker')),
+  basis      jsonb NOT NULL,                             -- the trades or book snapshot the fill was based on
+  flags      text[] NOT NULL DEFAULT '{}',               -- thin_book, underlying_closed
+  filled_at  timestamptz NOT NULL
+);
+
+CREATE TABLE trading.ledger (
+  id           uuid PRIMARY KEY,
+  account_id   uuid NOT NULL REFERENCES trading.accounts(id),
+  asset        text NOT NULL,
+  amount       numeric NOT NULL,                         -- signed
+  reason       text NOT NULL CHECK (reason IN ('start','reserve','release','fill','fee','reset')),
+  ref_id       uuid,                                     -- the order or fill
+  reset_epoch  int NOT NULL,
+  created_at   timestamptz NOT NULL DEFAULT now()
+);
+```
+
+- **Grants**: `svc_api` inserts orders and their `reserve` and `release` entries, cancels its users' open orders, and resets accounts. `svc_broker` inserts fills and their ledger entries, and updates order status. Both read `trading.*`; no other service role can.
+- **History**: nothing is deleted. A reset raises `reset_epoch`; rows from earlier epochs stay visible, marked with the reset.
+
+> **As implemented in Phase 14** (migration 0012, [ADR 021](../adr/021-practice-trading-engine-and-broker.md)):
+>
+> - **Accounts**: `venue_id` references `market.venues`; `starting_balances` is a `jsonb` map of asset to amount (the replay venue starts with both USDT and USD), so there is no `quote_asset` column. The api opens a user's three accounts (Binance, Coinbase, replay) on first use, each with its `start` ledger entries.
+> - **Orders**: `parent_id` (not `parent_order_id`). Statuses add `new` (stored by the api, not yet taken up by the broker) and `pending` (a stop or target waiting for its buy). The broker keeps `filled_quantity`, `filled_value` (for the average price), `reserved`, `seq` (arrival order), `accepted_after` (the `md:trades` position when it took the order up, so earlier trades never fill it) and `fill_count` (for the deterministic fill ids). `underlying_closed` marks a PAXG order placed while gold was closed. A check keeps `refusal_reason` set exactly when the order is refused; another, `parent_id` set exactly for stops and targets.
+> - **Fills** carry `account_id`, `instrument_id`, `side` and `reset_epoch` too. Their ids are name-based UUIDs of the order and the fill's number, so a replay makes the same ids.
+> - **Ledger**: a `bigint` identity key; `order_id` and `fill_id` instead of `ref_id`. There is no `reset` reason: a reset raises the account's `reset_epoch`, and its `start` entries open the new period.
+> - **New**: `trading.journal` (every input the broker applied, `load`, `place`, `cancel`, `reset` or `trade`, with what it read and the digest lines of the fills it made; criterion 14.3) and `trading.broker_state` (one row: the lease epoch for fencing and the stream positions).
+> - **Grants, as built**: `svc_api` reads all four main tables and inserts accounts, orders and ledger entries. Row-level security limits it to orders that are `new` or `refused` with nothing filled or held, and to `start` ledger entries. Cancels and resets go to the broker as commands on `practice:commands`. `svc_broker` (a new role) updates orders and accounts, inserts fills, ledger entries and journal entries, and appends audit rows. The analyzer and jobs services have no access to `trading`.
+> - `market.instruments.min_notional` (the venue's minimum order value, 0 while unknown) is kept by the pair-status job.
+
+> **As implemented in Phase 16** (migration 0013, [ADR 022](../adr/022-automatic-practice-trading.md)):
+>
+> - `trading.strategies`: one row per user (`user_id` unique): `enabled`, `rules` (`jsonb`, validated by `AutoRulesSchema`: the venue, which picks the account; pairs, patterns, minimum checklist score, minimum reward for the risk, risk per trade, open trades, orders per day and the daily loss limit), `version` (raised by every change), `paused_until`, `updated_by`. The api creates the row on the user's first save or switch-on.
+> - `trading.auto_decisions`: every decision: the strategy and the version it used, the setup and its analysis `run_id` (the run names the ruleset version), the pattern, `outcome` (`placed`, `skipped`, `refused`, `cancelled`), the `reason` (set exactly when not placed) and the buy. Its ids are name-based, so a decision is stored once.
+> - `trading.auto_days`: per account and UTC day (`YYYY-MM-DD` text), the automatic buys placed (refused ones included) and the realized result of the automatic trades closed, for the limits and the "today" figures.
+> - `trading.orders.source` gains `auto`; `trading.journal` gains the kinds `setup` and `strategy` and a `decisions` column (the auto-trader's digest lines); `trading.broker_state` gains `setups_cursor`.
+> - **Grants and policies**: `svc_api` inserts strategies and updates their rules, switch and version, and reads the decisions and days. `svc_broker` reads strategies and updates only `paused_until`; it inserts decisions, writes days, and may now insert orders, but row-level security allows only `source = 'auto'`, status `new`, nothing filled or held, for a user with a strategy row. The policy does not look at `enabled`: the broker applies the switch in order with its other inputs (ADR 022). The api's insert policy now refuses `source = 'auto'`. The analyzer and jobs services still have no access to `trading`.

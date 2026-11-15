@@ -30,6 +30,10 @@
   --color-crit: #f0616d;
   --color-info: #7aa2ff;
 
+  /* Practice trading (Phase 14): every practice screen carries this colour, so simulated orders are
+     never mistaken for anything real. Violet: distinct from bullish, bearish and the status tones. */
+  --color-practice: #c39bf2;
+
   --radius-sm: 4px;
   --radius-md: 6px;
   --radius-lg: 10px;

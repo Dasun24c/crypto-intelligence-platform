@@ -86,6 +86,9 @@ export interface Database {
   'market.large_trades': LargeTradesTable;
   'market.orderbook_walls': OrderbookWallsTable;
   'market.data_gaps': DataGapsTable;
+  'market.economic_events': EconomicEventsTable;
+  'market.economic_event_revisions': EconomicEventRevisionsTable;
+  'market.calendar_syncs': CalendarSyncsTable;
   'analysis.detection_runs': DetectionRunsTable;
   'analysis.indicator_values': IndicatorValuesTable;
   'analysis.engine_checkpoints': EngineCheckpointsTable;
@@ -100,6 +103,18 @@ export interface Database {
   'analysis.setup_transitions': SetupTransitionsTable;
   'analysis.setup_checklist_results': SetupChecklistResultsTable;
   'analysis.setup_outcomes': SetupOutcomesTable;
+  'alerts.rules': AlertRulesTable;
+  'alerts.events': AlertEventsTable;
+  'alerts.notifications': AlertNotificationsTable;
+  'trading.accounts': TradingAccountsTable;
+  'trading.orders': TradingOrdersTable;
+  'trading.fills': TradingFillsTable;
+  'trading.ledger': TradingLedgerTable;
+  'trading.journal': TradingJournalTable;
+  'trading.broker_state': TradingBrokerStateTable;
+  'trading.strategies': TradingStrategiesTable;
+  'trading.auto_decisions': TradingAutoDecisionsTable;
+  'trading.auto_days': TradingAutoDaysTable;
 }
 
 // ---------------------------------------------------------------- market (data model §4)
@@ -147,6 +162,8 @@ export interface InstrumentsTable {
   role: ColumnType<'monitored' | 'reference', 'monitored' | 'reference' | undefined>;
   price_tick: string;
   qty_step: string;
+  /** The smallest order value in the quote currency; "0" while unknown (migration 0012). */
+  min_notional: ColumnType<string, string | undefined, string>;
   profile_id: string | null;
   underlying_calendar_id: string | null;
   is_primary_venue: Generated<boolean>;
@@ -279,6 +296,261 @@ export interface DataGapsTable {
   status: 'open' | 'backfilling' | 'repaired' | 'unrepairable';
   resolved_at: Date | null;
   details: ColumnType<Record<string, unknown>, Record<string, unknown> | undefined, Record<string, unknown>>;
+}
+
+// The economic calendar (Phase 7; rulebook I38).
+
+export type EconomicReleaseColumn =
+  'cpi' | 'employment_situation' | 'gdp' | 'personal_income_outlays' | 'fomc';
+export type EconomicEventStatus = 'scheduled' | 'cancelled' | 'superseded';
+
+export interface EconomicEventsTable {
+  id: string;
+  source: 'fred' | 'bea' | 'manual';
+  source_ref: string;
+  release: EconomicReleaseColumn | null;
+  title: string;
+  country: Generated<string>;
+  currency: Generated<string>;
+  category: 'inflation' | 'employment' | 'growth' | 'central_bank' | 'other';
+  impact: 'low' | 'medium' | 'high';
+  scheduled_at: Date;
+  time_confirmed: boolean;
+  status: Generated<EconomicEventStatus>;
+  actual: string | null;
+  forecast: string | null;
+  previous: string | null;
+  /** Set by a trigger: the latest revision. */
+  revision: Generated<number>;
+  created_by: string | null;
+  created_at: Generated<Date>;
+  updated_at: Generated<Date>;
+}
+export type EconomicEventRow = Selectable<EconomicEventsTable>;
+
+/** Written only by the triggers on market.economic_events. */
+export interface EconomicEventRevisionsTable {
+  event_id: string;
+  revision: number;
+  recorded_at: Date;
+  scheduled_at: Date;
+  time_confirmed: boolean;
+  title: string;
+  currency: string;
+  impact: 'low' | 'medium' | 'high';
+  status: EconomicEventStatus;
+}
+
+export interface CalendarSyncsTable {
+  id: string;
+  source: 'fred' | 'bea';
+  started_at: Date;
+  finished_at: Date | null;
+  status: 'running' | 'ok' | 'failed' | 'skipped';
+  inserted: Generated<number>;
+  updated: Generated<number>;
+  unchanged: Generated<number>;
+  cancelled: Generated<number>;
+  error: string | null;
+  details: ColumnType<Record<string, unknown>, Record<string, unknown> | undefined, Record<string, unknown>>;
+}
+
+// ---------------------------------------------------------------- alerts (data model §7, Phase 8)
+
+/** A user's alert rule; `scope`, `condition` and `quiet_hours` hold contracts' AlertScope, AlertCondition, QuietHours. */
+export interface AlertRulesTable {
+  id: string;
+  owner_id: string;
+  name: string;
+  enabled: Generated<boolean>;
+  scope: ColumnType<Record<string, unknown>, Record<string, unknown> | undefined, Record<string, unknown>>;
+  condition: ColumnType<Record<string, unknown>, Record<string, unknown>, Record<string, unknown>>;
+  severity: 'info' | 'warning' | 'critical';
+  cooldown_sec: Generated<number>;
+  channels: Generated<string[]>;
+  quiet_hours: ColumnType<
+    Record<string, unknown> | null,
+    Record<string, unknown> | null | undefined,
+    Record<string, unknown> | null
+  >;
+  version: Generated<number>;
+  created_at: Generated<Date>;
+  updated_at: Generated<Date>;
+  deleted_at: Date | null;
+}
+
+/** One fired occurrence; `UNIQUE (rule_id, dedupe_key)`. */
+export interface AlertEventsTable {
+  id: string;
+  rule_id: string;
+  fired_at: Date;
+  dedupe_key: string;
+  severity: 'info' | 'warning' | 'critical';
+  title: string;
+  body: string;
+  source_refs: ColumnType<
+    Record<string, unknown>,
+    Record<string, unknown> | undefined,
+    Record<string, unknown>
+  >;
+  late: Generated<boolean>;
+  created_at: Generated<Date>;
+}
+
+/** Delivery of an event to a user per channel; the `in_app` row is the inbox item. */
+export interface AlertNotificationsTable {
+  id: string;
+  event_id: string;
+  user_id: string;
+  channel: 'in_app' | 'desktop' | 'web';
+  status: 'pending' | 'sent' | 'failed';
+  attempts: Generated<number>;
+  last_error: string | null;
+  created_at: Generated<Date>;
+  read_at: Date | null;
+}
+
+// ---------------------------------------------------------------- trading (data model §10, Phase 14)
+
+type Json = Record<string, unknown>;
+
+/** A user's practice account on one venue; `starting_balances` is {asset: amount} of the current period. */
+export interface TradingAccountsTable {
+  id: string;
+  user_id: string;
+  venue_id: Venue;
+  starting_balances: ColumnType<Record<string, string>, Record<string, string>, Record<string, string>>;
+  reset_epoch: Generated<number>;
+  created_at: Generated<Date>;
+  updated_at: Generated<Date>;
+}
+
+export type PracticeOrderStatusDb =
+  'new' | 'pending' | 'open' | 'partially_filled' | 'filled' | 'cancelled' | 'refused';
+
+export interface TradingOrdersTable {
+  id: string;
+  account_id: string;
+  instrument_id: string;
+  client_order_id: string;
+  side: 'buy' | 'sell';
+  type: 'market' | 'limit' | 'stop' | 'target';
+  quantity: string;
+  limit_price: string | null;
+  stop_price: string | null;
+  status: PracticeOrderStatusDb;
+  refusal_reason: string | null;
+  filled_quantity: ColumnType<string, string | undefined, string>;
+  filled_value: ColumnType<string, string | undefined, string>;
+  reserved: ColumnType<string, string | undefined, string>;
+  parent_id: string | null;
+  oco_group: string | null;
+  source: 'manual' | 'setup' | 'auto';
+  setup_id: string | null;
+  underlying_closed: Generated<boolean>;
+  reset_epoch: number;
+  seq: ColumnType<string | null, string | number | null | undefined, string | number | null>;
+  accepted_after: string | null;
+  fill_count: Generated<number>;
+  created_at: Generated<Date>;
+  updated_at: Generated<Date>;
+}
+
+export interface TradingFillsTable {
+  id: string;
+  order_id: string;
+  account_id: string;
+  instrument_id: string;
+  side: 'buy' | 'sell';
+  price: string;
+  quantity: string;
+  fee: string;
+  fee_asset: string;
+  liquidity: 'maker' | 'taker';
+  flags: Generated<string[]>;
+  basis: ColumnType<Json, Json, Json>;
+  reset_epoch: number;
+  filled_at: Date;
+  created_at: Generated<Date>;
+}
+
+/** One change of an available balance; balances are sums of these for the current period. */
+export interface TradingLedgerTable {
+  id: Generated<string>;
+  account_id: string;
+  reset_epoch: number;
+  asset: string;
+  amount: string;
+  reason: 'start' | 'reserve' | 'release' | 'fill' | 'fee';
+  order_id: string | null;
+  fill_id: string | null;
+  created_at: Generated<Date>;
+}
+
+/** The broker's journal of inputs that changed something, for replays (criterion 14.3). */
+export interface TradingJournalTable {
+  seq: Generated<string>;
+  at: Generated<Date>;
+  kind: 'load' | 'place' | 'cancel' | 'reset' | 'trade' | 'setup' | 'strategy';
+  input: ColumnType<Json, Json, Json>;
+  fills: ColumnType<string[], string[] | undefined, string[]>;
+  /** The auto-trader's digest lines (migration 0013). */
+  decisions: ColumnType<string[], string[] | undefined, string[]>;
+}
+
+/** A user's automatic practice trading rules (migration 0013, ADR 022). */
+export interface TradingStrategiesTable {
+  id: string;
+  user_id: string;
+  enabled: Generated<boolean>;
+  rules: ColumnType<Json, Json, Json>;
+  version: Generated<number>;
+  paused_until: Date | null;
+  updated_by: string | null;
+  created_at: Generated<Date>;
+  updated_at: Generated<Date>;
+}
+
+/** Every confirmed setup the auto-trader considered for a user (migration 0013). */
+export interface TradingAutoDecisionsTable {
+  id: string;
+  strategy_id: string;
+  user_id: string;
+  setup_id: string;
+  /** The setup's analysis run: it names the ruleset version. */
+  run_id: string;
+  instrument_id: string;
+  pattern: string;
+  outcome: 'placed' | 'skipped' | 'refused' | 'cancelled';
+  reason: string | null;
+  order_id: string | null;
+  strategy_version: number;
+  decided_at: Date;
+  created_at: Generated<Date>;
+}
+
+/** One account's automatic trading on one UTC day (migration 0013). */
+export interface TradingAutoDaysTable {
+  account_id: string;
+  /** The UTC day, `YYYY-MM-DD`. */
+  day: string;
+  orders: Generated<number>;
+  result: ColumnType<string, string | undefined, string>;
+  updated_at: Generated<Date>;
+}
+
+export interface TradingBrokerStateTable {
+  id: number;
+  lease_epoch: ColumnType<string, string | number | undefined, string | number>;
+  commands_cursor: Generated<string>;
+  /** Its position in an:events (migration 0013). */
+  setups_cursor: Generated<string>;
+  trade_cursors: ColumnType<
+    Record<string, string>,
+    Record<string, string> | undefined,
+    Record<string, string>
+  >;
+  updated_at: Generated<Date>;
 }
 
 // ---------------------------------------------------------------- analysis (data model §5)
@@ -567,6 +839,19 @@ export type SetupTransitionRow = Selectable<SetupTransitionsTable>;
 export type SetupChecklistResultRow = Selectable<SetupChecklistResultsTable>;
 export type SetupOutcomeRow = Selectable<SetupOutcomesTable>;
 export type NewIndicatorValue = Insertable<IndicatorValuesTable>;
+export type AlertRuleRow = Selectable<AlertRulesTable>;
+export type AlertEventRow = Selectable<AlertEventsTable>;
+export type AlertNotificationRow = Selectable<AlertNotificationsTable>;
+export type TradingAccountRow = Selectable<TradingAccountsTable>;
+export type TradingOrderRow = Selectable<TradingOrdersTable>;
+export type NewTradingOrder = Insertable<TradingOrdersTable>;
+export type TradingFillRow = Selectable<TradingFillsTable>;
+export type NewTradingFill = Insertable<TradingFillsTable>;
+export type NewTradingLedgerEntry = Insertable<TradingLedgerTable>;
+export type TradingStrategyRow = Selectable<TradingStrategiesTable>;
+export type TradingAutoDecisionRow = Selectable<TradingAutoDecisionsTable>;
+export type NewTradingAutoDecision = Insertable<TradingAutoDecisionsTable>;
+export type TradingAutoDayRow = Selectable<TradingAutoDaysTable>;
 
 export type UserRow = Selectable<UsersTable>;
 export type NewUser = Insertable<UsersTable>;

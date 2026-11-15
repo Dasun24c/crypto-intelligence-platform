@@ -2,11 +2,11 @@
 
 | | |
 |---|---|
-| Status | Approved 2026-11-10 (Phase 0 sign-off, recommended defaults) |
+| Status | Approved 2026-11-10 (Phase 0 sign-off, recommended defaults). Amended 2026-11-13: Phase 14 added, and Phase 15 drafted for a later decision ([proposal 001](../proposals/001-trading.md)). Amended 2026-11-15: Phase 16 added ([proposal 002](../proposals/002-automatic-practice-trading.md)). |
 | Date | 2026-11-09 |
 | Rule | One phase at a time. A phase starts only after the previous phase's acceptance report is approved. |
 
-Requirement IDs (MD-, GLD-, TA-, SMC-, AI-, VIZ-, UI-, WH-, AL-, WD-, SEC-, ENG-, NFR-) refer to the [requirements analysis](01-requirements-analysis.md).
+Requirement IDs (MD-, GLD-, TA-, SMC-, AI-, VIZ-, UI-, WH-, AL-, WD-, SEC-, ENG-, TRD-, NFR-) refer to the [requirements analysis](01-requirements-analysis.md).
 
 ## How every phase is accepted
 
@@ -32,13 +32,18 @@ Requirement IDs (MD-, GLD-, TA-, SMC-, AI-, VIZ-, UI-, WH-, AL-, WD-, SEC-, ENG-
 | 6 | Patterns, checklist and outcomes | L | The four pattern state machines, scoring, outcome tracking |
 | 7 | Charts, Setup Scanner and calendar | L | Liquidity Map, Setup Scanner, economic calendar, blackout windows |
 | 8 | Alerts and notifications | M | Rules, inbox, web and desktop notifications |
+| 14 | Practice trading | L | Buying and selling with simulated orders filled from live market data; no real money and no exchange connection |
+| 16 | Automatic practice trading | M | A user's own rules place practice orders on confirmed setups, within their limits; practice balances only |
 | 9 | AI intelligence | M | Grok analysis with grounding validation and budget control |
 | 10 | 3D visualization | M | Brain driven by real system activity |
 | 11 | Whale Tracker | M | Exchange-flow view and on-chain monitoring |
 | 12 | Historical analytics and replay UI | M | Outcome statistics, replay comparison, exports |
+| 15 | Exchange test networks (if approved) | L | The same orders sent to Binance's Spot Test Network, with test funds. Decided after Phase 14 is accepted. |
 | 13 | Hardening and release | L | Security review, load and soak tests, signed desktop builds, operations docs |
 
 Sizes are relative (M ≈ 1×, L ≈ 1.5–2×, XL ≈ 2.5–3×). Calendar estimates come with the Phase 1 plan, once team size is known.
+
+**Order of work (amended 2026-11-13 and 2026-11-15).** The rows above are in the order they are built: 0–8, then 14, then 16, then 9–12, then 15 if approved, then 13. Phase numbers are names: the new phases got new numbers so that nothing already written had to be renumbered. Phase 13 stays last so that its security review, load test and soak test cover trading.
 
 ---
 
@@ -195,6 +200,59 @@ Sizes are relative (M ≈ 1×, L ≈ 1.5–2×, XL ≈ 2.5–3×). Calendar esti
 | 8.5 | Alerts from catch-up processing are labelled "late" | SMC-09 |
 | 8.6 | The rule test endpoint correctly lists what would have fired over the last 24 h | AL-01 |
 
+## Phase 14 — Practice trading
+
+Built after Phase 8 and before Phase 9 ([proposal 001](../proposals/001-trading.md), approved 2026-11-13).
+
+**Scope**
+
+- ADR 021: the fill model and the broker service.
+- `packages/paper-engine` (pure): order validation, the fill rules, fees and the balance ledger.
+- `apps/broker`: the only service that handles orders. It fills practice orders from a new stream of live trades (`md:trades:{instrumentId}`) and the order books the ingestor keeps, and never contacts a venue.
+- The `trading` schema, the practice API and the per-user `practice` WebSocket channel.
+- The Practice Trading page, the order ticket with its confirmation step, and "Practise this setup".
+- Two alert kinds: practice order filled, and practice stop or target reached.
+
+| # | Criterion | Covers |
+|---|---|---|
+| 14.1 | On every monitored pair, a user buys and sells with market and limit orders, cancels an open order, and sees balances, positions and profit and loss update, in the web and desktop apps | TRD-01, TRD-02, TRD-04 |
+| 14.2 | Fills match hand-computed fixtures on recorded books and trades: slippage from walking the book, fees, waiting limits filled only by trades through the price, partial fills, a protective stop triggering, and a stop and target cancelling each other | TRD-03 |
+| 14.3 | Replaying the same recorded market data and orders gives identical fills (digest) | TRD-03, NFR-14 |
+| 14.4 | A property test over random order sequences: the ledger always reconciles with fills and fees, no balance goes negative, and a retried submission never creates a second order | TRD-04 |
+| 14.5 | Orders are refused, with the reason, when the pair's data is delayed or has a gap, or the pair is halted. Orders that break the venue's price step, quantity step or minimum order value are refused. | TRD-07 |
+| 14.6 | "Practise this setup" fills in the ticket with the setup's levels and the calculator's size, and nothing is submitted until the user submits it (end-to-end test). A dependency rule shows that no code in setups, alerts, the AI or jobs can create an order. | TRD-05 |
+| 14.7 | An automated scan finds the practice banner on every practice screen, and every result is labelled as simulated | TRD-06 |
+| 14.8 | The RBAC matrix test covers the new endpoints, and each role reaches only its own account. Orders placed, cancelled, refused and filled, and account resets, are audited, and the hash chain verifies. | TRD-08, SEC-02 |
+| 14.9 | Practice fills arrive as alerts, in the inbox and as native notifications. After a disconnect, open orders and balances are resynchronised from the backend. | TRD-08, WD-01 |
+| 14.10 | `pnpm check:no-trading` passes unchanged, and a test shows the broker opens no connection to any venue | SEC-04 |
+| 14.11 | NFR-16 is measured and met | NFR-16 |
+| 14.12 | axe finds no serious violations on the new page, and keyboard navigation works, including the confirmation step | NFR-10 |
+
+## Phase 16 — Automatic practice trading
+
+Built after Phase 14 is accepted and before Phase 9 ([proposal 002](../proposals/002-automatic-practice-trading.md), approved 2026-11-15). Practice balances only: no real money, no exchange connection, and the AI never decides an order.
+
+**Scope**
+
+- ADR 022: the auto-trader, its decisions and its journal.
+- An auto-trader inside the broker: setup transitions become a third input beside the commands and live trades, and every decision is journalled, so a replay gives the same decisions and fills.
+- A pure decider in `packages/paper-engine`: a confirmed bullish setup that matches the user's rules (pairs, patterns, minimum checklist score, minimum reward for the risk at target 1) and limits (open trades, one per pair, orders per day, daily loss) becomes a limit buy at the entry, sized by the position-size calculator, with a stop at the invalidation and a target at target 1. The buy is cancelled if the setup expires or is invalidated first.
+- Per-user rules (`trading.strategies`) and the decision log (`trading.auto_decisions`); automatic orders marked `source = 'auto'`; a database policy that lets the broker insert only such orders, for users whose automatic trading is on.
+- The "Automatic trading (simulated)" card: the switch with a confirmation, the rules, today's orders and result against the daily limit, the decision log, and a stop button.
+- Two alert kinds: automatic order placed, and automatic trading paused.
+
+| # | Criterion | Covers |
+|---|---|---|
+| 16.1 | With automatic trading on, a confirmed bullish setup that matches the rules becomes a practice limit buy with its stop and target, sized by the calculator; one that doesn't is logged as skipped with the reason (end to end, on live or replayed data) | TRD-09, TRD-10 |
+| 16.2 | The limits hold: open trades, one per pair, orders per day, and the daily loss pause (unit and property tests) | TRD-09 |
+| 16.3 | The stop button switches it off and cancels every open automatic order within 5 s | TRD-09 |
+| 16.4 | Nothing is placed for a user who hasn't switched it on, and nothing but the broker can place an automatic order (database policy and dependency rule) | TRD-05 |
+| 16.5 | A buy is cancelled when its setup expires or is invalidated before it fills | TRD-09 |
+| 16.6 | Replaying recorded setups and market data gives the same decisions and fills (digest) | TRD-11 |
+| 16.7 | Every automatic order is labelled "Automatic", audited with its setup and rules version, and raises an alert; rule changes are audited | TRD-10 |
+| 16.8 | NFR-17 is measured and met | NFR-17 |
+| 16.9 | The new card carries the practice banner, axe finds no serious violations, and it works from the keyboard, the switch's confirmation included | TRD-06, NFR-10 |
+
 ## Phase 9 — AI intelligence
 
 **Scope**
@@ -253,11 +311,34 @@ Sizes are relative (M ≈ 1×, L ≈ 1.5–2×, XL ≈ 2.5–3×). Calendar esti
 | 12.2 | Labels say "historical observations" and never imply expected performance | SMC-08 |
 | 12.3 | A replay started from the UI matches the live digest for overlapping periods. When parameters differ, the differences are listed. | SMC-08, NFR-14 |
 
+## Phase 15 — Exchange test networks (if approved)
+
+**Draft.** Built only if you approve it after Phase 14 is accepted (decision T5 in [proposal 001](../proposals/001-trading.md)). Its requirements (TRD-12 onwards, since TRD-09 to TRD-11 went to Phase 16) and final criteria are written then.
+
+**Scope**
+
+- Orders from the same screens sent to Binance's Spot Test Network, which uses test funds. Coinbase is checked against its static sandbox for request and response formats only.
+- Keys created and kept on the server: an Ed25519 key pair per user, stored encrypted, the private key never leaving the server.
+- A fixed list of test hosts; the no-trading check narrowed to the broker's test-network adapter, with production order endpoints still forbidden everywhere.
+- An order state machine, idempotent client order ids, the venue's user-data stream, and reconciliation after any disconnect.
+- Server-side limits (order value, open orders, daily loss) and an admin kill switch.
+- A "Test network: test funds" banner, and handling of the test network's monthly resets.
+
+| # | Criterion |
+|---|---|
+| 15.1 | An order goes through its whole life on Binance's Spot Test Network (placed, partly filled, filled, cancelled), and the platform's state equals the venue's after each step |
+| 15.2 | A retried submission never creates a second order. After a network cut in the middle of an order, state is reconciled within 10 s of reconnecting, with no duplicate or lost order (chaos test). |
+| 15.3 | Scans find no key in logs, bundles or images; no endpoint returns one; keys are stored encrypted; the private key never leaves the server |
+| 15.4 | The broker refuses production hosts (startup and runtime tests). The CI check fails on a production order endpoint anywhere, and on any order endpoint outside the broker's test-network adapter. |
+| 15.5 | An order over a limit is refused before it leaves. The kill switch cancels every open test order and blocks new ones within 5 s. |
+| 15.6 | A burst of orders stays within the venue's rate limits |
+| 15.7 | Every order request, venue response and state change is audited |
+
 ## Phase 13 — Hardening and release
 
 **Scope**
 
-- Security review against ASVS Level 2, dependency and image audits.
+- Security review against ASVS Level 2, dependency and image audits. It covers the trading path (Phase 14, and Phase 15 if built).
 - Load test, 72 h soak test, backup and restore drill.
 - Signed and notarized desktop builds with auto-update.
 - Deployment guide, runbooks, and final acceptance against the requirements.
@@ -285,6 +366,8 @@ Sizes are relative (M ≈ 1×, L ≈ 1.5–2×, XL ≈ 2.5–3×). Calendar esti
 | 3D visualization shows actual processing states | 10.1, 10.2 |
 | History of analyses, signals, setup states and outcomes | 6.2, 6.5, 9.6, 12.1 |
 | Configurable alerts | 8.1–8.6 |
+| Practice buying and selling with simulated orders, labelled, without any exchange connection | 14.1–14.7, 14.10 |
+| Automatic practice trading under a user's own rules and limits, logged, labelled and audited | 16.1–16.7 |
 | Web and desktop | 1.3, 1.8, 8.2, 13.5 |
 | Recovery from network interruptions | 2.4, 2.6, 8.4 |
 | Automated tests and deployment documentation | 1.2, 13.6 |

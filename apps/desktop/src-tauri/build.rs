@@ -5,6 +5,8 @@ fn main() {
         "secure_store_get",
         "secure_store_set",
         "secure_store_delete",
+        "settings_get_server_url",
+        "settings_set_server_url",
         "set_tray_status",
     ]);
     tauri_build::try_build(tauri_build::Attributes::new().app_manifest(manifest))

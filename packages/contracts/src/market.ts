@@ -12,6 +12,7 @@ export type Tf = z.infer<typeof TimeframeSchema>;
 
 export const VENUES = ['binance', 'coinbase', 'replay'] as const;
 export const VenueSchema = z.enum(VENUES);
+export type Venue = z.infer<typeof VenueSchema>;
 export const ASSET_CLASSES = ['crypto', 'tokenised_gold', 'stablecoin'] as const;
 export const AssetClassSchema = z.enum(ASSET_CLASSES);
 export const InstrumentRoleSchema = z.enum(['monitored', 'reference']);
@@ -29,6 +30,8 @@ export const InstrumentSchema = z.object({
   displayName: z.string(),
   priceTick: DecimalSchema,
   qtyStep: DecimalSchema,
+  /** The smallest order value in the quote currency; "0" while unknown (practice trading, ADR 021). */
+  minNotional: DecimalSchema,
   isPrimaryVenue: z.boolean(),
   venueStatus: VenueStatusSchema,
   enabled: z.boolean(),
@@ -289,20 +292,29 @@ export const channels = {
   smc: (instrumentId: string) => `smc:${instrumentId}`,
   /** Every instrument's setups, or one instrument's (Phase 6). */
   setups: (instrumentId?: string) => (instrumentId ? `setups:${instrumentId}` : 'setups'),
+  /** The economic calendar (Phase 7): `calendar.updated` on every change. */
+  calendar: 'calendar',
+  /** The signed-in user's alerts (Phase 8): implicit per user, so the name carries no id. */
+  alerts: 'alerts',
+  /** The signed-in user's practice orders, fills and balances (Phase 14): implicit per user. */
+  practice: 'practice',
   systemHealth: 'system:health',
 } as const;
 
 const UUID = '[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}';
 export const CHANNEL_PATTERN = new RegExp(
-  `^(?:(?:ticker|book|trades|market|smc):${UUID}|(?:candles|indicators):${UUID}:(?:1m|5m|15m|1h|4h|1d)|setups(?::${UUID})?|system:health)$`,
+  `^(?:(?:ticker|book|trades|market|smc):${UUID}|(?:candles|indicators):${UUID}:(?:1m|5m|15m|1h|4h|1d)|setups(?::${UUID})?|calendar|alerts|practice|system:health)$`,
 );
 
 /**
  * Durable channels carry `seq` (the id of the stream entry behind the message: md:events for
- * trades and market, an:events for indicators, smc and setups) and can be replayed after a reconnect.
+ * trades and market, an:events for indicators, smc and setups, alerts:events for alerts,
+ * practice:events for practice) and can be replayed after a reconnect.
  */
 export function isDurableChannel(channel: string): boolean {
   return (
+    channel === 'alerts' ||
+    channel === 'practice' ||
     channel.startsWith('trades:') ||
     channel.startsWith('market:') ||
     channel.startsWith('indicators:') ||
@@ -402,6 +414,13 @@ export type MarketMessageType =
   | 'zone.created'
   | 'zone.status'
   | 'setup.transition'
+  | 'calendar.updated'
+  | 'alert.fired'
+  | 'notification.read'
+  | 'practice.order'
+  | 'practice.fill'
+  | 'practice.account'
+  | 'practice.automatic'
   | 'health.update';
 
 /** A stored or live candle in its wire form (structural, so this package stays dependency-free). */
@@ -431,5 +450,15 @@ export function toWireCandle(c: {
   };
 }
 
-/** Redis pub/sub channels announcing admin changes; the ingestor reloads without a restart (MD-02). */
-export const CONFIG_CHANNELS = { instruments: 'config:instruments', closures: 'config:closures' } as const;
+/**
+ * Redis pub/sub channels announcing changes: admin changes, which the ingestor reloads without a
+ * restart (MD-02), and economic-calendar changes (a sync or an admin's entry), which the analyzer
+ * reloads and the API forwards on the `calendar` channel.
+ */
+export const CONFIG_CHANNELS = {
+  instruments: 'config:instruments',
+  closures: 'config:closures',
+  calendar: 'config:calendar',
+  /** A user's alert rules changed (Phase 8): the analyzer reloads its rule cache. */
+  alerts: 'config:alerts',
+} as const;

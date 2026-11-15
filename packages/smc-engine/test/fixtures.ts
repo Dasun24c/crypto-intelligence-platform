@@ -17,10 +17,24 @@ export interface Fixture {
   source: string;
   /** Per timeframe: `[openTime, open, high, low, close, volume, extra?]`; a hole is a missing candle. */
   candles: Partial<Record<Timeframe, [number, string, string, string, string, string, Extra?][]>>;
-  /** `economicEvents: null` is an unavailable calendar (checklist item 8 then fails). */
+  /**
+   * `economicEvents: null` is an unavailable calendar (checklist item 8 then fails). An event version
+   * may say when it was known (`knownFrom`, `knownUntil`), and the calendar when it became available
+   * (`calendarAvailableFrom`): rulebook I38.
+   */
   context: {
     closures: { from: string; to: string; reason: Closure['reason'] }[];
-    economicEvents: { id: string; at: string; currency: string; impact: 'low' | 'medium' | 'high' }[] | null;
+    economicEvents:
+      | {
+          id: string;
+          at: string;
+          currency: string;
+          impact: 'low' | 'medium' | 'high';
+          knownFrom?: string;
+          knownUntil?: string | null;
+        }[]
+      | null;
+    calendarAvailableFrom?: string;
   };
   expected: Expectation[];
   notExpected?: Expectation[];
@@ -111,8 +125,20 @@ export function fixtureInput(f: Fixture): { steps: StepInput[]; context: StepCon
           scheduledAt: Date.parse(e.at),
           currency: e.currency,
           impact: e.impact,
+          ...(e.knownFrom !== undefined ? { knownFrom: Date.parse(e.knownFrom) } : {}),
+          ...(e.knownUntil !== undefined
+            ? { knownUntil: e.knownUntil === null ? null : Date.parse(e.knownUntil) }
+            : {}),
         }));
-  return { steps: toSteps(candles), context: { closures, economicEvents } };
+  const since = f.context.calendarAvailableFrom;
+  return {
+    steps: toSteps(candles),
+    context: {
+      closures,
+      economicEvents,
+      ...(since !== undefined ? { calendarAvailableFrom: Date.parse(since) } : {}),
+    },
+  };
 }
 
 /** `{ "$approx": x, "$tol": t }` matches a number within t; ISO strings match epoch-ms numbers. */

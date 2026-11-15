@@ -31,6 +31,7 @@ export const fakeVenues: VenueDirectory = {
           status: symbol.startsWith('HALT') ? 'halted' : 'trading',
           priceTick: venue === 'binance' ? '0.01' : '0.001',
           qtyStep: '0.0001',
+          minNotional: venue === 'binance' ? '5' : '1',
         },
 };
 

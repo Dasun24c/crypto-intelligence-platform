@@ -28,9 +28,15 @@ export interface ChannelStatus {
   readonly error: ChannelError | null;
 }
 
+/** How a message reached the client. */
+export interface MessageMeta {
+  /** Re-sent after a reconnect (it happened while the client was away), not live. */
+  resync: boolean;
+}
+
 export interface ChannelHandlers {
   /** Every message on the channel; durable channels never repeat a `seq`. */
-  onMessage?: (message: Envelope) => void;
+  onMessage?: (message: Envelope, meta: MessageMeta) => void;
   /**
    * Non-durable channels: the latest value when the channel is (re)subscribed, null if there is none.
    * Durable channels: the current state after a resync that could not be replayed; it replaces
@@ -38,6 +44,11 @@ export interface ChannelHandlers {
    */
   onSnapshot?: (snapshot: unknown) => void;
   onStatus?: (status: ChannelStatus) => void;
+  /**
+   * Durable channels: a resubscribe after a reconnect is complete. Everything missed was just
+   * delivered (`replayed`, each with `resync: true`) or replaced by `onSnapshot` (`snapshot`).
+   */
+  onResynced?: (mode: 'replayed' | 'snapshot') => void;
 }
 
 /** What a non-durable channel currently holds, for a listener that joins an existing subscription. */
@@ -562,8 +573,10 @@ export class LiveClient {
       ch.floor = seq;
       for (const listener of [...ch.listeners]) listener.onSnapshot?.(result.snapshot ?? null);
     }
-    this.deliverInOrder(ch, buffered);
+    // After a reconnect the buffer holds the replay: what happened while the client was away.
+    this.deliverInOrder(ch, buffered, result.mode === 'replayed');
     ch.lastSeq = maxSeq(ch.lastSeq, seq);
+    if (result.mode !== 'live') for (const listener of [...ch.listeners]) listener.onResynced?.(result.mode);
     // Replayed: everything up to this position was just re-sent, so a later copy is a duplicate.
     if (result.mode !== 'live') ch.floor = maxSeq(ch.floor, seq);
   }
@@ -605,14 +618,14 @@ export class LiveClient {
     this.deliver(ch, message, seq);
   }
 
-  private deliverInOrder(ch: Channel, messages: Envelope[]): void {
+  private deliverInOrder(ch: Channel, messages: Envelope[], resync = false): void {
     const ordered = [...messages].sort((a, b) => compareSeq(a.seq ?? '0-0', b.seq ?? '0-0'));
-    for (const message of ordered) this.deliver(ch, message, message.seq ?? null);
+    for (const message of ordered) this.deliver(ch, message, message.seq ?? null, resync);
   }
 
-  private deliver(ch: Channel, message: Envelope, seq: string | null): void {
+  private deliver(ch: Channel, message: Envelope, seq: string | null, resync = false): void {
     if (seq !== null && !this.accept(ch, seq)) return;
-    for (const listener of [...ch.listeners]) listener.onMessage?.(message);
+    for (const listener of [...ch.listeners]) listener.onMessage?.(message, { resync });
   }
 
   /** Durable de-duplication: drop what was handled before the resubscribe, or seen already. */

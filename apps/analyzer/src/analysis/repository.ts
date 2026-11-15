@@ -3,10 +3,23 @@ import { type Candle, type Closure, TF_MS, type Timeframe } from '@cip/domain';
 import {
   type Database,
   type DetectionRunRow,
+  type EngineCalendar,
+  loadEngineCalendar,
   type NewIndicatorValue,
   rowToCandle,
   type RunStatus,
 } from '@cip/db';
+import type { StepContext } from '@cip/smc-engine';
+
+/** The economic calendar's part of the engine's context (rulebook I38). */
+export type CalendarContext = Pick<StepContext, 'economicEvents' | 'calendarAvailableFrom'>;
+
+/** Until the first complete FRED sync there is no calendar: checklist item 8 fails safe. */
+export function calendarContext(cal: EngineCalendar): CalendarContext {
+  return cal.availableFrom === null
+    ? { economicEvents: null }
+    : { economicEvents: cal.events, calendarAvailableFrom: cal.availableFrom };
+}
 
 /** An enabled instrument with its profile: the unit of analysis (one actor each). */
 export interface AnalysedInstrument {
@@ -105,6 +118,14 @@ export class AnalysisRepository {
       .where('id', '=', profileId)
       .executeTakeFirst();
     return r ? { params: r.params, paramsHash: r.params_hash } : null;
+  }
+
+  /**
+   * The economic calendar for the engine (rulebook I38): every version of the events scheduled in
+   * [from, to], each counting from when it was known, and when the calendar became available.
+   */
+  async calendar(from: number, to: number): Promise<CalendarContext> {
+    return calendarContext(await loadEngineCalendar(this.db, from, to));
   }
 
   /** Gold-market closures of a calendar overlapping [from, to), in time order. */

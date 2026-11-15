@@ -19,7 +19,7 @@ No application code was written in this phase, as the requirements ask.
 | 05 | [Data model](05-data-model.md) | The PostgreSQL/TimescaleDB schema, retention and database roles |
 | 06 | [API contracts](06-api-contracts.md) | REST endpoints, WebSocket protocol, AI context and response schemas, error codes |
 | 07 | [SMC rulebook](07-smc-rulebook.md) | Exact, testable rules for structure, liquidity, POIs, the four patterns and the checklist |
-| 08 | [Implementation plan](08-implementation-plan.md) | 13 phases, each with acceptance criteria traced to requirement IDs |
+| 08 | [Implementation plan](08-implementation-plan.md) | 14 phases (practice trading added as Phase 14 on 2026-11-13), plus Phase 15 if approved, each with acceptance criteria traced to requirement IDs |
 
 ## Key findings
 
@@ -50,6 +50,13 @@ No application code was written in this phase, as the requirements ask.
 | D10 | SMC judgement calls J1–J10 ([rulebook §11](07-smc-rulebook.md#11-judgement-calls-for-approval)) | Accept the proposed defaults; refine with labelled data in Phases 4–6 | Phase 4 |
 | D11 | Quality targets NFR-01 to NFR-15 ([requirements §4](01-requirements-analysis.md#4-non-functional-requirements-proposed-targets)) | Accept | Phase 1 |
 | D12 | Code-signing purchases | Apple Developer Program ($99/year) and a Windows signing option, bought before Phase 13 | Phase 13 |
+
+## Proposed changes
+
+| # | Proposal | Status |
+|---|---|---|
+| 001 | [Buying and selling](../proposals/001-trading.md): practice trading as a new Phase 14, then exchange test networks as Phase 15. Real money stays out of the initial release. | Approved 2026-11-13 with the recommended choice for each of T1–T7, and applied: REQUIREMENTS.md revision 4 and these documents. Phase 14 follows Phase 8; Phase 15 is decided after Phase 14. |
+| 002 | [Automatic practice trading](../proposals/002-automatic-practice-trading.md): a user's own rules place practice orders on confirmed bullish setups, within their limits, as a new Phase 16. Practice balances only; the AI never decides an order. | Approved 2026-11-15 with the recommended choice for each of A1–A9, and applied: REQUIREMENTS.md revision 5 and these documents. Phase 16 follows Phase 14, before Phase 9. |
 
 ## Next step
 

@@ -7,6 +7,22 @@ import type { Logger } from '@cip/observability';
 import { AdminAuditController } from './admin/admin-audit.controller.js';
 import { AdminUsersController } from './admin/admin-users.controller.js';
 import { AuditService } from './audit/audit.service.js';
+import {
+  AlertEventsController,
+  AlertRulesController,
+  NotificationsController,
+} from './alerts/alerts.controller.js';
+import { AutomaticService } from './practice/automatic.service.js';
+import {
+  AdminPracticeSettingsController,
+  PracticeAutomaticController,
+  PracticeController,
+} from './practice/practice.controller.js';
+import { PracticeRepository } from './practice/practice.repository.js';
+import { PracticeService } from './practice/practice.service.js';
+import { AlertsRepository } from './alerts/alerts.repository.js';
+import { CalendarController, CalendarSyncQueue } from './calendar/calendar.controller.js';
+import { CalendarRepository } from './calendar/calendar.repository.js';
 import { AccessGuard } from './auth/access.guard.js';
 import { AuthController } from './auth/auth.controller.js';
 import { AuthService } from './auth/auth.service.js';
@@ -77,6 +93,13 @@ export class AppModule {
         SmcController,
         SetupsController,
         ReplayController,
+        CalendarController,
+        AlertRulesController,
+        AlertEventsController,
+        NotificationsController,
+        PracticeController,
+        PracticeAutomaticController,
+        AdminPracticeSettingsController,
         SystemController,
         ProbesController,
       ],
@@ -118,6 +141,12 @@ export class AppModule {
         SmcRepository,
         SetupsRepository,
         ReplayService,
+        CalendarRepository,
+        AlertsRepository,
+        PracticeRepository,
+        PracticeService,
+        AutomaticService,
+        CalendarSyncQueue,
         LiveGateway,
       ],
     };

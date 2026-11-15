@@ -4,12 +4,19 @@ import { HttpAdapterHost } from '@nestjs/core';
 import { Redis } from 'ioredis';
 import { type DefaultEventsMap, type Namespace, Server, type Socket } from 'socket.io';
 import {
+  ALERTS_STREAM,
+  type AlertsSnapshot,
   ANALYSIS_EVENTS_STREAM,
+  type CalendarUpdated,
+  CalendarUpdatedSchema,
   can,
+  type Capability,
   CHANNEL_PATTERN,
   CONFIG_CHANNELS,
   type Envelope,
   isDurableChannel,
+  PRACTICE_EVENTS_STREAM,
+  type PracticeSnapshot,
   type SetupTransitionMessage,
   type SmcEventMessage,
   type SubscribeAck,
@@ -20,31 +27,74 @@ import {
   WS_PATH,
 } from '@cip/contracts';
 import type { Logger } from '@cip/observability';
+import { AlertsRepository } from '../alerts/alerts.repository.js';
 import { AnalysisRepository } from '../analysis/analysis.repository.js';
 import { SetupsRepository } from '../analysis/setups.repository.js';
 import { SmcRepository } from '../analysis/smc.repository.js';
 import { TokenService } from '../auth/token.service.js';
+import { CalendarRepository } from '../calendar/calendar.repository.js';
 import type { AuthenticatedUser } from '../common/access.js';
 import { ProblemError } from '../common/problem.js';
 import { TAURI_ORIGINS, type ApiConfig } from '../config.js';
 import { MarketRepository } from '../market/market.repository.js';
+import { PracticeRepository } from '../practice/practice.repository.js';
 import { HealthService } from '../system/health.service.js';
 import { API_CONFIG, CLOCK, type Clock, LOGGER, REDIS } from '../tokens.js';
 import { effectiveStatus, toSummary, UsersRepository } from '../users/users.repository.js';
 
 /** Where the ingestor publishes non-durable messages (ADR 014). */
 const LIVE_PATTERN = 'live:*';
-/** The durable streams: market events from the ingestor, analysis events from the analyzer. */
+/**
+ * The durable streams: market events from the ingestor, analysis events from the analyzer, the
+ * users' alert messages from the jobs service and the API (Phase 8, ADR 020), and their practice
+ * orders, fills and balances from the broker (Phase 14, ADR 021).
+ */
 const MARKET_EVENTS = 'md:events';
-const STREAMS = [MARKET_EVENTS, ANALYSIS_EVENTS_STREAM] as const;
+const STREAMS = [MARKET_EVENTS, ANALYSIS_EVENTS_STREAM, ALERTS_STREAM, PRACTICE_EVENTS_STREAM] as const;
 type DurableStream = (typeof STREAMS)[number];
+
+/**
+ * Channels implicit per user, so their names carry no id: each takes its user's entries from a
+ * stream of `type`, `user`, `data` and delivers them to a room of that user's sockets, for roles
+ * with the capability.
+ */
+const USER_CHANNELS = {
+  alerts: {
+    stream: ALERTS_STREAM,
+    capability: 'alerts.own',
+    types: ['alert.fired', 'notification.read'],
+  },
+  practice: {
+    stream: PRACTICE_EVENTS_STREAM,
+    capability: 'practice.own',
+    types: ['practice.order', 'practice.fill', 'practice.account', 'practice.automatic'],
+  },
+} as const satisfies Record<
+  string,
+  { stream: DurableStream; capability: Capability; types: readonly string[] }
+>;
+export type UserChannel = keyof typeof USER_CHANNELS;
+export const isUserChannel = (ch: string): ch is UserChannel => Object.hasOwn(USER_CHANNELS, ch);
+const USER_CHANNEL_OF_STREAM = new Map<string, UserChannel>(
+  (Object.keys(USER_CHANNELS) as UserChannel[]).map((ch) => [USER_CHANNELS[ch].stream, ch]),
+);
+/** A user's sockets subscribed to one of their implicit channels. */
+export const userRoom = (ch: UserChannel, userId: string) => `_${ch}:${userId}`;
+
 /** The stream a durable channel's messages come from. */
 export const streamOf = (ch: string): DurableStream =>
-  ch.startsWith('indicators:') || ch.startsWith('smc:') || ch === 'setups' || ch.startsWith('setups:')
-    ? ANALYSIS_EVENTS_STREAM
-    : MARKET_EVENTS;
+  isUserChannel(ch)
+    ? USER_CHANNELS[ch].stream
+    : ch.startsWith('indicators:') || ch.startsWith('smc:') || ch === 'setups' || ch.startsWith('setups:')
+      ? ANALYSIS_EVENTS_STREAM
+      : MARKET_EVENTS;
 /** Channels that carry every instrument: no instrument id to check. */
-const GLOBAL_CHANNELS = new Set(['system:health', 'setups']);
+const GLOBAL_CHANNELS = new Set<string>([
+  'system:health',
+  'setups',
+  'calendar',
+  ...Object.keys(USER_CHANNELS),
+]);
 const MARKET_TYPES = new Set(['gap.opened', 'gap.closed', 'feed.status', 'wall.appeared', 'wall.ended']);
 const MAX_CHANNELS = 200;
 const MAX_REPLAY = 10_000;
@@ -85,7 +135,12 @@ export class LiveGateway implements OnApplicationBootstrap, OnApplicationShutdow
   private subscriber: Redis | null = null;
   private reader: Redis | null = null;
   private running = false;
-  private readonly lastSeq: Record<DurableStream, string> = { 'md:events': '0-0', 'an:events': '0-0' };
+  private readonly lastSeq: Record<DurableStream, string> = {
+    'md:events': '0-0',
+    'an:events': '0-0',
+    'alerts:events': '0-0',
+    'practice:events': '0-0',
+  };
   private readonly lastLive = new Map<string, string>();
   private instrumentIds: { at: number; ids: Set<string> } | null = null;
   private timers: NodeJS.Timeout[] = [];
@@ -105,6 +160,9 @@ export class LiveGateway implements OnApplicationBootstrap, OnApplicationShutdow
     private readonly analysis: AnalysisRepository,
     private readonly smc: SmcRepository,
     private readonly setups: SetupsRepository,
+    private readonly calendar: CalendarRepository,
+    private readonly alerts: AlertsRepository,
+    private readonly practice: PracticeRepository,
   ) {}
 
   onApplicationBootstrap(): void {
@@ -138,9 +196,13 @@ export class LiveGateway implements OnApplicationBootstrap, OnApplicationShutdow
     this.subscriber.on('pmessage', (_pattern: string, channel: string, message: string) =>
       this.forwardLive(channel.slice('live:'.length), message),
     );
-    // An instrument added or disabled changes which channels exist.
-    this.subscriber.on('message', () => (this.instrumentIds = null));
-    void this.subscriber.subscribe(CONFIG_CHANNELS.instruments);
+    this.subscriber.on('message', (channel: string, message: string) => {
+      // An instrument added or disabled changes which channels exist.
+      if (channel === CONFIG_CHANNELS.instruments) this.instrumentIds = null;
+      // A calendar sync or an admin's entry: clients reload the calendar (Phase 7).
+      else if (channel === CONFIG_CHANNELS.calendar) this.forwardCalendar(message);
+    });
+    void this.subscriber.subscribe(CONFIG_CHANNELS.instruments, CONFIG_CHANNELS.calendar);
     this.reader = new Redis(this.config.REDIS_URL, {
       connectionName: 'cip-api-events',
       maxRetriesPerRequest: null,
@@ -203,7 +265,9 @@ export class LiveGateway implements OnApplicationBootstrap, OnApplicationShutdow
     });
     socket.on('unsubscribe', (payload: unknown) => {
       const parsed = UnsubscribeRequestSchema.safeParse(payload);
-      if (parsed.success) for (const ch of parsed.data.channels) void socket.leave(ch);
+      if (parsed.success)
+        for (const ch of parsed.data.channels)
+          void socket.leave(isUserChannel(ch) ? userRoom(ch, socket.data.user.id) : ch);
     });
   }
 
@@ -227,11 +291,16 @@ export class LiveGateway implements OnApplicationBootstrap, OnApplicationShutdow
         results[ch] = { mode: 'live', error: 'CHANNEL_UNKNOWN' };
         continue;
       }
-      if (!socket.rooms.has(ch) && socket.rooms.size > MAX_CHANNELS) {
+      const room = isUserChannel(ch) ? userRoom(ch, socket.data.user.id) : ch;
+      if (isUserChannel(ch) && !can(socket.data.user.role, USER_CHANNELS[ch].capability)) {
+        results[ch] = { mode: 'live', error: 'FORBIDDEN' };
+        continue;
+      }
+      if (!socket.rooms.has(room) && socket.rooms.size > MAX_CHANNELS) {
         results[ch] = { mode: 'live', error: 'RATE_LIMITED' };
         continue;
       }
-      await socket.join(ch);
+      await socket.join(room);
       results[ch] = await this.initial(socket, ch, parsed.data.since?.[ch]);
     }
     return { ok: true, results };
@@ -264,12 +333,45 @@ export class LiveGateway implements OnApplicationBootstrap, OnApplicationShutdow
       ? await this.redis.xrange(stream, `(${since}`, latest, 'COUNT', MAX_REPLAY)
       : [];
     if (replayable && entries.length < MAX_REPLAY) {
-      for (const [seq, fields] of entries)
+      for (const [seq, fields] of entries) {
+        if (isUserChannel(ch)) {
+          // Only the user's own messages.
+          const u = toUserEnvelope(ch, seq, fields);
+          if (u && u.user === socket.data.user.id) socket.emit('message', u.envelope);
+          continue;
+        }
         for (const envelope of toEnvelopes(seq, fields))
           if (envelope.ch === ch) socket.emit('message', envelope);
+      }
       return { mode: 'replayed', seq: latest };
     }
-    return { mode: 'snapshot', seq: latest, snapshot: await this.durableSnapshot(ch) };
+    return {
+      mode: 'snapshot',
+      seq: latest,
+      snapshot: isUserChannel(ch)
+        ? await this.userSnapshot(ch, socket.data.user.id)
+        : await this.durableSnapshot(ch),
+    };
+  }
+
+  /**
+   * A user channel's state, which the client puts in place of its own: for `alerts` the unread
+   * count and the latest inbox items; for `practice` the balances and the open orders (criterion
+   * 14.9: resynchronised after a disconnect).
+   */
+  private async userSnapshot(ch: UserChannel, userId: string): Promise<AlertsSnapshot | PracticeSnapshot> {
+    if (ch === 'practice') {
+      const [accounts, openOrders] = await Promise.all([
+        this.practice.accounts(userId),
+        this.practice.openOrders(userId),
+      ]);
+      return { accounts, openOrders };
+    }
+    const [unread, latest] = await Promise.all([
+      this.alerts.unreadCount(userId),
+      this.alerts.latest(userId, 20),
+    ]);
+    return { unread, latest };
   }
 
   private async liveSnapshot(ch: string): Promise<unknown> {
@@ -278,6 +380,10 @@ export class LiveGateway implements OnApplicationBootstrap, OnApplicationShutdow
     if (ch.startsWith('ticker:') || ch.startsWith('book:')) {
       const raw = await this.redis.get(ch);
       return raw ? (JSON.parse(raw) as unknown) : null;
+    }
+    if (ch === 'calendar') {
+      const at = await this.calendar.lastChange();
+      return at === null ? null : ({ at, reason: 'sync', changed: 0 } satisfies CalendarUpdated);
     }
     return null;
   }
@@ -304,6 +410,22 @@ export class LiveGateway implements OnApplicationBootstrap, OnApplicationShutdow
     };
   }
 
+  /**
+   * `calendar.updated` on the `calendar` channel. It is not durable (as implemented in Phase 7): a
+   * subscriber gets the latest change as its snapshot and reloads the calendar from REST.
+   */
+  private forwardCalendar(message: string): void {
+    const parsed = CalendarUpdatedSchema.safeParse(safeJson(message));
+    if (!parsed.success) return;
+    const envelope: Envelope = {
+      ch: 'calendar',
+      ts: this.clock(),
+      type: 'calendar.updated',
+      data: parsed.data,
+    };
+    this.forwardLive('calendar', JSON.stringify(envelope));
+  }
+
   private forwardLive(ch: string, message: string): void {
     this.lastLive.set(ch, message);
     if (!this.nsp?.adapter.rooms.has(ch)) return;
@@ -311,7 +433,7 @@ export class LiveGateway implements OnApplicationBootstrap, OnApplicationShutdow
     this.nsp.to(ch).except(SLOW_ROOM).emit('message', JSON.parse(message));
   }
 
-  /** Tails `md:events` and `an:events` and delivers each entry on its durable channel. */
+  /** Tails the durable streams and delivers each entry on its channel (a user's, to their room). */
   private async readEvents(): Promise<void> {
     const reader = this.reader!;
     for (const stream of STREAMS) {
@@ -335,6 +457,16 @@ export class LiveGateway implements OnApplicationBootstrap, OnApplicationShutdow
         for (const [stream, entries] of res ?? [])
           for (const [seq, fields] of entries) {
             this.lastSeq[stream as DurableStream] = seq;
+            const userChannel = USER_CHANNEL_OF_STREAM.get(stream);
+            if (userChannel) {
+              const u = toUserEnvelope(userChannel, seq, fields);
+              const room = u ? userRoom(userChannel, u.user) : '';
+              if (u && this.nsp?.adapter.rooms.has(room)) {
+                this.delivered++;
+                this.nsp.to(room).emit('message', u.envelope);
+              }
+              continue;
+            }
             for (const envelope of toEnvelopes(seq, fields))
               if (this.nsp?.adapter.rooms.has(envelope.ch)) {
                 this.delivered++;
@@ -385,6 +517,14 @@ export class LiveGateway implements OnApplicationBootstrap, OnApplicationShutdow
     } catch (err) {
       this.log.warn({ err }, 'health broadcast failed');
     }
+  }
+}
+
+function safeJson(text: string): unknown {
+  try {
+    return JSON.parse(text);
+  } catch {
+    return null;
   }
 }
 
@@ -443,6 +583,26 @@ export function toEnvelope(seq: string, fields: string[]): Envelope | null {
           ? `indicators:${data.instrumentId}:${data.tf}`
           : null;
   return ch ? { ch, seq, ts: Number(seq.split('-')[0]), type, data } : null;
+}
+
+/**
+ * An entry of a per-user stream (`type`, `user`, `data`) as the envelope of its user's channel:
+ * `alerts` (`alert.fired`, `notification.read`; ADR 020) or `practice` (`practice.order`,
+ * `practice.fill`, `practice.account`; ADR 021; `practice.automatic`, ADR 022). Null for a type the
+ * channel does not carry.
+ */
+export function toUserEnvelope(
+  ch: UserChannel,
+  seq: string,
+  fields: string[],
+): { user: string; envelope: Envelope } | null {
+  const f: Record<string, string> = {};
+  for (let i = 0; i + 1 < fields.length; i += 2) f[fields[i]!] = fields[i + 1]!;
+  const { type, user, data } = f;
+  if (!type || !(USER_CHANNELS[ch].types as readonly string[]).includes(type) || !user || !data) return null;
+  const parsed = safeJson(data);
+  if (parsed === null) return null;
+  return { user, envelope: { ch, seq, ts: Number(seq.split('-')[0]), type, data: parsed } };
 }
 
 /** Orders Redis stream ids ("ms-seq"). */

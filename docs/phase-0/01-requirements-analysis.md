@@ -2,14 +2,14 @@
 
 | | |
 |---|---|
-| Status | Approved 2026-11-10 (Phase 0 sign-off, recommended defaults) |
+| Status | Approved 2026-11-10 (Phase 0 sign-off, recommended defaults). Amended 2026-11-13 for revision 4 (practice trading), and 2026-11-15 for revision 5 (automatic practice trading). |
 | Phase | 0 — Analysis and design |
 | Date | 2026-11-09 |
-| Source | [REQUIREMENTS.md](../../REQUIREMENTS.md), revision 3 |
+| Source | [REQUIREMENTS.md](../../REQUIREMENTS.md), revision 3; revision 4 (practice trading, [proposal 001](../proposals/001-trading.md)) approved 2026-11-13; revision 5 (automatic practice trading, [proposal 002](../proposals/002-automatic-practice-trading.md)) approved 2026-11-15 |
 
 ## 1. What we are building
 
-A self-hosted platform that watches live public market data from Binance and Coinbase for BTC, ETH, SOL and gold (through the PAXG token). It calculates technical indicators, detects Smart Money Concepts (SMC) structure and four liquidity-trap patterns, asks Grok to explain significant events, and presents everything in a web app and a Windows/macOS desktop app. It never trades. Every visual state (charts, overlays, the 3D "brain") must come from real backend data and real processing.
+A self-hosted platform that watches live public market data from Binance and Coinbase for BTC, ETH, SOL and gold (through the PAXG token). It calculates technical indicators, detects Smart Money Concepts (SMC) structure and four liquidity-trap patterns, asks Grok to explain significant events, and presents everything in a web app and a Windows/macOS desktop app. It places no real orders: users can practise buying and selling with simulated orders, filled from live market data, and no order reaches an exchange (revision 4). Every visual state (charts, overlays, the 3D "brain") must come from real backend data and real processing.
 
 ## 2. Working assumptions
 
@@ -72,7 +72,7 @@ Each requirement gets a stable ID. Tests and acceptance reports reference these 
 | SMC-03 | Order blocks, FVGs, supply/demand zones, fill tracking, internal/external labels | §3.4 | 5 |
 | SMC-04 | Pattern state machines for patterns 1–4, bullish and bearish | §3.5 | 6 |
 | SMC-05 | Confluence checklist and score | §3.6 | 6 |
-| SMC-06 | Risk reference: R:R and the position-size calculator | §3.7 | 6 (calculation), 7 (UI) |
+| SMC-06 | Risk reference: R:R and the position-size calculator, which can fill in a practice order ticket (revision 4) | §3.7 | 6 (calculation), 7 (UI), 14 (practice ticket) |
 | SMC-07 | Session volatility, economic calendar and blackout windows | §3.8 | 7 |
 | SMC-08 | Outcome tracking, statistics, replay mode, labelled golden fixtures | §3.9 | 6 (tracking), 12 (stats and replay UI) |
 | SMC-09 | No look-ahead, closed candles only, versioned rules and parameters | §3.1 | 4–6 |
@@ -87,16 +87,32 @@ Each requirement gets a stable ID. Tests and acceptance reports reference these 
 | AI-04 | Grounding validation: no price level that the engine didn't produce | §4 | 9 |
 | AI-05 | Stored history of every analysis, including rejected ones | §4 | 9 |
 | VIZ-01 | 3D brain driven only by real system activity (idle, receiving, analysing, pattern detected, completed, error) | §5 | 10 |
-| UI-01 | Pages: Command Center, AI Intelligence Center, Technical Analysis, Liquidity Map, Setup Scanner, Economic Calendar, Market Activity, Whale Tracker, Alert Center, Historical Analytics, System Health | §6 | 2–12 |
+| UI-01 | Pages: Command Center, AI Intelligence Center, Technical Analysis, Liquidity Map, Setup Scanner, Economic Calendar, Market Activity, Whale Tracker, Alert Center, Practice Trading, Historical Analytics, System Health | §6 | 2–12, 14 |
 | WH-01 | Exchange large-trade and order-book wall detection | §7 | 2 (detection), 11 (UI) |
 | WH-02 | On-chain wallet monitoring, after the provider evaluation | §7 | 11 |
-| AL-01 | Configurable alerts of every listed type, with de-duplication, rate limits, and in-app, web and desktop delivery | §8 | 8 |
+| AL-01 | Configurable alerts of every listed type, with de-duplication, rate limits, and in-app, web and desktop delivery | §8 | 8; 14 (practice alerts) |
 | WD-01 | Shared components, same backend, desktop notifications, Windows and macOS packages, resync after reconnect | §9 | 1 (shells), 8 (notifications), 13 (signed builds) |
 | SEC-01 | Credentials protected; the AI key stays on the backend; no exchange secrets in clients | §10 | 1 onward |
 | SEC-02 | Authentication, RBAC authorization, audit logging | §10 | 1 |
 | SEC-03 | AI output validation | §10 | 9 |
-| SEC-04 | No trading and no order placement anywhere | §10 | All |
+| SEC-04 | No real-money trading; no order reaches an exchange; no deposits, withdrawals or transfers. Simulated practice orders are allowed from revision 4 (TRD-01–08), and automatic ones under a user's own rules from revision 5 (TRD-09–11). | §3.1, §10 | All |
 | ENG-01 | Monorepo, clean architecture, typed contracts, migrations, environment configuration, structured logging, automated tests, Docker, CI/CD, documentation including the SMC rulebook | Engineering | 1 onward |
+
+### Practice trading (revision 4)
+
+| ID | Requirement | Spec | Phase |
+|---|---|---|---|
+| TRD-01 | A practice account per user, with a balance per venue, configurable starting balances and an audited reset | §11 | 14 |
+| TRD-02 | Spot market and limit orders to buy and sell on every monitored pair; cancelling; an optional protective stop and target that cancel each other | §11 | 14 |
+| TRD-03 | Fills simulated from the venues' live trades and order books: slippage from walking the book, limits filled only by trades through the price, partial fills, fees and the venues' order rules. Deterministic and replayable. | §11 | 14 |
+| TRD-04 | Balances, positions, realised and unrealised profit and loss, fees, and order and fill history, from a ledger that always reconciles | §11 | 14 |
+| TRD-05 | A person places every manual order; setups and the position-size calculator may fill in the ticket. Automatic practice trading (TRD-09) places orders only under a user's own rules, switched on by them. Setups, alerts, the AI and jobs never place orders. (Revision 5; until then: "Nothing places orders automatically".) | §3.1, §3.7, §11 | 14, 16 |
+| TRD-06 | Every practice screen and result is labelled as simulated; results are never presented as expected performance | §11 | 14 |
+| TRD-07 | Orders are refused when the pair's data is delayed or has a gap, or the pair is halted | §11 | 14 |
+| TRD-08 | Each user reaches only their own practice account; every order action is audited; practice alerts go through the alert pipeline | §8, §11 | 14 |
+| TRD-09 | Automatic practice trading: per-user rules (account, pairs, patterns, minimum checklist score, minimum reward for the risk, risk per trade) and limits (open trades, one per pair, orders per day, daily loss); off by default; a stop that switches it off and cancels its orders. It acts on confirmed bullish setups only; never on the AI's output | §11 (revision 5) | 16 |
+| TRD-10 | Every automatic decision is logged with its reason; every automatic order is labelled "Automatic", audited with its setup and rules version, and alerted; rule changes are audited | §11 (revision 5) | 16 |
+| TRD-11 | Automatic decisions are deterministic: the same setups, market data and rules give the same decisions and fills on replay | §11 (revision 5) | 16 |
 
 ## 4. Non-functional requirements (proposed targets)
 
@@ -118,14 +134,16 @@ The spec asks for "maintainable, secure, scalable and reliable" without numbers.
 | NFR-12 | 3D performance | ≥ 50 fps at default quality on an integrated GPU (e.g., Apple M1, Intel Iris Xe); quality drops automatically below 45 fps | In-app frame-time telemetry |
 | NFR-13 | Observability | JSON logs with correlation IDs; metrics for every feed, queue and worker; traces for API and AI calls | Present in Phase 1 skeleton |
 | NFR-14 | Determinism | Replaying stored candles produces exactly the same detection digest as live processing | Replay tests in CI |
-| NFR-15 | Test coverage | ≥ 90% line coverage for the domain packages (indicators, SMC engine, contracts, AI validation); ≥ 70% for services | CI coverage gates |
+| NFR-15 | Test coverage | ≥ 90% line coverage for the domain packages (indicators, SMC engine, contracts, AI validation, and the paper engine from Phase 14); ≥ 70% for services | CI coverage gates |
+| NFR-16 | Practice fill latency | A market order's fill is published p95 ≤ 1 s after it is submitted; a waiting order's fill p95 ≤ 1 s after the trade that fills it | Broker metrics (Phase 14) |
+| NFR-17 | Automatic order latency | An automatic practice order is placed p95 ≤ 2 s after its setup is confirmed | Broker metrics (Phase 16) |
 
 > **NFR-02, decided 2026-11-11.** "Candle close" is the moment the candle is final in the platform, which is when the ingestor announces it. For Coinbase that is 2 s after the minute boundary, because of the late-trade grace. See the [implementation plan, Phase 3](08-implementation-plan.md#phase-3--technical-analysis).
 
 ## 5. Out of scope for the initial release
 
-- Placing orders, exchange accounts, portfolios or anything that moves money.
-- Strategy backtesting with profit and loss, fees or slippage. Setup outcomes are tracked in R multiples only.
+- Real-money orders, exchange accounts, or anything that moves money, automatic or not. Simulated practice trading is in scope from revision 4 (§11, TRD-01–08), and automatic practice trading from revision 5 (TRD-09–11); orders on exchange test networks wait for a separate decision.
+- Strategy backtesting with profit and loss, fees or slippage. Setup outcomes are tracked in R multiples only, and practice trading only moves forward in time.
 - Mobile apps.
 - A public, multi-tenant service.
 - The XAUUSD reference feed (optional; see decisions).

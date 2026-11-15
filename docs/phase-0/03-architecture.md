@@ -2,7 +2,7 @@
 
 | | |
 |---|---|
-| Status | Approved 2026-11-10 (Phase 0 sign-off, recommended defaults) |
+| Status | Approved 2026-11-10 (Phase 0 sign-off, recommended defaults). Amended 2026-11-13: practice trading (§21). |
 | Date | 2026-11-09 |
 | Related | [Requirements analysis](01-requirements-analysis.md) · [Data model](05-data-model.md) · [API contracts](06-api-contracts.md) · [SMC rulebook](07-smc-rulebook.md) · [Feasibility](02-feasibility.md) (verified versions and vendor facts) |
 
@@ -41,6 +41,7 @@ flowchart TB
   ing[ingestor<br/>venue connections, candles, books]
   ana[analyzer<br/>indicators, SMC engine, setups, alert rules]
   jobs[jobs<br/>BullMQ: AI, notifications, backfill, calendar, replay]
+  brk[broker<br/>practice orders, simulated fills · Phase 14]
   pg[(PostgreSQL + TimescaleDB)]
   rd[(Valkey / Redis<br/>streams, pub/sub, queues, cache, leases)]
   web --> caddy
@@ -54,6 +55,8 @@ flowchart TB
   ana --- pg
   jobs --- rd
   jobs --- pg
+  brk --- rd
+  brk --- pg
   ing -->|WS + REST| ex[(Binance / Coinbase)]
   jobs -->|HTTPS| grok[(Grok)]
 ```
@@ -64,11 +67,12 @@ flowchart TB
 | **ingestor** | Venue connections, normalisation, candle building, order books, gap and delay detection, large trades, walls, cross-venue spread, feed health | One active instance per venue (Redis lease); optional warm standby | In-memory order books, rebuilt from snapshots |
 | **analyzer** | Indicators, SMC engine, setups, checklist, outcomes, alert-rule evaluation | Partitioned by instrument through Redis leases; add instances to scale | Engine state, checkpointed to PostgreSQL |
 | **jobs** | BullMQ processors: AI analysis, notifications, backfill, calendar sync, pair-status polling, closure-calendar generation, replays, maintenance, on-chain (Phase 11) | Horizontal; per-queue concurrency and rate limits | None |
+| **broker** (Phase 14) | Practice orders: fills them from live trades and order books, and settles balances. Never contacts a venue. | One active instance (Redis lease) with a warm standby | None: orders and the ledger are in PostgreSQL |
 | **PostgreSQL + TimescaleDB** | All durable data | Vertical first; read replica later | Durable |
 | **Valkey / Redis** | Streams, pub/sub, BullMQ, caches, leases, Socket.IO adapter | Single node (AOF enabled for BullMQ) | Rebuildable, except queued jobs |
 | **Caddy** | TLS (automatic certificates), static web hosting, reverse proxy | Single | None |
 
-All four backend services ship in one `server` image with different entrypoints.
+All backend services (four, and the broker from Phase 14) ship in one `server` image with different entrypoints.
 
 ## 4. Monorepo
 
@@ -179,6 +183,8 @@ docs/
 |---|---|---|---|
 | Stream | `md:candles:{instrumentId}` | ingestor → analyzer | Wake-up signal: candles are final at boundary t. The analyzer reads the candles from PostgreSQL. |
 | Stream | `md:events` | ingestor → api, jobs | Gaps, feed status, large trades, walls, spreads |
+| Stream | `md:trades:{instrumentId}` (Phase 14) | ingestor → broker | Every trade (capped), for practice fills |
+| Stream | `practice:events` (Phase 14) | broker → api | Order, fill and balance updates for each user's `practice` channel |
 | Stream | `an:events` | analyzer → api, jobs | Indicator updates, SMC detections, setup transitions |
 | Stream | `ai:events` | jobs → api | AI analysis lifecycle |
 | Stream | `alerts:events` | analyzer → jobs, api | Fired alerts |
@@ -334,6 +340,16 @@ sequenceDiagram
   - After reconnecting, a client gets unread items from the inbox. The desktop app shows one summary notification ("5 alerts while you were away") instead of a burst.
 - Alerts from catch-up processing are labelled **late**.
 
+> **As implemented in Phase 8** ([ADR 020](../adr/020-alerts-evaluation-and-delivery.md)):
+>
+> - **One evaluator.** `packages/alerts` holds the evaluator, shared by the analyzer (live) and the API's rule test (a dry run over stored history).
+> - **Per instrument.** The analyzer evaluates rules on its own published output, right after the actor publishes, and on prices from the `ticker:{id}` key once a second, for the instruments whose lease it holds.
+> - **Global sources.** One instance, holding `lease:analyzer:alerts`, evaluates `md:events` (from a cursor kept in Redis), the stored PAXG spread, and a 5 s clock for upcoming releases and gold-market sessions.
+> - **Rules.** They are re-read when their fingerprint changes (checked every 5 s); there is no `config:alerts` subscription.
+> - **Cooldowns** are Redis `SET NX PX` keys, per rule and subject. **De-duplication** is `UNIQUE (rule_id, dedupe_key)`.
+> - **Delivery.** The analyzer adds a job to the BullMQ `notifications` queue. The jobs service writes the inbox and appends `alert.fired` to `alerts:events`, which every API instance pushes to the owner's `alerts` channel. So `alerts:events` flows jobs, api → api, not analyzer → jobs, api.
+> - **Quiet delivery.** Alerts inside a rule's quiet hours, or beyond 20 native notifications a minute per user, are delivered quiet: inbox only.
+
 ## 10. Real-time gateway
 
 - Socket.IO, WebSocket transport only (so no sticky sessions), namespace `/v1`.
@@ -347,6 +363,7 @@ sequenceDiagram
 
 - `packages/app`: React, TypeScript, TanStack Router, TanStack Query (REST), Zustand (live state), a Socket.IO connection manager, react-hook-form + zod.
 - **Charts**: a candlestick library with custom drawing primitives for zones, levels, sweep markers and closure shading ([feasibility §7](02-feasibility.md#7-stack-versions-and-licences)). Overlays come only from the detection API; the client never detects anything itself.
+  > **As implemented in Phase 7** ([ADR 018](../adr/018-charts-on-lightweight-charts.md)): Lightweight Charts 5.2.1 with one series primitive that draws the whole overlay and records what it drew (`data-drawn`, the overlay-parity test hook of criterion 7.1). The chart pages load lazily, with the library in their chunks. The economic calendar is synced by the jobs service (BEA, then FRED, every 6 hours and at start-up; FOMC statements are entered by admins), and the analyzer gives it to the engine as known at each decision ([ADR 019](../adr/019-economic-calendar-as-known.md)).
 - **3D**: React Three Fiber, lazy-loaded. Requires WebGL2; otherwise a 2D status card is shown.
 - **Design system**: Tailwind + shadcn/ui with dark-theme tokens. Bullish/bearish colours are colour-blind-safe and always paired with an icon or label.
 - **Platform interface**: `notify()`, `secureStore`, `openExternal()`, `onSleepWake()` and `appVersion`. The web and Tauri implementations are injected at startup.
@@ -374,6 +391,7 @@ The brain is a live view of system activity, divided into regions mapped to subs
 
 - Uses the same `packages/app` build with the Tauri platform implementation.
 - **First run**: server URL, then login. The refresh token goes into the OS keychain through a small Rust command (`keyring` crate); the access token is kept in memory.
+  - Phase 8: the server URL is kept in `settings.json` in the app config folder, written atomically by a Rust command, not in WebView storage. A forced stop of the app could lose WebView storage's newest writes.
 - **Capabilities** are limited to: notifications, window state, tray, optional autostart, the keyring command, and opening external links. No shell access and no filesystem access beyond app config.
 - **CSP**: `default-src 'self'; connect-src https://<server> wss://<server>; img-src 'self' data:`. No remote scripts.
 - Sleep/wake and network changes trigger reconnect and resync.
@@ -396,15 +414,16 @@ The brain is a live view of system activity, divided into regions mapped to subs
 |---|---|---|---|
 | View dashboards, charts, setups, AI history | ✓ | ✓ | ✓ |
 | Personal alert rules and notifications | ✓ | ✓ | ✓ |
+| Practice trading on their own account (Phase 14) | ✓ | ✓ | ✓ |
 | Request on-demand AI analysis (budgeted) | | ✓ | ✓ |
 | Run replays; label fixtures | | ✓ | ✓ |
-| Manage instruments, profiles and settings (AI budget, thresholds) | | | ✓ |
+| Manage instruments, profiles and settings (AI budget, thresholds, practice fees and starting balances) | | | ✓ |
 | Manage users; view the audit log | | | ✓ |
 
 **Audit log**
 
 - Append-only, with a SHA-256 hash chain computed by a database trigger. The application's database role can't update or delete rows.
-- Logged events: logins (success and failure), MFA changes, user and role changes, instrument, profile and settings changes, alert-rule changes, on-demand AI requests, replays and exports.
+- Logged events: logins (success and failure), MFA changes, user and role changes, instrument, profile and settings changes, alert-rule changes, on-demand AI requests, replays and exports; from Phase 14, practice orders placed, cancelled, refused or filled, and practice account resets.
 
 **Secrets**
 
@@ -422,7 +441,7 @@ The brain is a live view of system activity, divided into regions mapped to subs
 
 **Supply chain**: lockfile, OSV scanning, Renovate, Trivy image scans, a CycloneDX SBOM per release, and base images pinned by digest.
 
-**No trading**: no exchange private endpoint is implemented. A CI check fails if adapter code references order endpoints.
+**No real trading**: no exchange private endpoint is implemented. A CI check fails if application code references an exchange's order, account or user-data endpoints, or the headers that sign private requests. Practice trading (§21) simulates orders inside the platform and never contacts a venue.
 
 ## 15. Data storage
 
@@ -497,3 +516,34 @@ Full ADRs are written in Phase 1 under `docs/adr/`.
 | 010 | Valkey as the Redis-compatible store (decision D4) | Redis 8 |
 | 011 | AI cites ids from a provided context; server validates grounding | Free-form analysis (can invent levels) |
 | 012 | Indicator reference data generated with TA-Lib in a dev-only Python tool | Hand-computed spreadsheets (slow, error-prone) |
+
+## 21. Practice trading (Phase 14)
+
+Approved 2026-11-13 ([proposal 001](../proposals/001-trading.md)). ADR 021 settles the details at the start of Phase 14.
+
+- **What it is.** Users buy and sell with practice balances. Orders are simulated inside the platform and fill from the venues' live trades and order books. No order reaches an exchange.
+- **`packages/paper-engine`** is pure, like the SMC engine: order validation against the venue's price step, quantity step and minimum order value, the fill rules, fees, and the balance ledger.
+- **`apps/broker`** is the only service that handles orders. One active instance holds a lease, with a warm standby. It reads trades from `md:trades:{instrumentId}` and the latest book from `book:{id}`, and opens no connection to any venue.
+- **Order flow.**
+  1. The api validates an order, then records it and reserves its balance in one transaction. The client's idempotency key stops a retried submission from creating a second order.
+  2. The broker fills it:
+     - market orders walk the book at once;
+     - waiting limit orders fill only when a trade prints through their price, up to the quantity traded through it;
+     - stops trigger on a trade at or through their price, then fill like market orders.
+  3. The broker settles balances and fees in the ledger, and appends the update to `practice:events` for the owner's `practice` channel.
+- **Refusals.** New orders on a pair whose data is delayed or has a gap, or that is halted, are refused with the reason. Open orders on it don't fill meanwhile.
+- **Determinism.** Fills depend only on the recorded market data and the orders, so a replay reproduces them, checked with a digest as for the SMC engine.
+- **Boundaries.** Setups, alerts, the AI and jobs can't create orders (a dependency rule). The AI context never includes orders or balances. The no-trading CI check is unchanged.
+
+> **As implemented in Phase 14** ([ADR 021](../adr/021-practice-trading-engine-and-broker.md)):
+>
+> - The api stores an accepted order as `new`, with its stop and target, and appends a `place` command. The broker holds the balance when it takes the order up, in the same transaction as any immediate fill. Database policies stop the api from writing anything but new or refused orders and starting balances.
+> - Determinism covers the configuration too: the broker journals the pairs' order rules and the fees when they change, so a replay is exact after the pair-status job or an admin has changed them. `docker compose exec broker node apps/broker/dist/cli.js replay` checks a stack's journal.
+> - The practice page is in `packages/app`, so the web and desktop apps both have it; every practice screen carries the practice banner and colour.
+
+> **As implemented in Phase 16** ([proposal 002](../proposals/002-automatic-practice-trading.md), [ADR 022](../adr/022-automatic-practice-trading.md)): automatic practice trading runs inside the broker.
+>
+> - Setup transitions from `an:events` are a third input, beside the commands and the live trades, in the same loop ordered by stream id (commands, then setups, then trades on a tie). Only transitions the auto-trader can act on are journalled: a confirmed bullish setup while someone's automatic trading is on, or the end of a setup whose automatic buy is still working. The broker keeps its place in `an:events` in `trading.broker_state`, and starts at the stream's end the first time.
+> - `AutoTrader` in `packages/paper-engine` is the pure decider, beside the engine it places through. It checks ADR 022's conditions in order, sizes the buy with the position-size calculator (capped at what the free balance buys), places it through the engine like any order, cancels a buy whose setup ends first, follows its trades' fills for the day's result, and pauses a strategy at its daily loss limit. Order and decision ids are name-based UUIDs, so a replay makes the same ones.
+> - The api stores the rules and the switch and appends `strategy` or `stop_auto` commands; the broker reads the row again in order with its other inputs. The `load` journal entry carries the auto-trader's state, and every entry carries its decisions' digest lines next to the fills', so `cip-broker replay` checks decisions as well as fills.
+> - Database policies: the broker may insert only `auto` orders, as submitted, for users who have a strategy; the api may no longer insert `auto` orders. Setups, alerts, the AI and jobs still can't create orders, and the AI never decides one.

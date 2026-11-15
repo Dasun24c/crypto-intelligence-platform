@@ -1,5 +1,5 @@
 import type { Redis } from 'ioredis';
-import { type BookSnapshot, channels, type Ticker, toWireCandle } from '@cip/contracts';
+import { type BookSnapshot, channels, type Ticker, toWireCandle, tradesStream } from '@cip/contracts';
 import { type Candle, floorTo, MINUTE_MS } from '@cip/domain';
 import type { NewTrade } from '@cip/db';
 import type {
@@ -106,6 +106,8 @@ const NO_LIVE = { publish: () => undefined } as unknown as LivePublisher;
 /** Maximum live rates (architecture §10): book 10 Hz, ticker 4 Hz. */
 const BOOK_INTERVAL_MS = 100;
 const TICKER_INTERVAL_MS = 250;
+/** `md:trades:{id}` keeps about this many trades for practice fills (ADR 021): minutes, at BTC's busiest. */
+const TRADES_STREAM_MAXLEN = '20000';
 
 /**
  * Everything that happens to one instrument's live data: candles, trades, book, ticker, gaps,
@@ -248,6 +250,30 @@ export abstract class InstrumentPipeline {
     if (!this.lastTrade || t.ts >= this.lastTrade.ts) this.lastTrade = { price: t.price, ts: t.ts };
     this.walls?.onTrade(t);
     if (this.largeTrades) this.observeOrder(this.grouper.add(t));
+    // Practice trading (ADR 021): the broker fills resting practice orders from every live trade of
+    // a monitored pair. Capped; the broker reads it within a second.
+    if (this.instrument.role === 'monitored')
+      this.deps.redis
+        .xadd(
+          tradesStream(this.instrument.id),
+          'MAXLEN',
+          '~',
+          TRADES_STREAM_MAXLEN,
+          '*',
+          'id',
+          t.tradeId,
+          'ts',
+          String(t.ts),
+          'price',
+          t.price,
+          'qty',
+          t.qty,
+          'side',
+          t.takerSide,
+        )
+        .catch((err: unknown) =>
+          this.deps.log.warn({ err, instrumentId: this.instrument.id }, 'trade stream append failed'),
+        );
   }
 
   private usdPerQuote(): string {

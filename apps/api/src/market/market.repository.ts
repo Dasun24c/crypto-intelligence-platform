@@ -38,6 +38,7 @@ export function toInstrument(r: InstrumentRow & ProfileRef): Instrument {
     }),
     priceTick: r.price_tick,
     qtyStep: r.qty_step,
+    minNotional: r.min_notional,
     isPrimaryVenue: r.is_primary_venue,
     venueStatus: r.venue_status,
     enabled: r.enabled,

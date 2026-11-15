@@ -44,11 +44,12 @@ test('a viewer signs in, sees every service running, keeps the session on reload
 
   await page.getByRole('link', { name: 'System Health' }).click();
   await expect(page.getByRole('heading', { name: 'System Health' })).toBeVisible();
-  for (const service of ['api', 'ingestor', 'analyzer', 'jobs']) {
+  for (const service of ['api', 'ingestor', 'analyzer', 'jobs', 'broker']) {
     const row = page.getByRole('row').filter({ has: page.getByRole('cell', { name: service, exact: true }) });
     // The ingestor runs but reports itself degraded while it cannot reach a venue.
     const healthy = service === 'ingestor' ? /^(OK|Degraded)$/ : 'OK';
-    await expect(row.getByText(healthy)).toBeVisible({ timeout: 30_000 });
+    // Exact: a plain "OK" would also match the "broker" cell, since text matching ignores case.
+    await expect(row.getByText(healthy, { exact: true })).toBeVisible({ timeout: 30_000 });
   }
   await expect(page.getByRole('heading', { name: 'Market data feeds' })).toBeVisible();
 

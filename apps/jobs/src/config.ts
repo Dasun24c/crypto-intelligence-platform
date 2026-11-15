@@ -23,6 +23,19 @@ export const JobsEnvSchema = z.object({
     .min(60_000)
     .default(60 * 60 * 1000),
   OTEL_EXPORTER_OTLP_ENDPOINT: z.url().optional(),
+  /**
+   * FRED API key for the economic calendar's release dates (feasibility §6.1). Optional: without it
+   * the FRED part of the sync is skipped and checklist item 8 fails safe (`calendar_unavailable`).
+   * With `FRED_API_KEY_FILE`, the file is read again at every sync, so a key added later needs no
+   * restart. An empty value counts as no key.
+   */
+  FRED_API_KEY: z.string().optional(),
+  /** How often the calendar syncs (it also syncs at start-up). */
+  CALENDAR_SYNC_EVERY_MS: z.coerce
+    .number()
+    .int()
+    .min(60_000)
+    .default(6 * 60 * 60 * 1000),
 });
 
 export type JobsConfig = z.infer<typeof JobsEnvSchema>;

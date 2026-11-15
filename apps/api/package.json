@@ -14,11 +14,13 @@
     "cli": "node dist/cli.js"
   },
   "dependencies": {
+    "@cip/alerts": "workspace:*",
     "@cip/contracts": "workspace:*",
     "@cip/db": "workspace:*",
     "@cip/domain": "workspace:*",
     "@cip/exchange-adapters": "workspace:*",
     "@cip/observability": "workspace:*",
+    "@cip/paper-engine": "workspace:*",
     "@cip/smc-engine": "workspace:*",
     "@nestjs/common": "catalog:",
     "@nestjs/core": "catalog:",

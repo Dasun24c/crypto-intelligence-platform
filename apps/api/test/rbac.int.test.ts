@@ -166,6 +166,90 @@ const ENDPOINTS: Endpoint[] = [
     policy: 'dashboards.view',
     route: '/api/v1/replays/:runId',
   },
+  // Phase 7: the economic calendar; admins enter and correct their own entries and can sync now.
+  { method: 'GET', path: '/api/v1/calendar/events', policy: 'dashboards.view' },
+  { method: 'GET', path: '/api/v1/calendar/status', policy: 'dashboards.view' },
+  { method: 'POST', path: '/api/v1/calendar/events', policy: 'settings.manage', body: {} },
+  {
+    method: 'PATCH',
+    path: `/api/v1/calendar/events/${NOBODY}`,
+    policy: 'settings.manage',
+    body: {},
+    route: '/api/v1/calendar/events/:id',
+  },
+  {
+    method: 'DELETE',
+    path: `/api/v1/calendar/events/${NOBODY}`,
+    policy: 'settings.manage',
+    route: '/api/v1/calendar/events/:id',
+  },
+  // Allowed: queues a sync on the jobs service's queue (no worker runs in this test).
+  { method: 'POST', path: '/api/v1/calendar/sync', policy: 'settings.manage' },
+  // Phase 8: every role's own alert rules and inbox (another user's rule reads as not found).
+  { method: 'GET', path: '/api/v1/alerts/rules', policy: 'alerts.own' },
+  { method: 'POST', path: '/api/v1/alerts/rules', policy: 'alerts.own', body: {} },
+  {
+    method: 'GET',
+    path: `/api/v1/alerts/rules/${NOBODY}`,
+    policy: 'alerts.own',
+    route: '/api/v1/alerts/rules/:id',
+  },
+  {
+    method: 'PATCH',
+    path: `/api/v1/alerts/rules/${NOBODY}`,
+    policy: 'alerts.own',
+    body: {},
+    route: '/api/v1/alerts/rules/:id',
+  },
+  {
+    method: 'DELETE',
+    path: `/api/v1/alerts/rules/${NOBODY}`,
+    policy: 'alerts.own',
+    route: '/api/v1/alerts/rules/:id',
+  },
+  {
+    method: 'POST',
+    path: `/api/v1/alerts/rules/${NOBODY}/test`,
+    policy: 'alerts.own',
+    route: '/api/v1/alerts/rules/:id/test',
+  },
+  { method: 'GET', path: '/api/v1/alerts/events', policy: 'alerts.own' },
+  { method: 'GET', path: '/api/v1/notifications', policy: 'alerts.own' },
+  { method: 'POST', path: '/api/v1/notifications/read-all', policy: 'alerts.own', body: {} },
+  {
+    method: 'POST',
+    path: `/api/v1/notifications/${NOBODY}/read`,
+    policy: 'alerts.own',
+    route: '/api/v1/notifications/:id/read',
+  },
+  // Phase 14: practice trading on the user's own account (every role), and its settings.
+  { method: 'GET', path: '/api/v1/practice/account', policy: 'practice.own' },
+  { method: 'POST', path: '/api/v1/practice/account/reset', policy: 'practice.own', body: {} },
+  { method: 'GET', path: '/api/v1/practice/orders', policy: 'practice.own' },
+  { method: 'POST', path: '/api/v1/practice/orders', policy: 'practice.own', body: {} },
+  {
+    method: 'GET',
+    path: `/api/v1/practice/orders/${NOBODY}`,
+    policy: 'practice.own',
+    route: '/api/v1/practice/orders/:id',
+  },
+  {
+    method: 'POST',
+    path: `/api/v1/practice/orders/${NOBODY}/cancel`,
+    policy: 'practice.own',
+    route: '/api/v1/practice/orders/:id/cancel',
+  },
+  { method: 'GET', path: '/api/v1/practice/fills', policy: 'practice.own' },
+  { method: 'GET', path: '/api/v1/practice/positions', policy: 'practice.own' },
+  // Phase 16: automatic practice trading, on the user's own practice account (every role).
+  { method: 'GET', path: '/api/v1/practice/automatic', policy: 'practice.own' },
+  { method: 'PUT', path: '/api/v1/practice/automatic', policy: 'practice.own', body: {} },
+  { method: 'POST', path: '/api/v1/practice/automatic/on', policy: 'practice.own', body: {} },
+  { method: 'POST', path: '/api/v1/practice/automatic/off', policy: 'practice.own' },
+  { method: 'POST', path: '/api/v1/practice/automatic/stop', policy: 'practice.own' },
+  { method: 'GET', path: '/api/v1/practice/automatic/decisions', policy: 'practice.own' },
+  { method: 'GET', path: '/api/v1/admin/settings/practice', policy: 'settings.manage' },
+  { method: 'PUT', path: '/api/v1/admin/settings/practice', policy: 'settings.manage', body: {} },
   { method: 'GET', path: '/api/v1/admin/instruments', policy: 'instruments.manage' },
   { method: 'POST', path: '/api/v1/admin/instruments', policy: 'instruments.manage', body: {} },
   { method: 'PATCH', path: `/api/v1/admin/instruments/${NOBODY}`, policy: 'instruments.manage', body: {} },
@@ -224,6 +308,8 @@ describe('RBAC matrix', () => {
     for (const role of [null, ...ROLES] as (Role | null)[]) {
       const ok = allowed(endpoint.policy, role);
       it(`${endpoint.method} ${endpoint.path.replace(NOBODY, ':id')} as ${role ?? 'anonymous'} → ${ok ? 'allowed' : 'refused'}`, async () => {
+        // Keep each user within the REST limit (20/s, burst 60): the table has more endpoints than the burst.
+        h.clock.advance(100);
         const res = await call(h.base, endpoint.method, endpoint.path, {
           ...(role ? { token: tokens[role] } : {}),
           ...(endpoint.body !== undefined ? { body: endpoint.body } : {}),

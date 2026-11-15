@@ -1,8 +1,10 @@
 //! Tauri host for the shared React app (architecture §13, ADR 008). The app itself lives in
 //! `packages/app`; this crate adds only what a browser cannot: the OS keychain for the refresh token,
-//! a tray icon, native notifications, opening links in the default browser and window state.
+//! a settings file for the server address, a tray icon, native notifications, opening links in the
+//! default browser and window state.
 
 mod secure_store;
+mod settings;
 mod tray;
 
 /// Builds and runs the desktop app until the user quits.
@@ -23,6 +25,8 @@ pub fn run() {
             secure_store::secure_store_get,
             secure_store::secure_store_set,
             secure_store::secure_store_delete,
+            settings::settings_get_server_url,
+            settings::settings_set_server_url,
             tray::set_tray_status,
         ])
         .run(tauri::generate_context!())

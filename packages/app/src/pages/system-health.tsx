@@ -1,3 +1,4 @@
+import { Link } from '@tanstack/react-router';
 import { useId } from 'react';
 import type { AnalysisStatus, FeedStatus, HealthStatus, Instrument, PauseReason } from '@cip/contracts';
 import {
@@ -281,7 +282,7 @@ export function SystemHealthPage() {
       <header className="flex flex-wrap items-center gap-3">
         <h1 className="text-xl font-semibold">System Health</h1>
         <Status status={data.status} />
-        <span className="text-xs text-fg-subtle">
+        <span className="text-xs text-fg-muted">
           checked {formatAge(age)} ago · {health.live ? 'live updates' : 'refreshes every 5 s'}
         </span>
       </header>
@@ -316,6 +317,21 @@ export function SystemHealthPage() {
                   <Td className="text-fg-muted">{d.detail}</Td>
                 </tr>
               ))}
+              {/* `?.`: a server from before Phase 7 does not send the calendar. */}
+              {data.calendar?.status ? (
+                <tr data-component="calendar">
+                  <Td>
+                    <Link to="/calendar" className="text-accent underline">
+                      Economic calendar
+                    </Link>
+                  </Td>
+                  <Td>
+                    <Status status={data.calendar.status} />
+                  </Td>
+                  <Td className="font-mono">—</Td>
+                  <Td className="text-fg-muted">{data.calendar.detail}</Td>
+                </tr>
+              ) : null}
             </tbody>
           </Table>
         </CardContent>
@@ -324,7 +340,7 @@ export function SystemHealthPage() {
       <Card>
         <CardHeader>
           <CardTitle>Services</CardTitle>
-          <span className="text-xs text-fg-subtle">from heartbeats; an instance silent for 15 s is down</span>
+          <span className="text-xs text-fg-muted">from heartbeats; an instance silent for 15 s is down</span>
         </CardHeader>
         <CardContent className="p-0">
           <Table>

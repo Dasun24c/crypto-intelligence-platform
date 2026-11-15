@@ -4,7 +4,7 @@ import { startTestDatabase } from '../src/testing.ts';
 declare module 'vitest' {
   export interface ProvidedContext {
     dbOwnerUrl: string;
-    dbRoleUrls: Record<'svc_api' | 'svc_ingestor' | 'svc_analyzer' | 'svc_jobs', string>;
+    dbRoleUrls: Record<'svc_api' | 'svc_ingestor' | 'svc_analyzer' | 'svc_jobs' | 'svc_broker', string>;
   }
 }
 

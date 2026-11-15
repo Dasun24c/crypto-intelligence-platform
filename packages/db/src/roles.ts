@@ -1,6 +1,6 @@
 import { type Kysely, sql } from 'kysely';
 
-export const SERVICE_ROLES = ['svc_api', 'svc_ingestor', 'svc_analyzer', 'svc_jobs'] as const;
+export const SERVICE_ROLES = ['svc_api', 'svc_ingestor', 'svc_analyzer', 'svc_jobs', 'svc_broker'] as const;
 export type ServiceRole = (typeof SERVICE_ROLES)[number];
 
 /**

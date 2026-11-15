@@ -1,11 +1,16 @@
 import { Link, Outlet } from '@tanstack/react-router';
 import {
   Activity,
+  Bell,
+  CalendarDays,
   ChartCandlestick,
   ChartLine,
   Coins,
+  FlaskConical,
+  Layers,
   LayoutDashboard,
   LogOut,
+  ScanSearch,
   ScrollText,
   Tags,
   UserCircle,
@@ -17,7 +22,9 @@ import { useSyncExternalStore, type ComponentType } from 'react';
 import { type Capability, can } from '@cip/contracts';
 import { Badge, Button, cn } from '@cip/ui';
 import { LiveConnectionBadge } from '../components/market-badges.js';
+import { AlertsProvider } from '../live/alerts.js';
 import { useCurrentUser, useSession } from '../session.js';
+import { AlertsBell } from './alerts-bell.js';
 
 interface NavItem {
   to: string;
@@ -32,6 +39,11 @@ const NAV: NavItem[] = [
   { to: '/', label: 'Command Center', icon: LayoutDashboard },
   { to: '/market', label: 'Market Activity', icon: ChartCandlestick },
   { to: '/analysis', label: 'Technical Analysis', icon: ChartLine, capability: 'dashboards.view' },
+  { to: '/liquidity', label: 'Liquidity Map', icon: Layers, capability: 'dashboards.view' },
+  { to: '/setups', label: 'Setup Scanner', icon: ScanSearch, capability: 'dashboards.view' },
+  { to: '/calendar', label: 'Economic Calendar', icon: CalendarDays, capability: 'dashboards.view' },
+  { to: '/alerts', label: 'Alert Center', icon: Bell, capability: 'alerts.own' },
+  { to: '/practice', label: 'Practice Trading', icon: FlaskConical, capability: 'practice.own' },
   { to: '/system', label: 'System Health', icon: Activity },
   { to: '/admin/instruments', label: 'Instruments', icon: Coins, capability: 'instruments.manage' },
   { to: '/admin/users', label: 'Users', icon: Users, capability: 'users.manage' },
@@ -63,6 +75,14 @@ function ConnectionStatus() {
 }
 
 export function Shell() {
+  return (
+    <AlertsProvider>
+      <ShellLayout />
+    </AlertsProvider>
+  );
+}
+
+function ShellLayout() {
   const session = useSession();
   const user = useCurrentUser();
   return (
@@ -95,6 +115,7 @@ export function Shell() {
       </nav>
       <div className="flex min-w-0 flex-1 flex-col">
         <header className="flex h-12 items-center justify-end gap-3 border-b border-border px-4">
+          {can(user.role, 'alerts.own') ? <AlertsBell /> : null}
           <ConnectionStatus />
           <LiveConnectionBadge />
           <span className="text-sm text-fg-muted">{user.displayName}</span>

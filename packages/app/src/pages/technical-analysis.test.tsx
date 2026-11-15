@@ -18,6 +18,13 @@ import {
 } from '../test/fixtures.js';
 import { type ApiRequest, type ApiRoutes, mockApi, problem, renderApp, signedIn } from '../test/harness.js';
 
+// The chart draws on a canvas, which jsdom lacks: the chart itself is not created, but its
+// container, its text summaries and the data the page gives it are real.
+vi.mock('../charts/use-chart.js', () => ({
+  useChart: () => ({ ref: () => undefined, chart: null, annotate: () => undefined }),
+  toChartTime: (ms: number) => Math.floor(ms / 1000),
+}));
+
 const MINUTE = 60_000;
 const NOW = Math.floor(Date.now() / MINUTE) * MINUTE; // open time of the candle in progress
 const LAST = NOW - MINUTE; // the latest closed candle
@@ -107,21 +114,21 @@ describe('Technical Analysis', () => {
     expect(within(runCard).getByText('crypto-majors v1')).toBeTruthy();
     expect(await within(runCard).findByText('2 s')).toBeTruthy();
 
-    // The charts, each with a text summary.
-    const price = screen.getByRole('img', { name: /candles with EMA 21, EMA 55, EMA 233 and VWAP/ });
-    expect(price.querySelectorAll('polyline').length).toBeGreaterThan(0);
+    // The chart (on a canvas, so not drawn here) and its text summaries, pane by pane.
+    const chart = screen.getByRole('img', {
+      name: /candles with EMA 21, EMA 55, EMA 233 and VWAP; volume; RSI 9; MACD 12\/26\/9/,
+    });
+    expect(chart.dataset['chart']).toBe('indicators');
     expect(
-      await findSummary(/^6 candles from .*Last price 74,000.00 USDT; high 74,010.50, low 73,980.25\./),
+      await findSummary(/^6 candles from .*Last price 74,000\.00 USDT; high 74,010\.50, low 73,980\.25\./),
     ).toBeTruthy();
     expect(summary(/Candles before .* are warm-up\./)).toBeTruthy();
-    expect(screen.getByRole('img', { name: /^RSI 9, 0 to 100/ })).toBeTruthy();
     expect(
       summary(/^RSI 9 50\.00 at .*; lowest 50\.00, highest 55\.00 over 6 candles\. 0 closed above 70/),
     ).toBeTruthy();
-    expect(screen.getByRole('img', { name: /^MACD 12\/26\/9 with its signal line/ })).toBeTruthy();
     expect(summary(/MACD is above its signal line\./)).toBeTruthy();
-    expect(screen.getByRole('img', { name: /^Volume per candle in BTC/ })).toBeTruthy();
     expect(summary(/No volume anomaly \(z ≥ 3\.5\) in this window\./)).toBeTruthy();
+    expect(screen.getByText(/TradingView Lightweight Charts™/)).toBeTruthy();
 
     // The latest 150 points and candles of the chosen timeframe.
     const request = find('GET', `/api/v1/indicators/${ID}`)[0]!;

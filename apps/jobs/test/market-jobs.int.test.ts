@@ -30,13 +30,14 @@ const trading = (symbol: string, priceTick = '0.01'): PairStatus => ({
   status: 'trading',
   priceTick,
   qtyStep: symbol.endsWith('USDT') ? '0.00001' : '0.00000001',
+  minNotional: '0',
 });
 
 describe('pair status', () => {
   it('records halts and delistings, updates tick sizes, raises feed events and reloads the ingestor', async () => {
     const before = await owner
       .selectFrom('market.instruments')
-      .select(['venue_symbol', 'price_tick', 'qty_step'])
+      .select(['venue_symbol', 'price_tick', 'qty_step', 'min_notional'])
       .execute();
     const tickOf = (s: string) => before.find((r) => r.venue_symbol === s)!;
     const binance = {
@@ -59,6 +60,7 @@ describe('pair status', () => {
           status: product === 'PAXG-USD' ? 'halted' : 'trading',
           priceTick: row.price_tick,
           qtyStep: row.qty_step,
+          minNotional: product === 'BTC-USD' ? '1' : row.min_notional,
         };
       },
     };
@@ -79,15 +81,18 @@ describe('pair status', () => {
       'binance:BTCUSDT',
       'binance:ETHUSDT',
       'binance:SOLUSDT',
+      'coinbase:BTC-USD', // its minimum order value became known (ADR 021)
       'coinbase:PAXG-USD',
       'coinbase:USDT-USD',
     ]);
     const rows = await owner
       .selectFrom('market.instruments')
-      .select(['venue_symbol', 'venue_status', 'price_tick'])
+      .select(['venue_symbol', 'venue_status', 'price_tick', 'min_notional'])
       .execute();
     const row = (s: string) => rows.find((r) => r.venue_symbol === s)!;
     expect(row('BTCUSDT')).toMatchObject({ venue_status: 'trading', price_tick: '0.1' });
+    // The minimum order value is read too (ADR 021).
+    expect(row('BTC-USD')).toMatchObject({ min_notional: '1' });
     expect(row('ETHUSDT').venue_status).toBe('trading'); // confirmed quietly: no event
     expect(row('SOLUSDT').venue_status).toBe('delisted');
     expect(row('PAXG-USD').venue_status).toBe('halted');
