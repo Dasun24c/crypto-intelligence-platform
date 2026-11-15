@@ -1,6 +1,7 @@
 /// <reference lib="dom" />
 import AxeBuilder from '@axe-core/playwright';
 import { type APIRequestContext, type BrowserContext, expect, type Page, test } from '@playwright/test';
+import { LIVE_ONLY, REPLAY_STACK } from '../support/stack.ts';
 import { accessToken, signIn } from '../support/session.ts';
 import { VIEWER } from '../support/users.ts';
 
@@ -46,6 +47,7 @@ function onSteps(value: number, step: string, up: boolean): string {
 
 test.describe('Phase 14', () => {
   test.describe.configure({ mode: 'serial' });
+  test.skip(REPLAY_STACK, LIVE_ONLY);
   test.setTimeout(10 * 60_000);
 
   let ctx: BrowserContext;

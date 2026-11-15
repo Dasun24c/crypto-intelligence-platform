@@ -2,7 +2,7 @@
 
 | | |
 |---|---|
-| Status | **Built; waiting for your Grok key for criterion 9.1, then your acceptance.** Five of the six criteria are met; 9.1 needs a real call, with your key. Committed on 2026-11-15 at your request, on the branch `phase-9/ai-intelligence` |
+| Status | **Built; waiting for your Grok key for criterion 9.1, then your acceptance.** Five of the six criteria are met; 9.1 needs a real call, with your key. Committed on 2026-11-15 at your request, on the branch `phase-9/ai-intelligence`, pushed, and open as pull request #4 into `phase-16/automatic-practice-trading` |
 | Date | 2026-11-15 |
 | Scope | [Implementation plan, Phase 9](../phase-0/08-implementation-plan.md#phase-9--ai-intelligence), REQUIREMENTS §4 and §10 (AI-01–AI-05, SEC-01, SEC-03, NFR-08), [architecture §8](../phase-0/03-architecture.md#8-ai-pipeline), [ADR 011](../adr/011-ai-grounded-citations.md), [ADR 023](../adr/023-ai-pipeline.md) |
 | Evidence | This machine (Windows 11, Docker Desktop, Node.js 26.13.0); the local Compose stack streaming live public data from Binance and Coinbase, redeployed with Phase 9 at 15:13 UTC on 2026-11-15, without a Grok key |
@@ -87,6 +87,7 @@ On the local stack (2026-11-15, UTC):
 - **16:35**: redeployed on the final code (the follower's read loop fixed, finding 9).
 - **16:36–16:46**: every end-to-end spec, all phases: **26 of 26** passed.
 - **16:46–16:47**: the image and container scans on the final images: passed (the same 26 and 6 layers).
+- **17:25–17:29**: pull request #4's first CI run failed on two jobs (findings 10 and 11, below); the Desktop build passed. Both are fixed: the jobs integration suite passed 69 of 69 in CI's file order, and the end-to-end suite as CI's replay stack sees it passed 9 and skipped 17.
 
 ## Found by verification and fixed
 
@@ -101,6 +102,8 @@ On the local stack (2026-11-15, UTC):
 | 7 | The server image did not build `@cip/ai` (the first redeploy) | The api and the jobs service did not start | Added to the Dockerfile's build and copy steps |
 | 8 | The image scan's helper was used before it was defined | The scan crashed instead of scanning | Fixed, and proved with a planted key |
 | 9 | The trigger follower's read loop guarded only the read itself: an error while saving its cursor would have rejected the loop's promise unhandled (found re-reading the code) | Node stops a process on an unhandled rejection: a Redis hiccup could have restarted the jobs service | Every pass of the loop is guarded; a failed pass waits a second and reads again |
+| 10 | The jobs service's AI test seeded two economic events inside the calendar test's window (the test files share one database, and economic events cannot be removed), and expected exact data-quality lists; CI ran the files in another order (pull request #4) | The calendar sync test failed in CI | The AI test's dates moved outside that window, and it checks only its own entries; run in CI's order here (no timing cache): 69 of 69 |
+| 11 | The end-to-end specs from Phase 7 on need the live venues' pairs, books and trades; CI runs them on the replay stack (criterion 2.11), where they fail at their first step. Their retries' sign-ins then used up the login limit, failing the smoke test too (pull request #4) | Every pull request from Phase 7 on would fail CI | On the replay stack the Phase 7, 8, 14 and 16 specs are skipped, saying why (`e2e/support/stack.ts`); they still run against the live stack. Phase 9's spec runs on either stack (any enabled BTC/USDT pair) and signs its analyst in once |
 
 The tests needed these corrections; none is a product defect:
 
@@ -117,7 +120,7 @@ The tests needed these corrections; none is a product defect:
 
 - `pnpm verify` passes on the final code (2026-11-15, 16:02–16:05 UTC; Turbo reused the results of the earlier runs where nothing had changed): formatting, lint, typecheck, dependency rules, the no-trading check, unit tests with coverage gates, the build and the artefact scan. Three earlier runs stopped on findings fixed above (an api test's type, the contracts' branch gate) and, twice, on app test files whose workers did not start within vitest's 60 s while every package's suite ran at once on this machine (all the app's tests that ran passed, as in Phases 14 and 16).
 - The integration suites of all seven packages that have them pass with coverage: six in the full run (16:13–16:29 UTC), the database's alone at 16:31 after its new test (above).
-- Every end-to-end spec passed on the final build (below).
+- Every end-to-end spec passed on the final build (below). In CI, on the replay stack, the Phase 7, 8, 14 and 16 specs are skipped (finding 11): there, 9 pass and 17 are skipped.
 
 As before, the integration figures count only integration tests: each package's integration run also repeats its unit tests.
 
@@ -142,5 +145,6 @@ The other packages (alerts, domain, exchange-adapters, indicators, market-data, 
 - **9.1 needs your key** (above). Until the first real calls, the prompt and the checks are tuned on crafted answers: real answers may be rejected more often at first. Every rejection is kept with its reasons, so they can be read and the thresholds tuned.
 - **The default models and prices** (`grok-4.3`, the fallback `grok-4.20-0309-non-reasoning`, and their prices) come from the feasibility study; check them against your xAI console. The startup check falls back automatically if the account does not offer the model, and System Health says so.
 - **Stored analyses on the stack**: without a key, the stack's history is empty; the history and the analysis pages are tested with stored analyses in the app's unit tests and the api's integration tests.
+- **End to end in CI**: the replay stack has no live venues, so CI skips the Phase 7, 8, 14 and 16 specs; they run against the live stack, as each phase's report describes. Making them work on recorded data is work for later (Phase 13's hardening, for example).
 - **The desktop app** was not rebuilt for this phase; the page is in `packages/app`, so the desktop build gets it with the next build.
 - **Committed** at your request on `phase-9/ai-intelligence`, on top of Phase 16's `c318ed5`.

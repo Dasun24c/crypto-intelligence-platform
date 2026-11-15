@@ -1,6 +1,7 @@
 /// <reference lib="dom" />
 import { Redis } from 'ioredis';
 import { type APIRequestContext, type BrowserContext, expect, type Page, test } from '@playwright/test';
+import { LIVE_ONLY, REPLAY_STACK } from '../support/stack.ts';
 import { accessToken, adminAccessToken, signIn } from '../support/session.ts';
 import { VIEWER } from '../support/users.ts';
 
@@ -37,6 +38,7 @@ interface Notification {
 
 test.describe('Phase 8', () => {
   test.describe.configure({ mode: 'serial' });
+  test.skip(REPLAY_STACK, LIVE_ONLY);
   test.setTimeout(20 * 60_000);
 
   let ctx: BrowserContext;

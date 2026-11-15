@@ -40,8 +40,12 @@ const ETH = '019a6f00-0000-7000-8000-000000000002';
 const SOL = '019a6f00-0000-7000-8000-000000000003';
 const PAXG = '019a6f00-0000-7000-8000-000000000004';
 const RUN = '019a6f00-0000-7000-8000-0000000a1001';
-/** 20 November 2026, 10:00 UTC. */
-const NOW = Date.UTC(2026, 10, 20, 10, 0);
+/**
+ * 16 March 2027, 10:00 UTC. The test files share one database and economic events cannot be
+ * removed, so this stays outside the calendar test's window (60 days from 12 November 2026), which
+ * reads every event in it, and away from the budget test's December and January.
+ */
+const NOW = Date.UTC(2027, 2, 16, 10, 0);
 const H = 3_600_000;
 const MIN = 60_000;
 /** Not a real key; the fake API only checks that it arrives. */
@@ -625,8 +629,15 @@ describe('the context the model sees (API contracts §6.1)', () => {
     });
     // The end of the setup's UUID, and the transition's number.
     expect(context.recentEvents.find((e) => e.type === 'setup')!.id).toMatch(/^evt:000a2040:\d+$/);
-    expect(context.calendar).toEqual([expect.objectContaining({ title: 'US CPI', impact: 'high' })]);
-    expect(context.dataQuality).toEqual([]);
+    // The next 48 h at medium or high impact (another test file may have synced more events).
+    expect(context.calendar).toEqual(
+      expect.arrayContaining([expect.objectContaining({ title: 'US CPI', impact: 'high' })]),
+    );
+    expect(context.calendar.map((c) => c.title)).not.toContain('A minor release');
+    // The run and the ticker are there (another test file may leave an open gap on BTC).
+    const codes = context.dataQuality.map((d) => d.code);
+    expect(codes).not.toContain('no_run');
+    expect(codes).not.toContain('no_ticker');
 
     const reviewed = await contexts.build(BTC, NOW, { setupId: id(0xa2041) });
     expect(reviewed.context.setups).toHaveLength(2);
@@ -636,7 +647,7 @@ describe('the context the model sees (API contracts §6.1)', () => {
   it('says what is missing: no live run, no ticker; and gives PAXG its gold market', async () => {
     const { context, runId } = await contexts.build(PAXG, NOW);
     expect(runId).toBeNull();
-    expect(context.dataQuality.map((d) => d.code)).toEqual(['no_run', 'no_ticker']);
+    expect(context.dataQuality.map((d) => d.code)).toEqual(expect.arrayContaining(['no_run', 'no_ticker']));
     expect(context.goldMarket).toMatchObject({
       id: 'gold',
       status: expect.stringMatching(/^(open|closed)$/),

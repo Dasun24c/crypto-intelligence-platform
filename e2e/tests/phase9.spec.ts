@@ -34,19 +34,30 @@ test.describe('Phase 9', () => {
 
   let viewerCtx: BrowserContext;
   let analystCtx: BrowserContext;
+  /** The viewer's page. */
   let page: Page;
+  let analyst: Page | null = null;
   let api: APIRequestContext;
   let headers: Record<string, string>;
   let redis: Redis;
   let btc: Instrument;
   let health: Health;
 
-  const scan = async () => {
-    const results = await new AxeBuilder({ page }).withTags(['wcag2a', 'wcag2aa']).analyze();
+  const scan = async (p: Page = page) => {
+    const results = await new AxeBuilder({ page: p }).withTags(['wcag2a', 'wcag2aa']).analyze();
     return results.violations
       .filter((v) => v.impact === 'serious' || v.impact === 'critical')
       .map((v) => v.id);
   };
+
+  /** The analyst's page, signed in once: every sign-in counts against the login limit (5 a minute). */
+  async function analystPage(): Promise<Page> {
+    if (!analyst) {
+      analyst = await analystCtx.newPage();
+      await signIn(analyst, ANALYST);
+    }
+    return analyst;
+  }
 
   test.beforeAll(async ({ browser, playwright }, testInfo) => {
     const baseURL = testInfo.project.use.baseURL;
@@ -54,8 +65,11 @@ test.describe('Phase 9', () => {
     headers = await accessToken(api, ANALYST);
     redis = new Redis(REDIS_URL, { maxRetriesPerRequest: 2 });
     const instruments = (await (await api.get('/api/v1/instruments', { headers })).json()) as Instrument[];
-    btc = instruments.find((i) => i.venue === 'binance' && i.base === 'BTC' && i.quote === 'USDT')!;
-    expect(btc, 'Binance BTC/USDT is enabled').toBeTruthy();
+    // Binance's pair on the live stack; the replay venue's on the replay stack (CI, criterion 2.11).
+    const pair = (venue: string) =>
+      instruments.find((i) => i.venue === venue && i.base === 'BTC' && i.quote === 'USDT');
+    btc = (pair('binance') ?? pair('replay'))!;
+    expect(btc, 'a BTC/USDT pair is enabled').toBeTruthy();
     // The jobs service reports Grok's state within 30 s of starting.
     await expect
       .poll(async () => ((await (await api.get('/api/v1/system/health', { headers })).json()) as Health).ai, {
@@ -101,20 +115,19 @@ test.describe('Phase 9', () => {
 
   test('9.3 an analyst asks from the keyboard; without a key the request is held, and the API refuses one', async () => {
     test.skip(health.ai!.keyConfigured, 'A Grok key is configured: requests go through (criterion 9.1).');
-    page = await analystCtx.newPage();
-    await signIn(page, ANALYST);
-    await page.goto('/ai');
-    const form = page.getByRole('form', { name: 'Request an analysis' });
+    const ap = await analystPage();
+    await ap.goto('/ai');
+    const form = ap.getByRole('form', { name: 'Request an analysis' });
     await expect(form).toBeVisible();
     await expect(form.getByText('No Grok API key is configured.')).toBeVisible();
     await expect(form.getByRole('button', { name: 'Ask Grok' })).toBeDisabled();
     // Keyboard only: the fields are reachable and change without a mouse.
     await form.getByLabel('Instrument').focus();
-    await page.keyboard.press('Tab');
+    await ap.keyboard.press('Tab');
     await expect(form.getByLabel('What for')).toBeFocused();
     await form.getByLabel('What for').selectOption('refresh');
     await expect(form.getByLabel('What for')).toHaveValue('refresh');
-    expect(await scan()).toEqual([]);
+    expect(await scan(ap)).toEqual([]);
 
     const refused = await api.post('/api/v1/ai/analyses', {
       headers,
@@ -130,9 +143,7 @@ test.describe('Phase 9', () => {
     expect(free.status()).toBe(400);
   });
 
-  test('9.3 with a cap that leaves no room, the page says "AI budget reached" and holds requests', async ({
-    browser,
-  }, testInfo) => {
+  test('9.3 with a cap that leaves no room, the page says "AI budget reached" and holds requests', async () => {
     const admin = await adminAccessToken(api);
     const before = (await (await api.get('/api/v1/admin/settings/ai', { headers: admin })).json()) as Record<
       string,
@@ -154,14 +165,11 @@ test.describe('Phase 9', () => {
       await expect(budget.getByRole('alert')).toContainText('AI budget reached');
       expect(await scan()).toEqual([]);
       // An analyst's form holds the request with the same words; the API refuses one.
-      const own = await browser.newContext({ baseURL: testInfo.project.use.baseURL });
-      const analystPage = await own.newPage();
-      await signIn(analystPage, ANALYST);
-      await analystPage.goto('/ai');
-      const form = analystPage.getByRole('form', { name: 'Request an analysis' });
+      const ap = await analystPage();
+      await ap.goto('/ai');
+      const form = ap.getByRole('form', { name: 'Request an analysis' });
       await expect(form.getByRole('button', { name: 'Ask Grok' })).toBeDisabled();
       await expect(form.getByText('AI budget reached.')).toBeVisible();
-      await own.close();
       // Without a key the api answers 503 first (no key, then the budget).
       if (!health.ai!.keyConfigured) return;
       const refused = await api.post('/api/v1/ai/analyses', {
