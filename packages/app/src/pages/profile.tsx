@@ -67,7 +67,7 @@ function ChangePassword() {
         />
         {errors.confirm ? <p className="text-xs text-crit">{errors.confirm.message}</p> : null}
       </div>
-      <p className="text-xs text-fg-subtle">Changing your password signs you out on every device.</p>
+      <p className="text-xs text-fg-muted">Changing your password signs you out on every device.</p>
       <Button type="submit" busy={isSubmitting}>
         Change password
       </Button>

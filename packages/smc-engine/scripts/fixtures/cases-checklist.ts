@@ -120,7 +120,7 @@ function newsBlackout(blocked: boolean): Case {
     class: 'bearish',
     description: blocked
       ? `p2-bearish-001 with a high-impact USD release scheduled 20 minutes after its confirmation (54): inside the crypto profile's 30-minute blackout, item 8 fails (evidence: the event). News is not mandatory: the setup still confirms, scoring ${score(credits)} instead of ${score(credits) + 5}.`
-      : `p2-bearish-001 with the economic calendar unavailable (null): item 8 fails with reason calendar_unavailable, as it does on the live stack until Phase 7 brings the calendar. Score ${score(credits)}.`,
+      : `p2-bearish-001 with the economic calendar unavailable (null): item 8 fails with reason calendar_unavailable, as it did on the live stack until Phase 7 brought the calendar. Score ${score(credits)}.`,
     start,
     main: { tf: '5m', bars },
     more: [{ tf: '1h', start: MONDAY, bars: [...P2_HISTORY, ...agg(bars, 12)] }],
@@ -143,6 +143,147 @@ function newsBlackout(blocked: boolean): Case {
       }),
     ],
   };
+}
+
+type NewsEvent = NonNullable<Case['economicEvents']>[number];
+const MIN = 60_000;
+const usd = (id: string, at: number, extra: Partial<NewsEvent> = {}): NewsEvent => ({
+  id,
+  at,
+  currency: 'USD',
+  impact: 'high',
+  ...extra,
+});
+
+/**
+ * Rulebook §7 item 8 and I38 (criterion 7.3): p2-bearish-001, confirmed at 54, each time with a
+ * different economic calendar. Item 8 fails when a high-impact event in the profile's currencies is
+ * scheduled from `before` to `after` minutes around the confirmation, bounds included, as the
+ * platform knew the calendar at that moment. Only item 8 and the score change.
+ */
+function p2News(
+  id: string,
+  description: string,
+  calendar: (confirmedAt: number) => Pick<Case, 'economicEvents' | 'calendarAvailableFrom' | 'params'>,
+  news: { credit: 0 | 1; evidence: Record<string, unknown> },
+): Case {
+  const start = MONDAY + P2_HISTORY.length * HOUR;
+  const tl = timeline(start, '5m');
+  const bars: Bar[] = [...P2_APPROACH, P2_SWEEP, ...P2_CONFIRM, bar(104.2, 105, 104.1, 104.6)];
+  const key = setupKey('eq_near_poi', 'bearish', 48, tl);
+  const confirmedAt = tl.close(54);
+  const credits = [0, 1, 1, 1, 1, 1, 0, news.credit];
+  return {
+    id,
+    concept: 'checklist',
+    class: 'bearish',
+    description: `p2-bearish-001, confirmed at 54 (${new Date(confirmedAt).toISOString()}), ${description} Score ${score(credits)}.`,
+    start,
+    main: { tf: '5m', bars },
+    more: [{ tf: '1h', start: MONDAY, bars: [...P2_HISTORY, ...agg(bars, 12)] }],
+    ...calendar(confirmedAt),
+    expected: [
+      transition(key, 54, {
+        from: 'triggered',
+        to: 'confirmed',
+        checklist: [
+          ...checklist(credits as never).slice(0, 7),
+          { item: 'news_clear', credit: news.credit, evidence: news.evidence },
+        ],
+        score: score(credits),
+      }),
+    ],
+  };
+}
+
+function newsWindowCases(): Case[] {
+  const fails = (ids: string[]) => ({ credit: 0 as const, evidence: { events: ids } });
+  const clear = { credit: 1 as const, evidence: {} };
+  const goldWindow = { setups: { checklist: { newsBlackoutMin: { before: 60, after: 60 } } } };
+  return [
+    p2News(
+      'checklist-news-edge-before-001',
+      'with a high-impact USD release exactly 30 minutes before it: the window includes its bounds, so item 8 fails.',
+      (c) => ({ economicEvents: [usd('cpi', c - 30 * MIN)] }),
+      fails(['cpi']),
+    ),
+    p2News(
+      'checklist-news-clear-before-001',
+      "with a high-impact USD release 31 minutes before it: outside the crypto profile's 30 minutes, item 8 passes.",
+      (c) => ({ economicEvents: [usd('cpi', c - 31 * MIN)] }),
+      clear,
+    ),
+    p2News(
+      'checklist-news-edge-after-001',
+      'with a high-impact USD release exactly 30 minutes after it: inside the window, item 8 fails.',
+      (c) => ({ economicEvents: [usd('employment', c + 30 * MIN)] }),
+      fails(['employment']),
+    ),
+    p2News(
+      'checklist-news-clear-after-001',
+      'with a high-impact USD release 31 minutes after it: outside the window, item 8 passes.',
+      (c) => ({ economicEvents: [usd('employment', c + 31 * MIN)] }),
+      clear,
+    ),
+    p2News(
+      'checklist-news-medium-impact-001',
+      'with a medium-impact USD release 10 minutes after it: only high-impact events count, so item 8 passes.',
+      (c) => ({ economicEvents: [usd('gdp', c + 10 * MIN, { impact: 'medium' })] }),
+      clear,
+    ),
+    p2News(
+      'checklist-news-other-currency-001',
+      'with a high-impact EUR release 10 minutes after it: the crypto profile watches USD only, so item 8 passes.',
+      (c) => ({ economicEvents: [usd('ecb', c + 10 * MIN, { currency: 'EUR' })] }),
+      clear,
+    ),
+    p2News(
+      'checklist-news-known-later-001',
+      'with a high-impact USD release 10 minutes after it that the platform recorded only a minute after the confirmation (knownFrom): the calendar as known at the decision holds nothing in the window, so item 8 passes (I38).',
+      (c) => ({ economicEvents: [usd('fomc', c + 10 * MIN, { knownFrom: c + MIN })] }),
+      clear,
+    ),
+    p2News(
+      'checklist-news-rescheduled-away-001',
+      'with a release first scheduled 10 minutes after it and moved, an hour before the confirmation, to 3 hours after it: the version known at the decision lies outside the window, so item 8 passes (I38).',
+      (c) => ({
+        economicEvents: [
+          usd('cpi', c + 10 * MIN, { knownUntil: c - 60 * MIN }),
+          usd('cpi', c + 180 * MIN, { knownFrom: c - 60 * MIN }),
+        ],
+      }),
+      clear,
+    ),
+    p2News(
+      'checklist-news-rescheduled-into-001',
+      'with a release first scheduled 3 hours after it and moved, an hour before the confirmation, to 10 minutes after it: the version known at the decision lies inside the window, so item 8 fails (I38).',
+      (c) => ({
+        economicEvents: [
+          usd('cpi', c + 180 * MIN, { knownUntil: c - 60 * MIN }),
+          usd('cpi', c + 10 * MIN, { knownFrom: c - 60 * MIN }),
+        ],
+      }),
+      fails(['cpi']),
+    ),
+    p2News(
+      'checklist-calendar-available-later-001',
+      'with an empty calendar that became available (its first complete sync) 5 minutes after the confirmation: at the decision there was no calendar, so item 8 fails with calendar_unavailable (I38).',
+      (c) => ({ economicEvents: [], calendarAvailableFrom: c + 5 * MIN }),
+      { credit: 0, evidence: { reason: 'calendar_unavailable' } },
+    ),
+    p2News(
+      'checklist-news-crypto-window-001',
+      "with a high-impact USD release 45 minutes after it: outside the crypto profile's 30 minutes, item 8 passes.",
+      (c) => ({ economicEvents: [usd('fomc', c + 45 * MIN)] }),
+      clear,
+    ),
+    p2News(
+      'checklist-news-gold-window-001',
+      "with the gold profile's 60-minute blackout (params) and the same release 45 minutes after it: inside 60 minutes, item 8 fails.",
+      (c) => ({ economicEvents: [usd('fomc', c + 45 * MIN)], params: goldWindow }),
+      fails(['fomc']),
+    ),
+  ];
 }
 
 /**
@@ -588,6 +729,7 @@ export const checklistCases: Case[] = withMirrors([
   htfHalf(),
   newsBlackout(true),
   newsBlackout(false),
+  ...newsWindowCases(),
   dataGap(),
   ...outcomeCases(),
   ...goldCases(),

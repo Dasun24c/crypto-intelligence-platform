@@ -1,5 +1,6 @@
 import { MINUTE_MS, TF_MS, TIMEFRAMES, type Timeframe } from '@cip/domain';
 import { Atr, type AtrState } from '@cip/indicators';
+import { calendarAt } from './calendar.js';
 import { createdFvg, findDisplacement } from './displacement.js';
 import {
   addMonths,
@@ -265,7 +266,7 @@ export class SmcEngine {
       time: () => this.time!,
       levels: () => this.levels,
       zones: () => this.zones,
-      events: () => this.context.economicEvents ?? null,
+      events: () => calendarAt(this.context, this.time!),
     };
     this.view = {
       params: this.params,

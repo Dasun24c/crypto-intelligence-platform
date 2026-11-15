@@ -166,6 +166,25 @@ const ENDPOINTS: Endpoint[] = [
     policy: 'dashboards.view',
     route: '/api/v1/replays/:runId',
   },
+  // Phase 7: the economic calendar; admins enter and correct their own entries and can sync now.
+  { method: 'GET', path: '/api/v1/calendar/events', policy: 'dashboards.view' },
+  { method: 'GET', path: '/api/v1/calendar/status', policy: 'dashboards.view' },
+  { method: 'POST', path: '/api/v1/calendar/events', policy: 'settings.manage', body: {} },
+  {
+    method: 'PATCH',
+    path: `/api/v1/calendar/events/${NOBODY}`,
+    policy: 'settings.manage',
+    body: {},
+    route: '/api/v1/calendar/events/:id',
+  },
+  {
+    method: 'DELETE',
+    path: `/api/v1/calendar/events/${NOBODY}`,
+    policy: 'settings.manage',
+    route: '/api/v1/calendar/events/:id',
+  },
+  // Allowed: queues a sync on the jobs service's queue (no worker runs in this test).
+  { method: 'POST', path: '/api/v1/calendar/sync', policy: 'settings.manage' },
   { method: 'GET', path: '/api/v1/admin/instruments', policy: 'instruments.manage' },
   { method: 'POST', path: '/api/v1/admin/instruments', policy: 'instruments.manage', body: {} },
   { method: 'PATCH', path: `/api/v1/admin/instruments/${NOBODY}`, policy: 'instruments.manage', body: {} },

@@ -85,7 +85,12 @@ export async function runReplay(deps: ReplayDeps, job: ReplayJob): Promise<Repla
   const closures: Closure[] = instrument.calendarId
     ? await repo.closures(instrument.calendarId, Math.min(...starts) - 7 * DAY_MS, job.to + 7 * DAY_MS)
     : [];
-  const context = { closures };
+  // Every version of the economic calendar, each counting from when it was known: the replay sees
+  // what the live run saw at each decision (rulebook I38).
+  const context = {
+    closures,
+    ...(await repo.calendar(Math.min(...starts) - DAY_MS, job.to + DAY_MS)),
+  };
   const proc = new RunProcessor(repo, {
     instrumentId: instrument.id,
     tick: instrument.tick,

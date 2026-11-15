@@ -109,6 +109,7 @@ export function health(feeds: FeedStatus[], extra: Partial<SystemHealth> = {}): 
     })),
     feeds,
     analysis: [],
+    calendar: { status: 'ok', available: true, detail: 'FRED and BEA synced' },
     ...extra,
   };
 }

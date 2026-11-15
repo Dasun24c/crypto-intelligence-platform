@@ -152,6 +152,8 @@ services:
     environment:
       <<: *service-env
       DATABASE_URL_FILE: /secrets/db-url-svc_jobs
+      # The economic calendar's FRED key: put it in .secrets/fred-api-key (empty: FRED is skipped).
+      FRED_API_KEY_FILE: /secrets/fred-api-key
     healthcheck:
       test: ['CMD', 'node', 'infra/healthcheck.mjs', 'http://127.0.0.1:9467/readyz']
       interval: 5s

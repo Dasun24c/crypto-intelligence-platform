@@ -56,6 +56,7 @@ describe('migrations', () => {
       '0007_analysis_smc',
       '0008_analysis_poi',
       '0009_analysis_setups',
+      '0010_economic_calendar',
     ]);
     const again = await migrateToLatest(owner);
     expect(again.error).toBeUndefined();

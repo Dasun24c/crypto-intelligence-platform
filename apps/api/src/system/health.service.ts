@@ -11,6 +11,7 @@ import {
 import { pingDb } from '@cip/db';
 import { effectiveStatus, type Readiness, readHeartbeats } from '@cip/observability';
 import { AnalysisStatusService } from '../analysis/analysis-status.service.js';
+import { CalendarRepository } from '../calendar/calendar.repository.js';
 import { CLOCK, type Clock, PG_POOL, REDIS } from '../tokens.js';
 import { FeedsService } from './feeds.service.js';
 
@@ -30,7 +31,19 @@ export class HealthService {
     @Inject(CLOCK) private readonly clock: Clock,
     private readonly feedsService: FeedsService,
     private readonly analysisStatus: AnalysisStatusService,
+    private readonly calendarRepo: CalendarRepository,
   ) {}
+
+  /** The economic calendar's state; it is shown on its own and does not change the overall status. */
+  private async calendar(dbUp: boolean, now: number): Promise<SystemHealth['calendar']> {
+    if (!dbUp) return { status: 'down', available: false, detail: 'database unreachable' };
+    try {
+      const c = await this.calendarRepo.status(now);
+      return { status: c.status, available: c.available, detail: c.detail };
+    } catch (err) {
+      return { status: 'down', available: false, detail: err instanceof Error ? err.message : 'unknown' };
+    }
+  }
 
   private async probe(name: DependencyHealth['name'], fn: () => Promise<number>): Promise<DependencyHealth> {
     try {
@@ -77,6 +90,7 @@ export class HealthService {
     const dbUp = dependencies.find((d) => d.name === 'database')?.status === 'ok';
     const [feeds, analysis] =
       dbUp && redisUp ? await Promise.all([this.feedsService.feeds(), this.analysisStatus.all()]) : [[], []];
+    const calendar = await this.calendar(dbUp, now);
     const dependencyStatus = worst(dependencies.map((d) => d.status));
     const serviceStatus = worst(services.map((s) => s.status));
     const feedsOk = feeds.every((f) => f.state === 'connected');
@@ -88,7 +102,7 @@ export class HealthService {
         : serviceStatus === 'ok' && feedsOk && analysisOk
           ? 'ok'
           : 'degraded';
-    return { status, checkedAt: now, dependencies, services, feeds, analysis };
+    return { status, checkedAt: now, dependencies, services, feeds, analysis, calendar };
   }
 
   /** Readiness of this api instance: it can serve only if both dependencies answer. */

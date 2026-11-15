@@ -347,6 +347,7 @@ sequenceDiagram
 
 - `packages/app`: React, TypeScript, TanStack Router, TanStack Query (REST), Zustand (live state), a Socket.IO connection manager, react-hook-form + zod.
 - **Charts**: a candlestick library with custom drawing primitives for zones, levels, sweep markers and closure shading ([feasibility §7](02-feasibility.md#7-stack-versions-and-licences)). Overlays come only from the detection API; the client never detects anything itself.
+  > **As implemented in Phase 7** ([ADR 018](../adr/018-charts-on-lightweight-charts.md)): Lightweight Charts 5.2.1 with one series primitive that draws the whole overlay and records what it drew (`data-drawn`, the overlay-parity test hook of criterion 7.1). The chart pages load lazily, with the library in their chunks. The economic calendar is synced by the jobs service (BEA, then FRED, every 6 hours and at start-up; FOMC statements are entered by admins), and the analyzer gives it to the engine as known at each decision ([ADR 019](../adr/019-economic-calendar-as-known.md)).
 - **3D**: React Three Fiber, lazy-loaded. Requires WebGL2; otherwise a 2D status card is shown.
 - **Design system**: Tailwind + shadcn/ui with dark-theme tokens. Bullish/bearish colours are colour-blind-safe and always paired with an icon or label.
 - **Platform interface**: `notify()`, `secureStore`, `openExternal()`, `onSleepWake()` and `appVersion`. The web and Tauri implementations are injected at startup.

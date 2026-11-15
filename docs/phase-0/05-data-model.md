@@ -311,6 +311,8 @@ CREATE TABLE market.economic_events (
 CREATE INDEX ON market.economic_events (scheduled_at);
 ```
 
+> **As implemented in Phase 7** (migration 0010, ADR 019): `economic_events` adds `release`, `status` (`scheduled`, `cancelled`, `superseded`), `revision`, `created_by` and `created_at`; `source` is `fred`, `bea` or `manual` (FOMC statements are manual). Rows are never deleted. Triggers append every version to `market.economic_event_revisions` (`event_id`, `revision`, `recorded_at`, and the fields item 8 and the calendar show), which nothing else can write; the engine reads the calendar as known at each decision from it (rulebook I38). `market.calendar_syncs` records each sync attempt per source (`running`, `ok`, `failed`, `skipped`, with counts and the error). `svc_api` and `svc_jobs` may insert and update events; every service reads all three tables.
+
 ## 5. `analysis`: runs, indicators and SMC detections
 
 ```sql

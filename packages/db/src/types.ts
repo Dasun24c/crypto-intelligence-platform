@@ -86,6 +86,9 @@ export interface Database {
   'market.large_trades': LargeTradesTable;
   'market.orderbook_walls': OrderbookWallsTable;
   'market.data_gaps': DataGapsTable;
+  'market.economic_events': EconomicEventsTable;
+  'market.economic_event_revisions': EconomicEventRevisionsTable;
+  'market.calendar_syncs': CalendarSyncsTable;
   'analysis.detection_runs': DetectionRunsTable;
   'analysis.indicator_values': IndicatorValuesTable;
   'analysis.engine_checkpoints': EngineCheckpointsTable;
@@ -278,6 +281,63 @@ export interface DataGapsTable {
   detected_by: 'sequence' | 'heartbeat' | 'timer' | 'reconnect' | 'consistency_check';
   status: 'open' | 'backfilling' | 'repaired' | 'unrepairable';
   resolved_at: Date | null;
+  details: ColumnType<Record<string, unknown>, Record<string, unknown> | undefined, Record<string, unknown>>;
+}
+
+// The economic calendar (Phase 7; rulebook I38).
+
+export type EconomicReleaseColumn =
+  'cpi' | 'employment_situation' | 'gdp' | 'personal_income_outlays' | 'fomc';
+export type EconomicEventStatus = 'scheduled' | 'cancelled' | 'superseded';
+
+export interface EconomicEventsTable {
+  id: string;
+  source: 'fred' | 'bea' | 'manual';
+  source_ref: string;
+  release: EconomicReleaseColumn | null;
+  title: string;
+  country: Generated<string>;
+  currency: Generated<string>;
+  category: 'inflation' | 'employment' | 'growth' | 'central_bank' | 'other';
+  impact: 'low' | 'medium' | 'high';
+  scheduled_at: Date;
+  time_confirmed: boolean;
+  status: Generated<EconomicEventStatus>;
+  actual: string | null;
+  forecast: string | null;
+  previous: string | null;
+  /** Set by a trigger: the latest revision. */
+  revision: Generated<number>;
+  created_by: string | null;
+  created_at: Generated<Date>;
+  updated_at: Generated<Date>;
+}
+export type EconomicEventRow = Selectable<EconomicEventsTable>;
+
+/** Written only by the triggers on market.economic_events. */
+export interface EconomicEventRevisionsTable {
+  event_id: string;
+  revision: number;
+  recorded_at: Date;
+  scheduled_at: Date;
+  time_confirmed: boolean;
+  title: string;
+  currency: string;
+  impact: 'low' | 'medium' | 'high';
+  status: EconomicEventStatus;
+}
+
+export interface CalendarSyncsTable {
+  id: string;
+  source: 'fred' | 'bea';
+  started_at: Date;
+  finished_at: Date | null;
+  status: 'running' | 'ok' | 'failed' | 'skipped';
+  inserted: Generated<number>;
+  updated: Generated<number>;
+  unchanged: Generated<number>;
+  cancelled: Generated<number>;
+  error: string | null;
   details: ColumnType<Record<string, unknown>, Record<string, unknown> | undefined, Record<string, unknown>>;
 }
 

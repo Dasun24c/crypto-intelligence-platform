@@ -20,6 +20,13 @@ ensure('jwt-ed25519.pem', () =>
 );
 ensure('mfa-key', () => randomBytes(32).toString('base64'));
 
+// Keys the developer supplies: created empty and writable, for the developer to fill in (never generated).
+// fred-api-key: the economic calendar's FRED key (fred.stlouisfed.org); empty skips FRED.
+for (const name of ['fred-api-key']) {
+  const path = join(dir, name);
+  if (!existsSync(path)) writeFileSync(path, '', { mode: 0o644 });
+}
+
 const roles = {
   cip_owner: 'owner',
   svc_api: 'svc_api',

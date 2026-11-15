@@ -8,13 +8,14 @@ import {
   ProfileParamsSchema,
 } from '@cip/contracts';
 import type { DetectionRunRow, NewIndicatorValue } from '@cip/db';
-import { type Closure, floorTo, HISTORY_CANDLES, TF_MS, TIMEFRAMES, type Timeframe } from '@cip/domain';
+import { floorTo, HISTORY_CANDLES, TF_MS, TIMEFRAMES, type Timeframe } from '@cip/domain';
 import type { IndicatorParams, IndicatorValues } from '@cip/indicators';
 import type { Logger } from '@cip/observability';
 import {
   RULESET_VERSION as SMC_RULESET,
   type SmcEvent,
   type SmcParams,
+  type StepContext,
   validateSmcParams,
 } from '@cip/smc-engine';
 import { decodeState, encodeState } from './checkpoint.js';
@@ -41,6 +42,12 @@ const EVENTS_MAXLEN = '200000';
  */
 export const HISTORY_GRACE_MS = 120_000;
 const CLOSURES_REFRESH_MS = 3_600_000;
+/**
+ * The economic calendar reloads at least this often while boundaries are processed. A change counts
+ * from the second whole minute after it was recorded (rulebook I38, calendarKnownFrom), so every
+ * decision from then on, live or replayed, sees it: live and replay digests stay equal.
+ */
+export const CALENDAR_REFRESH_MS = 20_000;
 const DAY_MS = 86_400_000;
 
 /** The last SMC event published for a run (the outbox cursor). */
@@ -142,8 +149,9 @@ export class InstrumentActor {
   private sinceCheckpoint = 0;
   private published = 0;
   private lost = false;
-  private context: { closures: readonly Closure[] } = { closures: [] };
+  private context: StepContext = { closures: [], economicEvents: null };
   private contextLoaded = 0;
+  private calendarLoaded = 0;
   private readonly now: () => number;
   private busy: Promise<void> = Promise.resolve();
   private pending = false;
@@ -268,14 +276,25 @@ export class InstrumentActor {
     };
   }
 
-  /** The closure calendar for the engine: loaded for gold instruments, refreshed hourly. */
+  /**
+   * The engine's context: the closure calendar (gold instruments, refreshed hourly) and the economic
+   * calendar (every instrument, refreshed every CALENDAR_REFRESH_MS), each from the run's earliest
+   * origin on. A new object whenever either reloads.
+   */
   private async refreshContext(): Promise<void> {
-    const calendar = this.instrument.calendarId;
-    if (!calendar || this.now() - this.contextLoaded < CLOSURES_REFRESH_MS) return;
+    const now = this.now();
+    const calendarId = this.instrument.calendarId;
+    const closuresDue = calendarId !== null && now - this.contextLoaded >= CLOSURES_REFRESH_MS;
+    const calendarDue = now - this.calendarLoaded >= CALENDAR_REFRESH_MS;
+    if (!closuresDue && !calendarDue) return;
     const origins = Object.values(this.run!.series_origins);
     const from = (origins.length ? Math.min(...origins) : this.run!.from_time.getTime()) - 7 * DAY_MS;
-    this.context = { closures: await this.deps.repo.closures(calendar, from, this.now() + 30 * DAY_MS) };
-    this.contextLoaded = this.now();
+    const closures = closuresDue ? await this.deps.repo.closures(calendarId, from, now + 30 * DAY_MS) : null;
+    const calendar = calendarDue ? await this.deps.repo.calendar(from, now + 30 * DAY_MS) : null;
+    if (closures) this.contextLoaded = now;
+    if (calendar) this.calendarLoaded = now;
+    const { closures: kept, ...economic } = this.context;
+    this.context = { closures: closures ?? kept, ...(calendar ?? economic) };
   }
 
   /** One pass: start or restore the run, then take every boundary that is due. */
@@ -286,10 +305,11 @@ export class InstrumentActor {
     if (this.lost || this.writeEpoch === null) return;
     if (!(await this.ensureRun())) return;
     if (!this.proc && !(await this.start())) return;
-    await this.refreshContext();
     await this.joinLate();
     const proc = this.proc!;
     for (;;) {
+      // Before every batch: a long catch-up must still see calendar changes as they become known.
+      await this.refreshContext();
       const stop = await proc.advance({ max: CHECKPOINT_EVERY - this.sinceCheckpoint });
       const out = proc.drain();
       if (out.boundaries > 0) await this.flush(out);
@@ -340,6 +360,7 @@ export class InstrumentActor {
         'run restored from its checkpoint',
       );
       this.contextLoaded = 0;
+      this.calendarLoaded = 0;
       await this.catchUpPublishing();
       return true;
     }
@@ -352,7 +373,8 @@ export class InstrumentActor {
     const proc = new RunProcessor(repo, this.processorConfig());
     for (const [tf, origin] of origins) proc.join(tf, origin);
     this.proc = proc;
-    this.contextLoaded = 0; // the calendar must now reach back to the earliest origin
+    this.contextLoaded = 0; // the calendars must now reach back to the earliest origin
+    this.calendarLoaded = 0;
     await this.catchUpPublishing();
     return true;
   }

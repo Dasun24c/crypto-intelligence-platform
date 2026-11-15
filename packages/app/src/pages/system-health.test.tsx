@@ -92,6 +92,21 @@ describe('System Health', () => {
     expect(screen.getByText('1 of 1 streams connected')).toBeTruthy();
   });
 
+  it('shows the economic calendar among the dependencies, linked to its page', async () => {
+    mockApi({
+      'GET /api/v1/system/health': health([], {
+        calendar: { status: 'down', available: false, detail: 'Unavailable: FRED: no API key configured' },
+      }),
+      'GET /api/v1/instruments': [],
+    });
+    const { session, user } = await signedIn();
+    renderApp('/system', session, user);
+    const link = await screen.findByRole('link', { name: 'Economic calendar' });
+    const row = link.closest('tr')!;
+    expect(within(row).getByText('Unavailable: FRED: no API key configured')).toBeTruthy();
+    expect(within(row).getByText('Down')).toBeTruthy();
+  });
+
   it('says so when no feed is reported', async () => {
     mockApi({ 'GET /api/v1/system/health': health([]), 'GET /api/v1/instruments': [] });
     const { session, user } = await signedIn();

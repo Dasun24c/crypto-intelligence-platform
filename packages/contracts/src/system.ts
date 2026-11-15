@@ -1,6 +1,7 @@
 import { z } from 'zod';
 import { TsSchema } from './common.js';
 import { AnalysisStatusSchema } from './analysis.js';
+import { CalendarStatusSchema } from './calendar.js';
 import { FeedStatusSchema } from './market.js';
 
 export const HEALTH_STATUSES = ['ok', 'degraded', 'down'] as const;
@@ -49,6 +50,12 @@ export const SystemHealthSchema = z.object({
   feeds: z.array(FeedStatusSchema),
   /** Per analysed instrument (Phase 3); a paused instrument makes the system degraded. */
   analysis: z.array(AnalysisStatusSchema),
+  /**
+   * The economic calendar (Phase 7), shown on its own: while it is unavailable, checklist item 8
+   * fails safe as `calendar_unavailable`. It does not change the overall status. Absent from servers
+   * before Phase 7.
+   */
+  calendar: CalendarStatusSchema.pick({ status: true, available: true, detail: true }).optional(),
 });
 export type SystemHealth = z.infer<typeof SystemHealthSchema>;
 

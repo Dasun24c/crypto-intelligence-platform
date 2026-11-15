@@ -1,10 +1,13 @@
 import 'reflect-metadata';
+import { readFileSync } from 'node:fs';
 import { DelayedError, Queue, Worker } from 'bullmq';
 import { Redis } from 'ioredis';
+import { CALENDAR_SYNC_JOB } from '@cip/contracts';
 import { createDb, createPool, pingDb } from '@cip/db';
 import { BinanceVenue, CoinbaseVenue } from '@cip/exchange-adapters';
 import { checkDependencies, ConfigError, runService } from '@cip/observability';
 import { Backfiller, type BackfillJob, GapNotRepairable, GapNotSettled } from './backfill.js';
+import { syncCalendar } from './calendar-sync.js';
 import { loadJobsConfig } from './config.js';
 import { CONSISTENCY_CHECK, CONSISTENCY_PATTERN, checkConsistency, previousDay } from './consistency.js';
 import { gapRepairer, HOLE_SWEEP, HOLE_SWEEP_EVERY_MS, sweepHoles } from './gap-repairs.js';
@@ -43,6 +46,18 @@ async function main(): Promise<void> {
       connection: queueRedis,
       prefix: config.QUEUE_PREFIX,
     });
+    // The FRED key's file is read at every sync, so a key added to it later needs no restart.
+    const fredApiKey = (): string | undefined => {
+      const file = process.env.FRED_API_KEY_FILE;
+      let key = config.FRED_API_KEY;
+      if (file)
+        try {
+          key = readFileSync(file, 'utf8').trim();
+        } catch {
+          key = undefined;
+        }
+      return key ? key : undefined;
+    };
     const maintenance = new Maintenance({
       redisUrl: config.REDIS_URL,
       prefix: config.QUEUE_PREFIX,
@@ -83,6 +98,24 @@ async function main(): Promise<void> {
           everyMs: GENERATE_CLOSURES_EVERY_MS,
           run: async () => ({ inserted: await generateGoldClosures(db) }),
         },
+        {
+          // The economic calendar (Phase 7): FRED and BEA; admins enter FOMC statements in the API.
+          name: CALENDAR_SYNC_JOB,
+          everyMs: config.CALENDAR_SYNC_EVERY_MS,
+          run: async () => {
+            const r = await syncCalendar({
+              db,
+              redis,
+              log,
+              fetch: globalThis.fetch,
+              fredApiKey: fredApiKey(),
+            });
+            return {
+              changed: r.changed,
+              ...Object.fromEntries(r.results.map((x) => [x.source, x.status])),
+            };
+          },
+        },
       ],
       db,
       log,
@@ -93,6 +126,17 @@ async function main(): Promise<void> {
 
     // The closure table must cover today before anything reads it; the daily job keeps it 8 weeks ahead.
     await generateGoldClosures(db).catch((err: unknown) => log.warn({ err }, 'closure generation failed'));
+    // The calendar syncs now, then on its schedule (the queue retries a failed source).
+    await maintenance.queue.add(
+      CALENDAR_SYNC_JOB,
+      {},
+      {
+        attempts: 3,
+        backoff: { type: 'exponential', delay: 30_000 },
+        removeOnComplete: 100,
+        removeOnFail: 500,
+      },
+    );
 
     // Gap repair from the venues' public REST APIs (architecture §5.4).
     const backfiller = new Backfiller(db, redis, log, venues);

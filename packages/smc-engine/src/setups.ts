@@ -86,7 +86,7 @@ export interface EngineView {
   readonly levels: ReadonlyMap<string, Level>;
   readonly zones: ReadonlyMap<string, Zone>;
   minute(t: number): { t: number; l: number; h: number; gap: boolean } | undefined;
-  /** Null when the economic calendar is unavailable. */
+  /** The economic calendar as known at `time` (rulebook I38); null when it is unavailable. */
   readonly economicEvents: readonly EconomicEventRef[] | null;
   breakBuffer(s: Slot): number | null;
   emitSetup(tf: Timeframe, key: string, data: SetupTransitionData): void;

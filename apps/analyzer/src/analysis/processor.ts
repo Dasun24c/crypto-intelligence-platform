@@ -1,6 +1,12 @@
-import { type Candle, type Closure, TF_MS, TIMEFRAMES, type Timeframe } from '@cip/domain';
+import { type Candle, TF_MS, TIMEFRAMES, type Timeframe } from '@cip/domain';
 import { type IndicatorParams, IndicatorSeries, type IndicatorValues } from '@cip/indicators';
-import { type EngineCandle, type SmcEvent, SmcEngine, type SmcParams } from '@cip/smc-engine';
+import {
+  type EngineCandle,
+  type SmcEvent,
+  SmcEngine,
+  type SmcParams,
+  type StepContext,
+} from '@cip/smc-engine';
 import type { RunState } from './checkpoint.js';
 
 /** What the processor reads: stored candles and the state of data gaps (AnalysisRepository). */
@@ -16,8 +22,11 @@ export interface ProcessorConfig {
   tick: string;
   indicators: IndicatorParams;
   smc: SmcParams;
-  /** The closure calendar known now (the same object until it changes). */
-  context: () => { closures: readonly Closure[] };
+  /**
+   * What else the engine is told (the same object until it changes): the closure calendar, and the
+   * economic calendar with each version's knowledge times (rulebook I38).
+   */
+  context: () => StepContext;
   /** Engine step time, for the 2 ms budget (criterion 4.6). */
   onStep?: (ms: number) => void;
 }

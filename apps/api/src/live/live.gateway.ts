@@ -5,6 +5,8 @@ import { Redis } from 'ioredis';
 import { type DefaultEventsMap, type Namespace, Server, type Socket } from 'socket.io';
 import {
   ANALYSIS_EVENTS_STREAM,
+  type CalendarUpdated,
+  CalendarUpdatedSchema,
   can,
   CHANNEL_PATTERN,
   CONFIG_CHANNELS,
@@ -24,6 +26,7 @@ import { AnalysisRepository } from '../analysis/analysis.repository.js';
 import { SetupsRepository } from '../analysis/setups.repository.js';
 import { SmcRepository } from '../analysis/smc.repository.js';
 import { TokenService } from '../auth/token.service.js';
+import { CalendarRepository } from '../calendar/calendar.repository.js';
 import type { AuthenticatedUser } from '../common/access.js';
 import { ProblemError } from '../common/problem.js';
 import { TAURI_ORIGINS, type ApiConfig } from '../config.js';
@@ -44,7 +47,7 @@ export const streamOf = (ch: string): DurableStream =>
     ? ANALYSIS_EVENTS_STREAM
     : MARKET_EVENTS;
 /** Channels that carry every instrument: no instrument id to check. */
-const GLOBAL_CHANNELS = new Set(['system:health', 'setups']);
+const GLOBAL_CHANNELS = new Set(['system:health', 'setups', 'calendar']);
 const MARKET_TYPES = new Set(['gap.opened', 'gap.closed', 'feed.status', 'wall.appeared', 'wall.ended']);
 const MAX_CHANNELS = 200;
 const MAX_REPLAY = 10_000;
@@ -105,6 +108,7 @@ export class LiveGateway implements OnApplicationBootstrap, OnApplicationShutdow
     private readonly analysis: AnalysisRepository,
     private readonly smc: SmcRepository,
     private readonly setups: SetupsRepository,
+    private readonly calendar: CalendarRepository,
   ) {}
 
   onApplicationBootstrap(): void {
@@ -138,9 +142,13 @@ export class LiveGateway implements OnApplicationBootstrap, OnApplicationShutdow
     this.subscriber.on('pmessage', (_pattern: string, channel: string, message: string) =>
       this.forwardLive(channel.slice('live:'.length), message),
     );
-    // An instrument added or disabled changes which channels exist.
-    this.subscriber.on('message', () => (this.instrumentIds = null));
-    void this.subscriber.subscribe(CONFIG_CHANNELS.instruments);
+    this.subscriber.on('message', (channel: string, message: string) => {
+      // An instrument added or disabled changes which channels exist.
+      if (channel === CONFIG_CHANNELS.instruments) this.instrumentIds = null;
+      // A calendar sync or an admin's entry: clients reload the calendar (Phase 7).
+      else if (channel === CONFIG_CHANNELS.calendar) this.forwardCalendar(message);
+    });
+    void this.subscriber.subscribe(CONFIG_CHANNELS.instruments, CONFIG_CHANNELS.calendar);
     this.reader = new Redis(this.config.REDIS_URL, {
       connectionName: 'cip-api-events',
       maxRetriesPerRequest: null,
@@ -279,6 +287,10 @@ export class LiveGateway implements OnApplicationBootstrap, OnApplicationShutdow
       const raw = await this.redis.get(ch);
       return raw ? (JSON.parse(raw) as unknown) : null;
     }
+    if (ch === 'calendar') {
+      const at = await this.calendar.lastChange();
+      return at === null ? null : ({ at, reason: 'sync', changed: 0 } satisfies CalendarUpdated);
+    }
     return null;
   }
 
@@ -302,6 +314,22 @@ export class LiveGateway implements OnApplicationBootstrap, OnApplicationShutdow
       openGaps: (await this.market.gaps({ instrumentId: id, status: 'open', limit: 100 })).items,
       activeWalls: await this.market.walls(id, { from: now - 86_400_000, to: now, active: true }),
     };
+  }
+
+  /**
+   * `calendar.updated` on the `calendar` channel. It is not durable (as implemented in Phase 7): a
+   * subscriber gets the latest change as its snapshot and reloads the calendar from REST.
+   */
+  private forwardCalendar(message: string): void {
+    const parsed = CalendarUpdatedSchema.safeParse(safeJson(message));
+    if (!parsed.success) return;
+    const envelope: Envelope = {
+      ch: 'calendar',
+      ts: this.clock(),
+      type: 'calendar.updated',
+      data: parsed.data,
+    };
+    this.forwardLive('calendar', JSON.stringify(envelope));
   }
 
   private forwardLive(ch: string, message: string): void {
@@ -385,6 +413,14 @@ export class LiveGateway implements OnApplicationBootstrap, OnApplicationShutdow
     } catch (err) {
       this.log.warn({ err }, 'health broadcast failed');
     }
+  }
+}
+
+function safeJson(text: string): unknown {
+  try {
+    return JSON.parse(text);
+  } catch {
+    return null;
   }
 }
 

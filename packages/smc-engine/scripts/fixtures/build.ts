@@ -15,6 +15,8 @@ import { sweepCases } from './cases-sweeps.ts';
 import { zoneCases } from './cases-zones.ts';
 import { type Case, type Exp, fmt, TF_MS, type Tf } from './lib.ts';
 
+const iso = (ms: number): string => new Date(ms).toISOString();
+
 export const SOURCE = 'synthetic: packages/smc-engine/scripts/fixtures';
 const OUT = new URL('../../fixtures/', import.meta.url);
 
@@ -95,7 +97,17 @@ function toJson(c: Case): unknown {
       economicEvents:
         c.economicEvents === null
           ? null
-          : (c.economicEvents ?? []).map((e) => ({ ...e, at: new Date(e.at).toISOString() })),
+          : (c.economicEvents ?? []).map((e) => ({
+              ...e,
+              at: iso(e.at),
+              ...(e.knownFrom !== undefined ? { knownFrom: iso(e.knownFrom) } : {}),
+              ...(e.knownUntil !== undefined
+                ? { knownUntil: e.knownUntil === null ? null : iso(e.knownUntil) }
+                : {}),
+            })),
+      ...(c.calendarAvailableFrom !== undefined
+        ? { calendarAvailableFrom: iso(c.calendarAvailableFrom) }
+        : {}),
     },
     expected: c.expected.map((e) => exp(e, true)),
     notExpected: (c.notExpected ?? []).map((e) => exp(e, false)),

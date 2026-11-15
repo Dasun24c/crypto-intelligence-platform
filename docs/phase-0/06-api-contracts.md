@@ -169,6 +169,13 @@ Roles: **V** viewer, **A** analyst, **Ad** admin. Every endpoint needs authentic
 | GET | `/whales/exchange?instrumentId&from&to` | V | Large trades and wall summary |
 | GET | `/whales/onchain?asset&from&to` | V | Phase 11 |
 
+> **As implemented in Phase 7.** The economic calendar (feasibility §6.1, ADR 019). Schemas in `packages/contracts/src/calendar.ts`.
+>
+> - **`GET /calendar/events?from&to&minImpact`** returns the scheduled events of the window, by time: by default the last day and the next 60, at most 400 days. `EconomicEvent` is the shape in §4 plus `sourceRef`, `release` (`cpi`, `employment_situation`, `gdp`, `personal_income_outlays`, `fomc` or null) and `updatedAt`; `source` is `fred`, `bea` or `manual`. `timeConfirmed` is false when only the date is published and the time is the release's standard one (08:30 New York).
+> - **`GET /calendar/status`** (new, V): whether checklist item 8 can use the calendar (`available`, from `availableFrom`, the first complete FRED sync), `status` and `detail`, each source's last sync and last success, and each profile's blackout window (`beforeMin`, `afterMin`, `currencies`, `instrumentIds`).
+> - **`POST /calendar/events`**, **`PATCH`** and **`DELETE /calendar/events/{id}`** (`settings.manage`): an admin's own entries, such as FOMC statements; audited (`calendar_event.created`, `.updated`, `.cancelled`). Synced entries follow their source: editing or removing one answers 409. Removing cancels the entry; the engine's history keeps it.
+> - **`POST /calendar/sync`** (new, `settings.manage`): queues a sync on the jobs service; `202 { queued: true }`, audited as `calendar.sync_requested`.
+
 ### System and administration
 
 | Method | Path | Role | Returns |
@@ -386,7 +393,7 @@ interface Envelope<T> { ch: string; seq?: string; ts: Ts; type: string; data: T;
 | `setups`, `setups:{instrumentId}` | `setup.transition` (carries a full `SetupSummary`) | Yes | On event |
 | `ai` | `ai.queued`, `ai.started`, `ai.completed`, `ai.rejected`, `ai.failed`, `ai.budget` | Yes | On event |
 | `alerts` (implicit, per user) | `alert.fired`, `notification.read` | Yes | On event |
-| `calendar` | `calendar.updated` | Yes | On change |
+| `calendar` | `calendar.updated` | Yes (as implemented: no, see below) | On change |
 | `system:activity` | `activity.snapshot`, `activity.pulse` | No | ≤ 4 Hz + pulses |
 | `system:health` | `health.update` | No | On change, at least every 10 s |
 
@@ -426,6 +433,8 @@ interface ActivityPulse { ts: Ts; kind: 'pattern' | 'sweep' | 'mss' | 'ai_comple
 > - **Message**: `setup.transition` carries a `SetupSummary` after the transition, with the transition itself in `transition`.
 > - **Snapshot**: `{ setups, transitions }`: the setups of the current live runs that are not resolved, and their latest 50 transitions, each with its `setupId`.
 > - **Subscribing**: `setups` needs no instrument id; `setups:{id}` needs an enabled instrument, like the other channels.
+
+> **As implemented in Phase 7.** The `calendar` channel is not durable: `calendar.updated` (`{ at, reason: 'sync' | 'manual', changed }`) tells clients to reload the calendar from REST, and a subscribe answers with the latest change as its snapshot. A change comes from the jobs service's sync or an admin's entry, over Redis `config:calendar`. `SystemHealth` gains `calendar: { status, available, detail }`, shown on its own: it does not change the overall status.
 
 ### 5.4 Sequencing and resync
 

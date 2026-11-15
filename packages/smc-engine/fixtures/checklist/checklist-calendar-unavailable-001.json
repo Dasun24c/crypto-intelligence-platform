@@ -2,7 +2,7 @@
   "id": "checklist-calendar-unavailable-001",
   "concept": "checklist",
   "class": "bearish",
-  "description": "p2-bearish-001 with the economic calendar unavailable (null): item 8 fails with reason calendar_unavailable, as it does on the live stack until Phase 7 brings the calendar. Score 65.",
+  "description": "p2-bearish-001 with the economic calendar unavailable (null): item 8 fails with reason calendar_unavailable, as it did on the live stack until Phase 7 brought the calendar. Score 65.",
   "profile": "crypto-majors",
   "tick": "0.01",
   "source": "synthetic: packages/smc-engine/scripts/fixtures",

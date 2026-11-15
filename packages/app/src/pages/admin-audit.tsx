@@ -91,7 +91,7 @@ export function AdminAuditPage() {
               <tbody>
                 {page.data.items.map((e) => (
                   <tr key={e.id}>
-                    <Td className="font-mono text-xs text-fg-subtle">{e.id}</Td>
+                    <Td className="font-mono text-xs text-fg-muted">{e.id}</Td>
                     <Td className="whitespace-nowrap text-xs">{formatInstant(e.at)}</Td>
                     <Td className="font-mono text-xs">{e.action}</Td>
                     <Td className="font-mono text-xs">{e.actorUserId ?? e.actorType}</Td>

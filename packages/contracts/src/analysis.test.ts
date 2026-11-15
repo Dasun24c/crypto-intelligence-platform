@@ -95,5 +95,12 @@ describe('analysis contracts', () => {
       ],
     });
     expect(health.analysis[0]?.pauseReason).toBe('data_gap');
+    // Phase 7 adds the economic calendar; servers before it do not send it.
+    expect(health.calendar).toBeUndefined();
+    const withCalendar = SystemHealthSchema.parse({
+      ...health,
+      calendar: { status: 'down', available: false, detail: 'FRED: no API key configured' },
+    });
+    expect(withCalendar.calendar?.available).toBe(false);
   });
 });

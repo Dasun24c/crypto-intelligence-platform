@@ -100,7 +100,7 @@ function CreateUserForm({ onDone }: { onDone: () => void }) {
         />
         {errors.password ? <p className="text-xs text-crit">{errors.password.message}</p> : null}
       </div>
-      <p className="text-xs text-fg-subtle md:col-span-2">
+      <p className="text-xs text-fg-muted md:col-span-2">
         Give the initial password to the person directly. Admins set up an authenticator at their first
         sign-in.
       </p>

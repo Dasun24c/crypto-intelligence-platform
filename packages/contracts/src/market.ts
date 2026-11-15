@@ -289,12 +289,14 @@ export const channels = {
   smc: (instrumentId: string) => `smc:${instrumentId}`,
   /** Every instrument's setups, or one instrument's (Phase 6). */
   setups: (instrumentId?: string) => (instrumentId ? `setups:${instrumentId}` : 'setups'),
+  /** The economic calendar (Phase 7): `calendar.updated` on every change. */
+  calendar: 'calendar',
   systemHealth: 'system:health',
 } as const;
 
 const UUID = '[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}';
 export const CHANNEL_PATTERN = new RegExp(
-  `^(?:(?:ticker|book|trades|market|smc):${UUID}|(?:candles|indicators):${UUID}:(?:1m|5m|15m|1h|4h|1d)|setups(?::${UUID})?|system:health)$`,
+  `^(?:(?:ticker|book|trades|market|smc):${UUID}|(?:candles|indicators):${UUID}:(?:1m|5m|15m|1h|4h|1d)|setups(?::${UUID})?|calendar|system:health)$`,
 );
 
 /**
@@ -402,6 +404,7 @@ export type MarketMessageType =
   | 'zone.created'
   | 'zone.status'
   | 'setup.transition'
+  | 'calendar.updated'
   | 'health.update';
 
 /** A stored or live candle in its wire form (structural, so this package stays dependency-free). */
@@ -431,5 +434,13 @@ export function toWireCandle(c: {
   };
 }
 
-/** Redis pub/sub channels announcing admin changes; the ingestor reloads without a restart (MD-02). */
-export const CONFIG_CHANNELS = { instruments: 'config:instruments', closures: 'config:closures' } as const;
+/**
+ * Redis pub/sub channels announcing changes: admin changes, which the ingestor reloads without a
+ * restart (MD-02), and economic-calendar changes (a sync or an admin's entry), which the analyzer
+ * reloads and the API forwards on the `calendar` channel.
+ */
+export const CONFIG_CHANNELS = {
+  instruments: 'config:instruments',
+  closures: 'config:closures',
+  calendar: 'config:calendar',
+} as const;

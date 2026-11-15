@@ -21,3 +21,5 @@ An Architecture Decision Record (ADR) records one significant decision: the cont
 | [015](015-replay-venue.md) | The replay venue plays recordings through the production adapters | Accepted | 2026-11-10 |
 | [016](016-indicators-match-ta-lib-fma-arithmetic.md) | Indicators match TA-Lib 0.8's arithmetic, fused multiply-add included | Accepted | 2026-11-10 |
 | [017](017-smc-runtime-boundaries-ids-digests-replays.md) | The SMC runtime steps boundaries, derives ids from natural keys, and runs replays in the analyzer | Accepted | 2026-11-11 |
+| [018](018-charts-on-lightweight-charts.md) | Charts are Lightweight Charts with our own overlay primitives, and report what they drew | Accepted | 2026-11-12 |
+| [019](019-economic-calendar-as-known.md) | The economic calendar keeps every version, and the engine reads it as it was known | Accepted | 2026-11-12 |

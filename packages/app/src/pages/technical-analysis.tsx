@@ -24,7 +24,7 @@ import {
   Td,
 } from '@cip/ui';
 import { useInstruments } from '../api/queries.js';
-import { MacdChart, PriceChart, RsiChart, VolumeChart } from '../components/analysis-charts.js';
+import { IndicatorChart } from '../charts/indicator-chart.js';
 import { RunStatusBadge } from '../components/analysis-status.js';
 import { ReplayBadge } from '../components/market-badges.js';
 import {
@@ -349,7 +349,6 @@ function Charts({
   const timeZone = useDisplayTimeZone();
   const points = series.points;
   const w = chartWindow(candles.candles, points, tf);
-  const dp = priceDecimals(stepDecimals(instrument.priceTick));
   const runFrom = series.run?.from ?? null;
   let body: ReactNode;
   if (!w)
@@ -370,57 +369,18 @@ function Charts({
             {candles.error.message} The indicator lines are shown without the candles.
           </Alert>
         ) : null}
-        <section className="space-y-2">
-          <h3 className="text-sm font-medium text-fg">Price</h3>
-          <PriceChart
-            title={`${instrument.displayName}, ${TF_LABEL[tf]} candles with ${labels.emaFast}, ${labels.emaMid}, ${labels.emaSlow} and ${labels.vwap}`}
-            candles={candles.candles}
-            points={points}
-            window={w}
-            runFrom={runFrom}
-            labels={labels}
-            tf={tf}
-            dp={dp}
-            quote={instrument.quote}
-            timeZone={timeZone}
-          />
-        </section>
-        <section className="space-y-2">
-          <h3 className="text-sm font-medium text-fg">{labels.rsi}</h3>
-          <RsiChart
-            points={points}
-            window={w}
-            runFrom={runFrom}
-            label={labels.rsi}
-            tf={tf}
-            timeZone={timeZone}
-          />
-        </section>
-        <section className="space-y-2">
-          <h3 className="text-sm font-medium text-fg">{labels.macd}</h3>
-          <MacdChart
-            points={points}
-            window={w}
-            runFrom={runFrom}
-            labels={labels}
-            tf={tf}
-            dp={dp}
-            timeZone={timeZone}
-          />
-        </section>
-        <section className="space-y-2">
-          <h3 className="text-sm font-medium text-fg">Volume</h3>
-          <VolumeChart
-            candles={candles.candles}
-            points={points}
-            window={w}
-            runFrom={runFrom}
-            labels={labels}
-            tf={tf}
-            base={instrument.base}
-            timeZone={timeZone}
-          />
-        </section>
+        <IndicatorChart
+          title={`${instrument.displayName}, ${TF_LABEL[tf]}: candles with ${labels.emaFast}, ${labels.emaMid}, ${labels.emaSlow} and ${labels.vwap}; volume; ${labels.rsi}; ${labels.macd}`}
+          candles={candles.candles}
+          points={points}
+          labels={labels}
+          runFrom={runFrom}
+          tf={tf}
+          priceTick={instrument.priceTick}
+          quote={instrument.quote}
+          base={instrument.base}
+          timeZone={timeZone}
+        />
       </div>
     );
   return (

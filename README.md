@@ -2,7 +2,7 @@
 
 Real-time monitoring and analysis of crypto markets, and of gold through the PAXG token: market data from Binance and Coinbase, technical indicators, Smart Money Concepts detection, AI analysis with Grok, alerts, and a web and desktop app.
 
-**Status:** Phase 6 (Patterns, checklist and outcomes) is built and awaiting acceptance. The SMC engine now also finds the four setup patterns and follows each setup from "Watching" to its outcome: the sweep-anchored MSS, a hypothetical entry, invalidation and targets, the confluence checklist with its quality flags, and the result in R. Every transition is recorded with its candle and evidence. The API serves setups with their history and checklist, the live channels publish each transition, and `domain` has a position-size calculator. All of it is hypothetical analysis; nothing places an order. Phases 1–5 (Foundations, Market data, Technical analysis, SMC structure and liquidity, SMC points of interest) are accepted. See the [Phase 6 acceptance report](docs/phase-6/acceptance-report.md), the [Phase 5 report](docs/phase-5/acceptance-report.md) and the [implementation plan](docs/phase-0/08-implementation-plan.md).
+**Status:** Phase 7 (Charts, Setup Scanner and calendar) is built and awaiting acceptance. The Liquidity Map draws every SMC detection over the candles on Lightweight Charts, and checks itself against the overlay API; Technical Analysis moved to the same charts. The Setup Scanner lists the setups with their checklist, score, hypothetical levels and R:R, and each setup's page has a position-size calculator. The economic calendar syncs from BEA and FRED (FRED needs a free key, see below), admins enter FOMC statements, and checklist item 8 reads the calendar as it was known at each decision. All of it is hypothetical analysis; nothing places an order. Phases 1–6 (Foundations, Market data, Technical analysis, SMC structure and liquidity, SMC points of interest, Patterns, checklist and outcomes) are accepted. See the [Phase 7 acceptance report](docs/phase-7/acceptance-report.md), the [Phase 6 report](docs/phase-6/acceptance-report.md) and the [implementation plan](docs/phase-0/08-implementation-plan.md).
 
 ## Quick start
 
@@ -19,6 +19,8 @@ This builds the images, generates local secrets into `.secrets/` on first start,
 | `viewer@cip.test` | viewer | `local-dev-password` |
 | `analyst@cip.test` | analyst | `local-dev-password` |
 | `admin@cip.test` | admin | `local-dev-password` (sets up an authenticator app at first sign-in) |
+
+The economic calendar syncs from BEA without a key. For CPI and the Employment Situation it needs a free [FRED API key](https://fred.stlouisfed.org/docs/api/api_key.html): put it, alone on one line, in `.secrets/fred-api-key` (created empty on first start; never commit it). The next sync picks it up; until then checklist item 8 fails safe as "calendar unavailable". This product uses the FRED® API but is not endorsed or certified by the Federal Reserve Bank of St. Louis.
 
 These users exist only in the local stack (`seed-dev` refuses to run outside `NODE_ENV=development`). Override the password with `DEV_SEED_PASSWORD` before the first start.
 

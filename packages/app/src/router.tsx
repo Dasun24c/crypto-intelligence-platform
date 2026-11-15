@@ -2,6 +2,7 @@ import {
   createRootRouteWithContext,
   createRoute,
   createRouter,
+  lazyRouteComponent,
   Link,
   redirect,
   type RouterHistory,
@@ -9,6 +10,7 @@ import {
 import { type Capability, can, type Tf, type UserSummary } from '@cip/contracts';
 import { Shell } from './layout/shell.js';
 import { isTimeframe } from './lib/analysis.js';
+import { readLiquiditySearch, readScannerSearch } from './lib/search.js';
 import { AdminAuditPage } from './pages/admin-audit.js';
 import { AdminInstrumentsPage } from './pages/admin-instruments.js';
 import { AdminUsersPage } from './pages/admin-users.js';
@@ -17,7 +19,6 @@ import { LabellingPage } from './pages/labelling.js';
 import { MarketActivityPage } from './pages/market-activity.js';
 import { ProfilePage } from './pages/profile.js';
 import { SystemHealthPage } from './pages/system-health.js';
-import { TechnicalAnalysisPage } from './pages/technical-analysis.js';
 
 export interface RouterContext {
   user: UserSummary;
@@ -76,7 +77,34 @@ const routeTree = rootRoute.addChildren([
       ...(typeof search['instrument'] === 'string' ? { instrument: search['instrument'] } : {}),
       ...(isTimeframe(search['tf']) ? { tf: search['tf'] } : {}),
     }),
-    component: TechnicalAnalysisPage,
+    component: lazyRouteComponent(() => import('./pages/technical-analysis.js'), 'TechnicalAnalysisPage'),
+  }),
+  // Phase 7. The chart pages load lazily, with the chart library, in their own chunks.
+  createRoute({
+    getParentRoute: () => rootRoute,
+    path: '/liquidity',
+    beforeLoad: requireCapability('dashboards.view'),
+    validateSearch: readLiquiditySearch,
+    component: lazyRouteComponent(() => import('./pages/liquidity-map.js'), 'LiquidityMapPage'),
+  }),
+  createRoute({
+    getParentRoute: () => rootRoute,
+    path: '/setups',
+    beforeLoad: requireCapability('dashboards.view'),
+    validateSearch: readScannerSearch,
+    component: lazyRouteComponent(() => import('./pages/setup-scanner.js'), 'SetupScannerPage'),
+  }),
+  createRoute({
+    getParentRoute: () => rootRoute,
+    path: '/setups/$setupId',
+    beforeLoad: requireCapability('dashboards.view'),
+    component: lazyRouteComponent(() => import('./pages/setup-detail.js'), 'SetupDetailPage'),
+  }),
+  createRoute({
+    getParentRoute: () => rootRoute,
+    path: '/calendar',
+    beforeLoad: requireCapability('dashboards.view'),
+    component: lazyRouteComponent(() => import('./pages/economic-calendar.js'), 'EconomicCalendarPage'),
   }),
   createRoute({ getParentRoute: () => rootRoute, path: '/system', component: SystemHealthPage }),
   createRoute({ getParentRoute: () => rootRoute, path: '/profile', component: ProfilePage }),
