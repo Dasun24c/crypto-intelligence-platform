@@ -106,6 +106,12 @@ const routeTree = rootRoute.addChildren([
     beforeLoad: requireCapability('dashboards.view'),
     component: lazyRouteComponent(() => import('./pages/economic-calendar.js'), 'EconomicCalendarPage'),
   }),
+  createRoute({
+    getParentRoute: () => rootRoute,
+    path: '/alerts',
+    beforeLoad: requireCapability('alerts.own'),
+    component: lazyRouteComponent(() => import('./pages/alert-center.js'), 'AlertCenterPage'),
+  }),
   createRoute({ getParentRoute: () => rootRoute, path: '/system', component: SystemHealthPage }),
   createRoute({ getParentRoute: () => rootRoute, path: '/profile', component: ProfilePage }),
   createRoute({

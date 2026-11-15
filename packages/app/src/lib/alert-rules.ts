@@ -1,0 +1,121 @@
+import type { AlertCondition, AlertConditionKind, AlertRule } from '@cip/contracts';
+import { PATTERN_SHORT, STATE_TITLE } from './setups.js';
+
+/** The twelve condition kinds, in the order the rule form offers them. */
+export const KIND_LABELS: Record<AlertConditionKind, string> = {
+  price_cross: 'Price crosses a level',
+  price_change_pct: 'Price moves by a percentage',
+  indicator_threshold: 'Indicator threshold',
+  volume_anomaly: 'Volume anomaly',
+  smc_event: 'SMC event (sweep, BOS, CHOCH, MSS, POI entry)',
+  setup_transition: 'Setup state change',
+  spread_threshold: 'PAXG cross-venue spread',
+  economic_event_upcoming: 'Economic release approaching',
+  gold_market_session: 'Gold market opens or closes',
+  large_trade: 'Large trade',
+  wall: 'Order-book wall',
+  feed_health: 'Data feed health',
+};
+export const KINDS = Object.keys(KIND_LABELS) as AlertConditionKind[];
+
+/** Kinds that watch instruments (the rest are about PAXG's spread, the calendar or the gold market). */
+export function watchesInstruments(kind: AlertConditionKind): boolean {
+  return kind !== 'spread_threshold' && kind !== 'economic_event_upcoming' && kind !== 'gold_market_session';
+}
+
+/** A sensible starting condition for each kind, for the rule form. */
+export function defaultCondition(kind: AlertConditionKind): AlertCondition {
+  switch (kind) {
+    case 'price_cross':
+      return { kind, price: '100000', direction: 'above' };
+    case 'price_change_pct':
+      return { kind, windowMin: 60, pct: 2 };
+    case 'indicator_threshold':
+      return { kind, tf: '1h', indicator: 'rsi', op: 'cross_above', value: 70 };
+    case 'volume_anomaly':
+      return { kind, tf: '15m', minZ: 3 };
+    case 'smc_event':
+      return { kind, tfs: ['1h', '4h'], events: ['sweep', 'mss'] };
+    case 'setup_transition':
+      return { kind, toStates: ['confirmed'] };
+    case 'spread_threshold':
+      return { kind, baseAsset: 'PAXG', absBps: 30 };
+    case 'economic_event_upcoming':
+      return { kind, minImpact: 'high', minutesBefore: 30 };
+    case 'gold_market_session':
+      return { kind, on: ['open', 'close'] };
+    case 'large_trade':
+      return { kind, minUsd: '1000000' };
+    case 'wall':
+      return { kind, events: ['appeared', 'pulled'] };
+    case 'feed_health':
+      return { kind, events: ['gap', 'halted', 'delisted', 'disconnected'] };
+  }
+}
+
+const SMC_EVENT_LABELS = {
+  sweep: 'sweep',
+  false_breakout: 'false breakout',
+  bos: 'BOS',
+  choch: 'CHOCH',
+  mss: 'MSS',
+  poi_entry: 'POI entry',
+} as const;
+const INDICATOR_LABELS = {
+  rsi: 'RSI',
+  macd_hist: 'MACD histogram',
+  volume_z: 'volume z-score',
+  atr: 'ATR',
+} as const;
+const OP_LABELS = {
+  '>': 'above',
+  '<': 'below',
+  cross_above: 'crosses above',
+  cross_below: 'crosses below',
+} as const;
+const list = (items: readonly string[]) => items.join(', ');
+
+/** One line saying what the condition watches for. */
+export function describeCondition(c: AlertCondition): string {
+  switch (c.kind) {
+    case 'price_cross':
+      return `Price crosses ${c.direction} ${c.price}`;
+    case 'price_change_pct':
+      return `Price moves ${c.pct}% or more within ${c.windowMin} min`;
+    case 'indicator_threshold':
+      return `${c.tf} ${INDICATOR_LABELS[c.indicator]} ${OP_LABELS[c.op]} ${c.value}`;
+    case 'volume_anomaly':
+      return `${c.tf} volume z-score ≥ ${c.minZ}`;
+    case 'smc_event':
+      return `${list(c.events.map((e) => SMC_EVENT_LABELS[e]))} on ${list(c.tfs)}`;
+    case 'setup_transition':
+      return [
+        `${c.patterns ? list(c.patterns.map((p) => PATTERN_SHORT[p])) : 'Any pattern'} reaching ${list(c.toStates.map((s) => STATE_TITLE[s].toLowerCase()))}`,
+        c.directions ? `, ${list(c.directions)}` : '',
+        c.minScore !== undefined ? `, score ≥ ${c.minScore}` : '',
+      ].join('');
+    case 'spread_threshold':
+      return `PAXG spread beyond ${c.absBps} bps`;
+    case 'economic_event_upcoming':
+      return `${c.minImpact === 'high' ? 'High' : 'Medium or high'}-impact release within ${c.minutesBefore} min`;
+    case 'gold_market_session':
+      return `Gold market ${c.on.map((o) => (o === 'open' ? 'opens' : 'closes')).join(' or ')}`;
+    case 'large_trade':
+      return `Large ${c.sides ? list(c.sides) : 'buy or sell'} trade${c.minUsd ? ` of at least $${c.minUsd}` : ''}`;
+    case 'wall':
+      return `Wall ${list(c.events)}${c.minUsd ? `, at least $${c.minUsd}` : ''}`;
+    case 'feed_health':
+      return `Feed ${list(c.events)}`;
+  }
+}
+
+/** Where a fired alert goes, in words. */
+export function describeDelivery(rule: Pick<AlertRule, 'channels' | 'quietHours'>): string {
+  const native = rule.channels
+    .filter((c) => c !== 'in_app')
+    .map((c) => (c === 'desktop' ? 'desktop' : 'browser'));
+  const base = native.length ? `Inbox, ${native.join(' and ')} notifications` : 'Inbox only';
+  return rule.quietHours
+    ? `${base}; quiet ${rule.quietHours.start}–${rule.quietHours.end} (${rule.quietHours.timeZone})`
+    : base;
+}

@@ -53,10 +53,20 @@ module.exports = {
       },
     },
     {
+      name: 'alerts-stays-pure',
+      severity: 'error',
+      comment: 'alerts (rule evaluation, ADR 020) depends only on contracts and domain.',
+      from: { path: '^packages/alerts/src/', pathNot: '[.]test[.]ts$' },
+      to: {
+        pathNot: ['^packages/(alerts|contracts|domain)/', 'node_modules/(zod|big[.]js)/'],
+        dependencyTypesNot: ['core'],
+      },
+    },
+    {
       name: 'pure-packages-no-node-io',
       severity: 'error',
       from: {
-        path: '^packages/(domain|indicators|market-data|smc-engine|contracts)/src/',
+        path: '^packages/(domain|indicators|market-data|smc-engine|contracts|alerts)/src/',
         pathNot: '[.]test[.]ts$',
       },
       to: { dependencyTypes: ['core'] },
@@ -67,7 +77,7 @@ module.exports = {
       comment: 'app and ui may import only contracts and domain from the server side.',
       from: { path: '^packages/(app|ui)/' },
       to: {
-        path: '^(packages/(db|observability|exchange-adapters|market-data|indicators|smc-engine|ai)/|apps/)',
+        path: '^(packages/(db|observability|exchange-adapters|market-data|indicators|smc-engine|ai|alerts)/|apps/)',
       },
     },
     {

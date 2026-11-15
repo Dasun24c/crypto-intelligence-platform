@@ -11,6 +11,7 @@ export default defineConfig({
     // Threads start faster than forked processes on Windows when turbo runs many suites at once.
     pool: 'threads',
     environment: 'jsdom',
+    setupFiles: ['src/test/setup.ts'],
     server: { deps: { inline: [/^@cip\//] } },
   },
 });

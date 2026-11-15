@@ -1,5 +1,7 @@
 # Project: AI-Powered Cryptocurrency Intelligence & Monitoring Platform
 
+> Revision 4 (2026-11-13) — adds practice trading with simulated orders (new section 11), plus changes to the main objective, sections 3.1, 3.7, 6, 8 and 10, the data model and the final acceptance criteria. Real-money trading stays out of the initial release. See [proposal 001](docs/proposals/001-trading.md).
+>
 > Revision 3 — adds gold through PAX Gold (PAXG): new section 1.1, plus changes to the main objective, sections 1, 3, 4, 6, 7 and 8, the data model, the development approach and the acceptance criteria.
 >
 > Revision 2 — adds Smart Money Concepts (SMC) and liquidity-trap pattern analysis (new section 3, plus changes to sections 4–9, the engineering requirements and the final acceptance criteria).
@@ -20,6 +22,7 @@ Develop a real-time cryptocurrency monitoring system with:
 - AI-powered market intelligence using Grok
 - Interactive 3D neural network visualization
 - Notifications and historical analytics
+- **Practice trading: buying and selling with simulated orders and no real money (see 11)**
 
 This must be a real working system, not a static dashboard or simulated demonstration.
 
@@ -111,7 +114,7 @@ Validate all calculations against reference datasets.
 - **Closed candles only** for structure decisions (BOS, MSS/CHOCH, sweep confirmation). Intra-candle events may raise provisional alerts but must not change the confirmed state.
 - **Multi-timeframe model:** H4 and H1 provide context (trend, POIs, liquidity pools). M15 and M5 provide confirmation (sweep, MSS, entry zone). Which timeframes play each role must be configurable per instrument.
 - **Instrument profiles:** SMC and indicator parameters belong to an instrument profile. Ship at least two default profiles, **crypto majors** (BTC, ETH, SOL) and **gold** (PAXG). Calibrate each one against its own labelled data rather than copying values from the other.
-- The output is **analysis and education, not trading signals.** The system must never place orders. Entry, stop-loss and take-profit levels are hypothetical reference levels used to evaluate setups.
+- The output is **analysis and education, not trading signals.** The system never places orders by itself, and no order reaches an exchange. Users can place practice orders, which are simulated inside the platform (see 11). A person places every order. Entry, stop-loss and take-profit levels are hypothetical reference levels used to evaluate setups.
 
 #### 3.2 Market structure
 
@@ -202,7 +205,7 @@ Turn the trading checklist from the reference material into an automated, explai
 #### 3.7 Risk-management reference (informational only)
 
 - Calculate the hypothetical risk-to-reward for each setup from its entry zone, invalidation level and target.
-- Provide a position-size calculator that takes a user-entered account size and risk % (default range 0.5–1%) and shows the size implied by the distance to the invalidation level. Calculation only: nothing is linked to an exchange account and no orders are placed.
+- Provide a position-size calculator that takes a user-entered account size and risk % (default range 0.5–1%) and shows the size implied by the distance to the invalidation level. The calculator never connects to an exchange account. It can fill in a practice order ticket (see 11), which the user reviews and submits.
 - Show the disclaimer *"Educational analysis — not financial advice"* wherever setup levels appear.
 
 #### 3.8 Volatility, sessions and news awareness
@@ -266,6 +269,7 @@ Create:
 - Market Activity
 - Whale Tracker
 - Alert Center
+- **Practice Trading:** the practice account, order ticket, open orders, positions, balances, history, and profit and loss after fees, all labelled as simulated (see 11)
 - Historical Analytics (now including setup outcome statistics and the replay view)
 - System Health (now including detector latency and the timeframe backfill status)
 
@@ -294,6 +298,7 @@ Configurable alerts (per instrument, timeframe, pattern and direction) for:
 - PAXG price difference between Binance and Coinbase passing a threshold.
 - Gold market opening or closing (PAXG, optional).
 - A trading pair halted or delisted on a venue.
+- **Practice order filled; practice stop or target reached (see 11).**
 
 Alerts must be de-duplicated, rate-limited and delivered through in-app, web and desktop notifications.
 
@@ -312,7 +317,49 @@ Alerts must be de-duplicated, rate-limited and delivered through in-app, web and
 - Never expose exchange secrets in frontend code.
 - Implement authentication, authorization and audit logging.
 - Validate all AI outputs.
-- Do not implement real-money trading in the initial release. SMC setups, hypothetical levels and the position-size calculator must not connect to any order-placement API.
+- Do not implement real-money trading in the initial release. SMC setups, hypothetical levels and the position-size calculator must not connect to any exchange's order-placement API. They may fill in a practice order ticket, which a person submits.
+
+### 11. Practice trading (new)
+
+Let users practise buying and selling without real money. Practice orders are simulated inside the platform, but they fill from the venues' real live trades and order books: the platform never invents a price.
+
+**Accounts**
+
+- Each user has their own practice account, with a separate balance per venue, because a Binance balance can't pay for a Coinbase order.
+- Default starting balances: 10,000 USDT on Binance and 10,000 USD on Coinbase. Admins can change the defaults.
+- Users can reset their own account to the starting balances. Resets are audited, and the history before a reset stays visible.
+- Each user reaches only their own practice account. Admins can't see other users' accounts either.
+
+**Orders**
+
+- Spot only, on every monitored pair: buy with cash, sell what you hold. No margin, leverage, futures or short selling.
+- Market and limit orders, to buy or sell, and cancelling an open order.
+- An optional protective stop and target attached to a buy. When one fills, the other is cancelled.
+- A person places every order, after a confirmation step. Setups and the position-size calculator may fill in the order ticket ("Practise this setup"); the user reviews and submits it.
+- Setups, alerts, the AI and scheduled jobs never place, change or cancel an order. The order ticket never opens from AI output, and the AI never sees users' orders or balances.
+
+**Simulated fills**
+
+- Market orders walk the venue's order book level by level, so a large order pays slippage. Whatever the book can't fill is cancelled.
+- A waiting limit order fills only when a venue trade prints through its price, up to the quantity traded through it, so partial fills happen.
+- A protective stop triggers on a trade at or through its price, then fills like a market order.
+- Fees are each venue's published base-tier maker and taker fees, configurable by an admin and stored with every fill.
+- Orders must respect the venue's price step, quantity step and minimum order value.
+- Each fill records the market data it was based on. Replaying the same market data and orders must give the same fills.
+- Refuse new orders, with the reason, when the pair's market data is delayed or has a gap, or the pair is halted. Never fill at a stale price.
+
+**Results and labelling**
+
+- Show balances, positions, realised and unrealised profit and loss after fees, and order and fill history, from a ledger that always reconciles.
+- Label every practice screen *"Practice trading: simulated orders, no real money"*, and every result as simulated. Never present practice results as expected performance.
+- State the simulation's limits: a practice order neither moves the market nor waits in a queue, and fills on thin books are less certain and flagged "thin book".
+- Audit every order placed, cancelled, refused or filled, and every reset.
+
+**Out of scope**
+
+- No order reaches an exchange, and no money moves: no deposits, withdrawals or transfers.
+- Orders on exchange test networks, which use test funds, may follow in a later phase after a separate decision.
+- Real-money trading stays out of the initial release (see 10).
 
 ## Engineering requirements
 
@@ -347,6 +394,10 @@ Implement:
 - `instrument_profiles` (versioned SMC and indicator parameter sets)
 - `underlying_market_closures` (calendar, start, end, reason: weekend / daily break / holiday)
 - `cross_venue_spreads` (instrument, venue pair, USD-normalised price difference, time)
+- `practice_accounts` (user, venue, starting balance, resets)
+- `practice_orders` (account, instrument, side, type, quantity, limit and stop prices, status, idempotency key, source: manual or setup)
+- `practice_fills` (order, price, quantity, fee, maker or taker, the market data the fill was based on)
+- `practice_ledger` (account, asset, amount, reason, reference)
 
 Time-series tables use TimescaleDB hypertables where appropriate.
 
@@ -394,6 +445,7 @@ The finished application must:
 - Display actual processing states through the 3D visualization.
 - Store historical analysis, signals, **setup state histories and setup outcomes**.
 - Generate configurable alerts.
+- **Let users practise buying and selling with simulated orders filled from live market data, clearly labelled as simulated, without any exchange connection.**
 - Work as both a web and desktop application.
 - Recover correctly from network interruptions.
 - Have automated tests and deployment documentation.
@@ -421,3 +473,5 @@ Do not sacrifice actual functionality for visual appearance.
 | XAUUSD | Spot gold in US dollars per troy ounce, as quoted by FX and metals brokers |
 | Underlying closed | A period when PAXG still trades but the gold market it tracks is closed |
 | Thin-book wick | A wick printed by very little traded volume on a thin order book |
+| Practice trading | Buying and selling with simulated orders, filled from live market data, with no real money |
+| Slippage | The difference between the price expected and the price filled, when an order walks the order book |

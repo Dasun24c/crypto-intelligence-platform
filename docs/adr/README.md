@@ -23,3 +23,4 @@ An Architecture Decision Record (ADR) records one significant decision: the cont
 | [017](017-smc-runtime-boundaries-ids-digests-replays.md) | The SMC runtime steps boundaries, derives ids from natural keys, and runs replays in the analyzer | Accepted | 2026-11-11 |
 | [018](018-charts-on-lightweight-charts.md) | Charts are Lightweight Charts with our own overlay primitives, and report what they drew | Accepted | 2026-11-12 |
 | [019](019-economic-calendar-as-known.md) | The economic calendar keeps every version, and the engine reads it as it was known | Accepted | 2026-11-12 |
+| [020](020-alerts-evaluation-and-delivery.md) | Alerts are evaluated in the analyzer by one shared evaluator and delivered through the notifications queue | Accepted | 2026-11-12 |

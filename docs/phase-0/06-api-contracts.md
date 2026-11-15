@@ -2,7 +2,7 @@
 
 | | |
 |---|---|
-| Status | Approved 2026-11-10 (Phase 0 sign-off, recommended defaults) |
+| Status | Approved 2026-11-10 (Phase 0 sign-off, recommended defaults). Amended 2026-11-13: practice trading (Phase 14). |
 | Date | 2026-11-09 |
 | Source of truth | zod schemas in `packages/contracts`. OpenAPI 3.1 is generated from them. |
 
@@ -170,11 +170,44 @@ Roles: **V** viewer, **A** analyst, **Ad** admin. Every endpoint needs authentic
 | GET | `/whales/onchain?asset&from&to` | V | Phase 11 |
 
 > **As implemented in Phase 7.** The economic calendar (feasibility §6.1, ADR 019). Schemas in `packages/contracts/src/calendar.ts`.
+
+> **As implemented in Phase 8** (ADR 020; schemas in `packages/contracts/src/alerts.ts`). The alert routes need `alerts.own`, which every role has.
+>
+> - **Rules are personal.** Another user's rule answers 404; admins may list a user's rules with `?ownerId=`.
+> - **Changes are audited** (`alert_rule.created`, `.updated`, `.deleted`).
+> - **`PATCH`** takes the rule's `version` and answers 409 when the rule changed meanwhile.
+> - **`DELETE`** keeps the row (`deleted_at`): the rule's alerts stay in the inbox.
+> - **`POST /alerts/rules/{id}/test?hours=24`** (1–168 hours) answers `AlertRuleTestResult`:
+>   - `evaluated` and `suppressed` (dropped by the cooldown);
+>   - `wouldHaveFired`, with the `dedupeKey` and source references of each;
+>   - `note` where stored history is coarser than the live source (prices from 1m candles; feed delays and disconnections are not stored).
+> - **`GET /notifications`** returns the user's `in_app` items, newest first, with `unread`, the count whatever the page holds.
+> - **`POST /notifications/read-all`** takes `{ before? }`.
+> - **Limits.** A user has at most 100 rules.
 >
 > - **`GET /calendar/events?from&to&minImpact`** returns the scheduled events of the window, by time: by default the last day and the next 60, at most 400 days. `EconomicEvent` is the shape in §4 plus `sourceRef`, `release` (`cpi`, `employment_situation`, `gdp`, `personal_income_outlays`, `fomc` or null) and `updatedAt`; `source` is `fred`, `bea` or `manual`. `timeConfirmed` is false when only the date is published and the time is the release's standard one (08:30 New York).
 > - **`GET /calendar/status`** (new, V): whether checklist item 8 can use the calendar (`available`, from `availableFrom`, the first complete FRED sync), `status` and `detail`, each source's last sync and last success, and each profile's blackout window (`beforeMin`, `afterMin`, `currencies`, `instrumentIds`).
 > - **`POST /calendar/events`**, **`PATCH`** and **`DELETE /calendar/events/{id}`** (`settings.manage`): an admin's own entries, such as FOMC statements; audited (`calendar_event.created`, `.updated`, `.cancelled`). Synced entries follow their source: editing or removing one answers 409. Removing cancels the entry; the engine's history keeps it.
 > - **`POST /calendar/sync`** (new, `settings.manage`): queues a sync on the jobs service; `202 { queued: true }`, audited as `calendar.sync_requested`.
+
+### Practice trading (Phase 14)
+
+| Method | Path | Role | Returns |
+|---|---|---|---|
+| GET | `/practice/account` | V (own) | Balances per venue, starting balances, resets |
+| POST | `/practice/account/reset` | V (own) | The account at its starting balances |
+| GET | `/practice/orders?status&instrumentId&cursor` | V (own) | `Page<PracticeOrder>` |
+| POST | `/practice/orders` | V (own) | `{clientOrderId, instrumentId, side, type, quantity, limitPrice?, stop?, target?, setupId?}` → `201 PracticeOrder`, or `422 ORDER_REFUSED` with the reason |
+| POST | `/practice/orders/{id}/cancel` | V (own) | The cancelled order |
+| GET | `/practice/fills?orderId&cursor` | V (own) | `Page<PracticeFill>`, each with the market data it was based on |
+| GET | `/practice/positions` | V (own) | Positions, with realised and unrealised profit and loss after fees |
+
+> **Planned** with [proposal 001](../proposals/001-trading.md), approved 2026-11-13; ADR 021 fixes the final shapes at the start of Phase 14.
+>
+> - **Own account only.** The routes need a new `practice.own` permission, which every role has. Nobody, admins included, can read another user's account.
+> - **Idempotent.** `POST /practice/orders` returns the existing order when its `clientOrderId` was used before.
+> - **Audited**: orders placed, cancelled, refused and filled, and account resets.
+> - **Settings.** Admins set the fees per venue and the default starting balances under `/admin/settings/practice`.
 
 ### System and administration
 
@@ -346,7 +379,9 @@ type AlertCondition =
   | { kind: 'gold_market_session'; on: ('open' | 'close')[] }
   | { kind: 'large_trade'; minUsd?: Decimal; sides?: ('buy' | 'sell')[] }
   | { kind: 'wall'; minUsd?: Decimal; events: ('appeared' | 'pulled' | 'filled')[] }
-  | { kind: 'feed_health'; events: ('gap' | 'delayed' | 'halted' | 'delisted' | 'disconnected')[] };
+  | { kind: 'feed_health'; events: ('gap' | 'delayed' | 'halted' | 'delisted' | 'disconnected')[] }
+  | { kind: 'practice_order_filled' }                         // Phase 14: the user's own practice orders
+  | { kind: 'practice_exit'; on: ('stop' | 'target')[] };    // Phase 14
 ```
 
 ## 5. WebSocket protocol
@@ -393,6 +428,7 @@ interface Envelope<T> { ch: string; seq?: string; ts: Ts; type: string; data: T;
 | `setups`, `setups:{instrumentId}` | `setup.transition` (carries a full `SetupSummary`) | Yes | On event |
 | `ai` | `ai.queued`, `ai.started`, `ai.completed`, `ai.rejected`, `ai.failed`, `ai.budget` | Yes | On event |
 | `alerts` (implicit, per user) | `alert.fired`, `notification.read` | Yes | On event |
+| `practice` (implicit, per user; Phase 14) | `practice.order`, `practice.fill`, `practice.account` | Yes | On event |
 | `calendar` | `calendar.updated` | Yes (as implemented: no, see below) | On change |
 | `system:activity` | `activity.snapshot`, `activity.pulse` | No | ≤ 4 Hz + pulses |
 | `system:health` | `health.update` | No | On change, at least every 10 s |
@@ -433,6 +469,12 @@ interface ActivityPulse { ts: Ts; kind: 'pattern' | 'sweep' | 'mss' | 'ai_comple
 > - **Message**: `setup.transition` carries a `SetupSummary` after the transition, with the transition itself in `transition`.
 > - **Snapshot**: `{ setups, transitions }`: the setups of the current live runs that are not resolved, and their latest 50 transitions, each with its `setupId`.
 > - **Subscribing**: `setups` needs no instrument id; `setups:{id}` needs an enabled instrument, like the other channels.
+
+> **As implemented in Phase 8.** `alerts` is implicit per user: the name carries no id, and each user's sockets share a private room.
+>
+> - **Durable.** `seq` is the `alerts:events` entry. A resubscribe replays only the user's own messages; when they are no longer in the stream, the snapshot is `{ unread, latest }` (the 20 latest inbox items).
+> - **`alert.fired`** carries `{ notification, channels, quiet }`. `channels` are the native notifications the rule asked for; `quiet` means inbox only.
+> - **`notification.read`** carries `{ ids }` or `{ all: true, before }`.
 
 > **As implemented in Phase 7.** The `calendar` channel is not durable: `calendar.updated` (`{ at, reason: 'sync' | 'manual', changed }`) tells clients to reload the calendar from REST, and a subscribe answers with the latest change as its snapshot. A change comes from the jobs service's sync or an admin's entry, over Redis `config:calendar`. `SystemHealth` gains `calendar: { status, available, detail }`, shown on its own: it does not change the overall status.
 
@@ -513,6 +555,7 @@ Applied in this order. Any failure in V1–V5 rejects the response (after one re
 | `VALIDATION_FAILED` | 400 | Request failed schema validation; `errors[]` lists the fields |
 | `CONFLICT` | 409 | State conflict, for example a replay already running for that range |
 | `BUDGET_EXHAUSTED` | 409 | AI spending cap reached |
+| `ORDER_REFUSED` | 422 | A practice order was refused; `reason` is `data_delayed`, `data_gap`, `pair_halted`, `insufficient_balance` or `venue_rule` (Phase 14) |
 | `RATE_LIMITED` | 429 | Too many requests; `Retry-After` header set |
 | `CHANNEL_UNKNOWN` | — | WebSocket subscribe to an unknown channel |
 | `UNAVAILABLE` | 503 | Dependency down, for example the database |
@@ -527,3 +570,4 @@ Applied in this order. Any failure in V1–V5 rejects the response (after one re
 | WebSocket subscribe | 20 channel changes per second per connection |
 | `POST /ai/analyses` | 10 per hour per user, plus the global budget |
 | `POST /replays` | 2 running per user |
+| `POST /practice/orders` | 5 per second per user, at most 200 open orders (Phase 14) |

@@ -1,11 +1,13 @@
 import type { Redis } from 'ioredis';
 import { v7 as uuidv7 } from 'uuid';
+import type { Published } from '../alerts/alert-sources.js';
 import {
   ANALYSIS_EVENTS_STREAM,
   type AnalysisStatus,
   type IndicatorPoint,
   type PauseReason,
   ProfileParamsSchema,
+  type SmcEventMessage,
 } from '@cip/contracts';
 import type { DetectionRunRow, NewIndicatorValue } from '@cip/db';
 import { floorTo, HISTORY_CANDLES, TF_MS, TIMEFRAMES, type Timeframe } from '@cip/domain';
@@ -65,6 +67,8 @@ export interface ActorDeps {
   onPublished?: (kind: 'indicators' | 'smc', tf: Timeframe, lagMs: number) => void;
   /** SMC engine step time (criterion 4.6). */
   onStep?: (ms: number) => void;
+  /** What was just published, for alert rules (Phase 8; never warm-up or replays). */
+  onAlerts?: (instrumentId: string, items: Published[], processedAt: number) => void;
 }
 
 export function toRow(
@@ -499,11 +503,13 @@ export class InstrumentActor {
       data,
     );
     this.deps.onPublished?.('indicators', tf, this.now() - (point.t + TF_MS[tf]));
+    this.deps.onAlerts?.(this.instrument.id, [{ kind: 'indicators', tf, point }], this.now());
   }
 
   /** Publishes events not published yet (never warm-up ones) and moves the outbox cursor to `upTo`. */
   private async publishEvents(info: RunInfo, events: readonly SmcEvent[], upTo: number): Promise<void> {
     const now = this.now();
+    const forAlerts: Published[] = [];
     for (const e of events) {
       if (e.seq <= this.published || isWarmup(info, e)) continue;
       // Detections go to the smc channel, setup transitions to the setups channels (API contracts §5.3).
@@ -522,7 +528,11 @@ export class InstrumentActor {
         JSON.stringify(message),
       );
       this.deps.onPublished?.('smc', e.tf, now - e.time);
+      forAlerts.push(
+        setup ? { kind: 'setup', message: setup } : { kind: 'smc', message: message as SmcEventMessage },
+      );
     }
+    if (forAlerts.length) this.deps.onAlerts?.(info.instrumentId, forAlerts, now);
     if (upTo > this.published) {
       this.published = upTo;
       await this.deps.redis.set(publishedKey(info.runId), String(upTo));

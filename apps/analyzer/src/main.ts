@@ -1,6 +1,9 @@
 import 'reflect-metadata';
 import { NestFactory } from '@nestjs/core';
+import { Queue } from 'bullmq';
+import { Redis } from 'ioredis';
 import type pg from 'pg';
+import { NOTIFICATIONS_QUEUE } from '@cip/contracts';
 import { createDb } from '@cip/db';
 import { ConfigError, INSTANCE_ID, PinoNestLogger, runService } from '@cip/observability';
 import { Analyzer } from './analysis/analyzer.js';
@@ -18,6 +21,14 @@ async function main(): Promise<void> {
     });
     const status = app.get(AnalyzerStatus);
     const db = createDb({ pool: app.get<pg.Pool>(PG_POOL) });
+    // Fired alerts are delivered by the jobs service (ADR 020).
+    const notifications = new Queue(NOTIFICATIONS_QUEUE, {
+      connection: new Redis(config.REDIS_URL, {
+        maxRetriesPerRequest: null,
+        connectionName: 'cip-analyzer-alerts',
+      }),
+      prefix: config.QUEUE_PREFIX,
+    });
     const analyzer = new Analyzer({
       db,
       redis,
@@ -25,6 +36,7 @@ async function main(): Promise<void> {
       log,
       meter,
       instance: INSTANCE_ID,
+      alerts: { queue: notifications },
     });
     await analyzer.start();
     // Replays (ADR 017): the same engine on stored history, one at a time.
@@ -42,6 +54,7 @@ async function main(): Promise<void> {
       stop: async () => {
         await replays.stop();
         await analyzer.stop();
+        await notifications.close();
         await app.close();
       },
     };

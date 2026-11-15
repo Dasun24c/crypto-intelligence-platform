@@ -3,8 +3,13 @@ import { invoke, type InvokeArgs } from '@tauri-apps/api/core';
 import { isPermissionGranted, requestPermission, sendNotification } from '@tauri-apps/plugin-notification';
 import { openUrl } from '@tauri-apps/plugin-opener';
 
-/** Remembers the server chosen on first run. It is an address, not a secret, so local storage is fine. */
-const SERVER_URL_KEY = 'cip.serverUrl';
+/**
+ * Where versions up to Phase 8 kept the server address: the webview's local storage. A forced stop
+ * could lose it, so the address now lives in a settings file the Rust side writes atomically
+ * (`settings.rs`). A value found only here is copied to the file. The address is still written here
+ * as well, so that an older installer, if it is put back, keeps finding it.
+ */
+const LEGACY_SERVER_URL_KEY = 'cip.serverUrl';
 
 /** Visible again after being hidden this long: the machine may have slept, so the app should resync. */
 const WAKE_AFTER_HIDDEN_MS = 30_000;
@@ -27,12 +32,22 @@ export function createTauriPlatform(appVersion: string): Platform {
   return {
     kind: 'desktop',
     appVersion,
-    getServerUrl: () => promised(readServerUrl),
-    setServerUrl: (url) => promised(() => localStorage.setItem(SERVER_URL_KEY, parseServerUrl(url))),
+    getServerUrl: readServerUrl,
+    async setServerUrl(url) {
+      const origin = parseServerUrl(url);
+      await command<void>('settings_set_server_url', { url: origin });
+      writeLegacyServerUrl(origin);
+    },
     secureStore,
     async notify({ title, body }) {
       const granted = (await isPermissionGranted()) || (await requestPermission()) === 'granted';
       if (granted) sendNotification({ title, body });
+    },
+    notificationPermission: async () => ((await isPermissionGranted()) ? 'granted' : 'default'),
+    async requestNotificationPermission() {
+      if (await isPermissionGranted()) return 'granted';
+      const answer = await requestPermission();
+      return answer === 'granted' ? 'granted' : answer === 'denied' ? 'denied' : 'default';
     },
     async openExternal(url) {
       // Like the web host, anything but an https:// link is ignored (the opener capability refuses it too).
@@ -85,14 +100,46 @@ function httpsUrl(input: string): string | null {
   }
 }
 
-function readServerUrl(): string | null {
-  const stored = localStorage.getItem(SERVER_URL_KEY);
+/**
+ * The saved server address, from the settings file, or else from where an earlier version kept it
+ * (copied to the settings file on the way). Null asks the user again.
+ */
+async function readServerUrl(): Promise<string | null> {
+  const saved = await command<string | null>('settings_get_server_url', {});
+  if (saved !== null) return validServerUrl(saved);
+  const legacy = validServerUrl(readLegacyServerUrl());
+  if (legacy === null) return null;
+  try {
+    await command<void>('settings_set_server_url', { url: legacy });
+  } catch {
+    // Not copied this time: the next start tries again.
+  }
+  return legacy;
+}
+
+/** Saved under other rules (by a development build, say): ask again rather than connect. */
+function validServerUrl(stored: string | null): string | null {
   if (stored === null) return null;
   try {
     return parseServerUrl(stored);
   } catch {
-    // Saved under other rules (by a development build, say): ask again rather than connect.
     return null;
+  }
+}
+
+function readLegacyServerUrl(): string | null {
+  try {
+    return localStorage.getItem(LEGACY_SERVER_URL_KEY);
+  } catch {
+    return null;
+  }
+}
+
+function writeLegacyServerUrl(origin: string): void {
+  try {
+    localStorage.setItem(LEGACY_SERVER_URL_KEY, origin);
+  } catch {
+    // Storage unavailable: the settings file has it anyway.
   }
 }
 
@@ -124,9 +171,4 @@ async function command<T>(name: string, args: InvokeArgs): Promise<T> {
   } catch (error) {
     throw new Error(typeof error === 'string' ? error : `${name} failed`, { cause: error });
   }
-}
-
-/** Runs `fn` inside a promise, so a throw becomes a rejection as it would in an async function. */
-function promised<T>(fn: () => T): Promise<T> {
-  return new Promise((resolve) => resolve(fn()));
 }

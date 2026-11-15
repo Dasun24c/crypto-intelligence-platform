@@ -2,7 +2,7 @@
 
 Real-time monitoring and analysis of crypto markets, and of gold through the PAXG token: market data from Binance and Coinbase, technical indicators, Smart Money Concepts detection, AI analysis with Grok, alerts, and a web and desktop app.
 
-**Status:** Phase 7 (Charts, Setup Scanner and calendar) is built and awaiting acceptance. The Liquidity Map draws every SMC detection over the candles on Lightweight Charts, and checks itself against the overlay API; Technical Analysis moved to the same charts. The Setup Scanner lists the setups with their checklist, score, hypothetical levels and R:R, and each setup's page has a position-size calculator. The economic calendar syncs from BEA and FRED (FRED needs a free key, see below), admins enter FOMC statements, and checklist item 8 reads the calendar as it was known at each decision. All of it is hypothetical analysis; nothing places an order. Phases 1–6 (Foundations, Market data, Technical analysis, SMC structure and liquidity, SMC points of interest, Patterns, checklist and outcomes) are accepted. See the [Phase 7 acceptance report](docs/phase-7/acceptance-report.md), the [Phase 6 report](docs/phase-6/acceptance-report.md) and the [implementation plan](docs/phase-0/08-implementation-plan.md).
+**Status:** Phase 14 (Practice trading: buying and selling with simulated orders and no real money, [proposal 001](docs/proposals/001-trading.md)) is being built. Phases 1–8 are accepted. In Phase 8 (Alerts and notifications), every user keeps their own alert rules in the Alert Center: twelve kinds, from price crossings and indicator thresholds to SMC events, setup transitions, the PAXG spread, upcoming economic releases, gold-market sessions, large trades, order-book walls and feed health. The analyzer evaluates them, de-duplicated, with cooldowns and quiet hours; the jobs service puts each alert in the user's inbox and pushes it to their open apps, where the web and desktop apps show native notifications, and alerts missed while away arrive as one summary. A dry run lists what a rule would have fired over the last 24 hours. See the [Phase 8 acceptance report](docs/phase-8/acceptance-report.md), the [Phase 7 report](docs/phase-7/acceptance-report.md) and the [implementation plan](docs/phase-0/08-implementation-plan.md).
 
 ## Quick start
 
@@ -53,6 +53,20 @@ COMPOSE_FILE=compose.yaml:infra/docker/compose.replay.yaml docker compose -p cip
 | `docker compose exec analyzer node apps/analyzer/dist/cli.js replay <instrumentId> <from> <to>` | Replays a stored period (ISO times or epoch ms) and compares its digest with the live run's ([ADR 017](docs/adr/017-smc-runtime-boundaries-ids-digests-replays.md)) |
 | `docker compose exec analyzer node apps/analyzer/dist/cli.js digest <runId> <from> <to>` | Prints a run's digest over a period |
 
+### HTTPS for the desktop app (optional)
+
+The desktop app's release builds accept only `https://` servers, and the local stack serves plain HTTP. To connect an installed desktop app to the local stack:
+
+1. Run `node scripts/dev-tls.mjs`. It needs `openssl` (Git for Windows includes it), and writes to `.secrets/tls`:
+   - a certificate authority that can sign only for `localhost` and `127.0.0.1`. Its private key is deleted once it has signed the next item, so it can never sign anything else;
+   - the certificate for `https://localhost:8443`.
+2. Trust that authority for your own user. This is a change to your computer's trusted certificates, so it is yours to make.
+   - On Windows: `Import-Certificate -FilePath .secrets\tls\cip-local-ca.crt -CertStoreLocation Cert:\CurrentUser\Root`, and confirm the dialog after comparing its thumbprint with `openssl x509 -in .secrets/tls/cip-local-ca.crt -noout -fingerprint -sha1`.
+   - On macOS: add it to the login keychain with Keychain Access, and set it to "Always Trust".
+3. `docker compose up -d --build web`. The stack is then also on `https://localhost:8443` (use the name, not `127.0.0.1`); `http://localhost:8080` is unchanged.
+
+To undo it on Windows: `Get-ChildItem Cert:\CurrentUser\Root | Where-Object Subject -like '*CIP local development CA*' | Remove-Item`. Then delete `.secrets/tls`.
+
 ## Development
 
 Install pnpm 12 (`corepack enable` with Node 24 or earlier, or the [standalone installer](https://pnpm.io/installation)). Then:
@@ -101,6 +115,9 @@ Workspace packages are consumed from source through the `@cip/source` export con
 - [Phase 4 acceptance report](docs/phase-4/acceptance-report.md)
 - [Phase 5 acceptance report](docs/phase-5/acceptance-report.md)
 - [Phase 6 acceptance report](docs/phase-6/acceptance-report.md)
+- [Phase 7 acceptance report](docs/phase-7/acceptance-report.md)
+- [Phase 8 acceptance report](docs/phase-8/acceptance-report.md)
+- [Proposal 001: buying and selling](docs/proposals/001-trading.md) (approved 2026-11-13): practice trading, then exchange test networks; no real money in the initial release
 - [Desktop app](apps/desktop/README.md)
 
 The platform is for analysis and education. It holds no exchange API keys, implements no trading, and never presents analysis as a guaranteed prediction.

@@ -13,6 +13,7 @@
     "test:integration": "vitest run --config vitest.int.config.ts"
   },
   "dependencies": {
+    "@cip/alerts": "workspace:*",
     "@cip/contracts": "workspace:*",
     "@cip/db": "workspace:*",
     "@cip/domain": "workspace:*",

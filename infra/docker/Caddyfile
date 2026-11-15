@@ -7,11 +7,11 @@
 	}
 }
 
-{$SITE_ADDRESS::8080} {
+# Everything a site serves; HSTS is added by the main site only (see below).
+(cip_site) {
 	encode zstd gzip
 
 	header {
-		Strict-Transport-Security "max-age=31536000; includeSubDomains"
 		X-Content-Type-Options "nosniff"
 		Referrer-Policy "no-referrer"
 		Permissions-Policy "camera=(), microphone=(), geolocation=(), payment=(), usb=()"
@@ -37,3 +37,14 @@
 		file_server
 	}
 }
+
+{$SITE_ADDRESS::8080} {
+	header Strict-Transport-Security "max-age=31536000; includeSubDomains"
+	import cip_site
+}
+
+# The local stack over HTTPS on localhost:8443, for the desktop app's release builds, which accept
+# only https:// servers. scripts/dev-tls.mjs writes this site and its certificate to .secrets/tls
+# (compose.dev.yaml mounts it); without them nothing is imported. It sends no HSTS: browsers would
+# then upgrade every localhost port, the plain-HTTP stack on 8080 included.
+import /secrets/tls/*.caddy

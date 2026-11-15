@@ -2,7 +2,7 @@
 
 | | |
 |---|---|
-| Status | Approved 2026-11-10 (Phase 0 sign-off, recommended defaults) |
+| Status | Approved 2026-11-10 (Phase 0 sign-off, recommended defaults). Amended 2026-11-13: practice trading (§21). |
 | Date | 2026-11-09 |
 | Related | [Requirements analysis](01-requirements-analysis.md) · [Data model](05-data-model.md) · [API contracts](06-api-contracts.md) · [SMC rulebook](07-smc-rulebook.md) · [Feasibility](02-feasibility.md) (verified versions and vendor facts) |
 
@@ -41,6 +41,7 @@ flowchart TB
   ing[ingestor<br/>venue connections, candles, books]
   ana[analyzer<br/>indicators, SMC engine, setups, alert rules]
   jobs[jobs<br/>BullMQ: AI, notifications, backfill, calendar, replay]
+  brk[broker<br/>practice orders, simulated fills · Phase 14]
   pg[(PostgreSQL + TimescaleDB)]
   rd[(Valkey / Redis<br/>streams, pub/sub, queues, cache, leases)]
   web --> caddy
@@ -54,6 +55,8 @@ flowchart TB
   ana --- pg
   jobs --- rd
   jobs --- pg
+  brk --- rd
+  brk --- pg
   ing -->|WS + REST| ex[(Binance / Coinbase)]
   jobs -->|HTTPS| grok[(Grok)]
 ```
@@ -64,11 +67,12 @@ flowchart TB
 | **ingestor** | Venue connections, normalisation, candle building, order books, gap and delay detection, large trades, walls, cross-venue spread, feed health | One active instance per venue (Redis lease); optional warm standby | In-memory order books, rebuilt from snapshots |
 | **analyzer** | Indicators, SMC engine, setups, checklist, outcomes, alert-rule evaluation | Partitioned by instrument through Redis leases; add instances to scale | Engine state, checkpointed to PostgreSQL |
 | **jobs** | BullMQ processors: AI analysis, notifications, backfill, calendar sync, pair-status polling, closure-calendar generation, replays, maintenance, on-chain (Phase 11) | Horizontal; per-queue concurrency and rate limits | None |
+| **broker** (Phase 14) | Practice orders: fills them from live trades and order books, and settles balances. Never contacts a venue. | One active instance (Redis lease) with a warm standby | None: orders and the ledger are in PostgreSQL |
 | **PostgreSQL + TimescaleDB** | All durable data | Vertical first; read replica later | Durable |
 | **Valkey / Redis** | Streams, pub/sub, BullMQ, caches, leases, Socket.IO adapter | Single node (AOF enabled for BullMQ) | Rebuildable, except queued jobs |
 | **Caddy** | TLS (automatic certificates), static web hosting, reverse proxy | Single | None |
 
-All four backend services ship in one `server` image with different entrypoints.
+All backend services (four, and the broker from Phase 14) ship in one `server` image with different entrypoints.
 
 ## 4. Monorepo
 
@@ -179,6 +183,8 @@ docs/
 |---|---|---|---|
 | Stream | `md:candles:{instrumentId}` | ingestor → analyzer | Wake-up signal: candles are final at boundary t. The analyzer reads the candles from PostgreSQL. |
 | Stream | `md:events` | ingestor → api, jobs | Gaps, feed status, large trades, walls, spreads |
+| Stream | `md:trades:{instrumentId}` (Phase 14) | ingestor → broker | Every trade (capped), for practice fills |
+| Stream | `practice:events` (Phase 14) | broker → api | Order, fill and balance updates for each user's `practice` channel |
 | Stream | `an:events` | analyzer → api, jobs | Indicator updates, SMC detections, setup transitions |
 | Stream | `ai:events` | jobs → api | AI analysis lifecycle |
 | Stream | `alerts:events` | analyzer → jobs, api | Fired alerts |
@@ -334,6 +340,16 @@ sequenceDiagram
   - After reconnecting, a client gets unread items from the inbox. The desktop app shows one summary notification ("5 alerts while you were away") instead of a burst.
 - Alerts from catch-up processing are labelled **late**.
 
+> **As implemented in Phase 8** ([ADR 020](../adr/020-alerts-evaluation-and-delivery.md)):
+>
+> - **One evaluator.** `packages/alerts` holds the evaluator, shared by the analyzer (live) and the API's rule test (a dry run over stored history).
+> - **Per instrument.** The analyzer evaluates rules on its own published output, right after the actor publishes, and on prices from the `ticker:{id}` key once a second, for the instruments whose lease it holds.
+> - **Global sources.** One instance, holding `lease:analyzer:alerts`, evaluates `md:events` (from a cursor kept in Redis), the stored PAXG spread, and a 5 s clock for upcoming releases and gold-market sessions.
+> - **Rules.** They are re-read when their fingerprint changes (checked every 5 s); there is no `config:alerts` subscription.
+> - **Cooldowns** are Redis `SET NX PX` keys, per rule and subject. **De-duplication** is `UNIQUE (rule_id, dedupe_key)`.
+> - **Delivery.** The analyzer adds a job to the BullMQ `notifications` queue. The jobs service writes the inbox and appends `alert.fired` to `alerts:events`, which every API instance pushes to the owner's `alerts` channel. So `alerts:events` flows jobs, api → api, not analyzer → jobs, api.
+> - **Quiet delivery.** Alerts inside a rule's quiet hours, or beyond 20 native notifications a minute per user, are delivered quiet: inbox only.
+
 ## 10. Real-time gateway
 
 - Socket.IO, WebSocket transport only (so no sticky sessions), namespace `/v1`.
@@ -375,6 +391,7 @@ The brain is a live view of system activity, divided into regions mapped to subs
 
 - Uses the same `packages/app` build with the Tauri platform implementation.
 - **First run**: server URL, then login. The refresh token goes into the OS keychain through a small Rust command (`keyring` crate); the access token is kept in memory.
+  - Phase 8: the server URL is kept in `settings.json` in the app config folder, written atomically by a Rust command, not in WebView storage. A forced stop of the app could lose WebView storage's newest writes.
 - **Capabilities** are limited to: notifications, window state, tray, optional autostart, the keyring command, and opening external links. No shell access and no filesystem access beyond app config.
 - **CSP**: `default-src 'self'; connect-src https://<server> wss://<server>; img-src 'self' data:`. No remote scripts.
 - Sleep/wake and network changes trigger reconnect and resync.
@@ -397,15 +414,16 @@ The brain is a live view of system activity, divided into regions mapped to subs
 |---|---|---|---|
 | View dashboards, charts, setups, AI history | ✓ | ✓ | ✓ |
 | Personal alert rules and notifications | ✓ | ✓ | ✓ |
+| Practice trading on their own account (Phase 14) | ✓ | ✓ | ✓ |
 | Request on-demand AI analysis (budgeted) | | ✓ | ✓ |
 | Run replays; label fixtures | | ✓ | ✓ |
-| Manage instruments, profiles and settings (AI budget, thresholds) | | | ✓ |
+| Manage instruments, profiles and settings (AI budget, thresholds, practice fees and starting balances) | | | ✓ |
 | Manage users; view the audit log | | | ✓ |
 
 **Audit log**
 
 - Append-only, with a SHA-256 hash chain computed by a database trigger. The application's database role can't update or delete rows.
-- Logged events: logins (success and failure), MFA changes, user and role changes, instrument, profile and settings changes, alert-rule changes, on-demand AI requests, replays and exports.
+- Logged events: logins (success and failure), MFA changes, user and role changes, instrument, profile and settings changes, alert-rule changes, on-demand AI requests, replays and exports; from Phase 14, practice orders placed, cancelled, refused or filled, and practice account resets.
 
 **Secrets**
 
@@ -423,7 +441,7 @@ The brain is a live view of system activity, divided into regions mapped to subs
 
 **Supply chain**: lockfile, OSV scanning, Renovate, Trivy image scans, a CycloneDX SBOM per release, and base images pinned by digest.
 
-**No trading**: no exchange private endpoint is implemented. A CI check fails if adapter code references order endpoints.
+**No real trading**: no exchange private endpoint is implemented. A CI check fails if application code references an exchange's order, account or user-data endpoints, or the headers that sign private requests. Practice trading (§21) simulates orders inside the platform and never contacts a venue.
 
 ## 15. Data storage
 
@@ -498,3 +516,21 @@ Full ADRs are written in Phase 1 under `docs/adr/`.
 | 010 | Valkey as the Redis-compatible store (decision D4) | Redis 8 |
 | 011 | AI cites ids from a provided context; server validates grounding | Free-form analysis (can invent levels) |
 | 012 | Indicator reference data generated with TA-Lib in a dev-only Python tool | Hand-computed spreadsheets (slow, error-prone) |
+
+## 21. Practice trading (Phase 14)
+
+Approved 2026-11-13 ([proposal 001](../proposals/001-trading.md)). ADR 021 settles the details at the start of Phase 14.
+
+- **What it is.** Users buy and sell with practice balances. Orders are simulated inside the platform and fill from the venues' live trades and order books. No order reaches an exchange.
+- **`packages/paper-engine`** is pure, like the SMC engine: order validation against the venue's price step, quantity step and minimum order value, the fill rules, fees, and the balance ledger.
+- **`apps/broker`** is the only service that handles orders. One active instance holds a lease, with a warm standby. It reads trades from `md:trades:{instrumentId}` and the latest book from `book:{id}`, and opens no connection to any venue.
+- **Order flow.**
+  1. The api validates an order, then records it and reserves its balance in one transaction. The client's idempotency key stops a retried submission from creating a second order.
+  2. The broker fills it:
+     - market orders walk the book at once;
+     - waiting limit orders fill only when a trade prints through their price, up to the quantity traded through it;
+     - stops trigger on a trade at or through their price, then fill like market orders.
+  3. The broker settles balances and fees in the ledger, and appends the update to `practice:events` for the owner's `practice` channel.
+- **Refusals.** New orders on a pair whose data is delayed or has a gap, or that is halted, are refused with the reason. Open orders on it don't fill meanwhile.
+- **Determinism.** Fills depend only on the recorded market data and the orders, so a replay reproduces them, checked with a digest as for the SMC engine.
+- **Boundaries.** Setups, alerts, the AI and jobs can't create orders (a dependency rule). The AI context never includes orders or balances. The no-trading CI check is unchanged.

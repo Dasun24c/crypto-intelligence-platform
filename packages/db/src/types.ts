@@ -103,6 +103,9 @@ export interface Database {
   'analysis.setup_transitions': SetupTransitionsTable;
   'analysis.setup_checklist_results': SetupChecklistResultsTable;
   'analysis.setup_outcomes': SetupOutcomesTable;
+  'alerts.rules': AlertRulesTable;
+  'alerts.events': AlertEventsTable;
+  'alerts.notifications': AlertNotificationsTable;
 }
 
 // ---------------------------------------------------------------- market (data model §4)
@@ -339,6 +342,61 @@ export interface CalendarSyncsTable {
   cancelled: Generated<number>;
   error: string | null;
   details: ColumnType<Record<string, unknown>, Record<string, unknown> | undefined, Record<string, unknown>>;
+}
+
+// ---------------------------------------------------------------- alerts (data model §7, Phase 8)
+
+/** A user's alert rule; `scope`, `condition` and `quiet_hours` hold contracts' AlertScope, AlertCondition, QuietHours. */
+export interface AlertRulesTable {
+  id: string;
+  owner_id: string;
+  name: string;
+  enabled: Generated<boolean>;
+  scope: ColumnType<Record<string, unknown>, Record<string, unknown> | undefined, Record<string, unknown>>;
+  condition: ColumnType<Record<string, unknown>, Record<string, unknown>, Record<string, unknown>>;
+  severity: 'info' | 'warning' | 'critical';
+  cooldown_sec: Generated<number>;
+  channels: Generated<string[]>;
+  quiet_hours: ColumnType<
+    Record<string, unknown> | null,
+    Record<string, unknown> | null | undefined,
+    Record<string, unknown> | null
+  >;
+  version: Generated<number>;
+  created_at: Generated<Date>;
+  updated_at: Generated<Date>;
+  deleted_at: Date | null;
+}
+
+/** One fired occurrence; `UNIQUE (rule_id, dedupe_key)`. */
+export interface AlertEventsTable {
+  id: string;
+  rule_id: string;
+  fired_at: Date;
+  dedupe_key: string;
+  severity: 'info' | 'warning' | 'critical';
+  title: string;
+  body: string;
+  source_refs: ColumnType<
+    Record<string, unknown>,
+    Record<string, unknown> | undefined,
+    Record<string, unknown>
+  >;
+  late: Generated<boolean>;
+  created_at: Generated<Date>;
+}
+
+/** Delivery of an event to a user per channel; the `in_app` row is the inbox item. */
+export interface AlertNotificationsTable {
+  id: string;
+  event_id: string;
+  user_id: string;
+  channel: 'in_app' | 'desktop' | 'web';
+  status: 'pending' | 'sent' | 'failed';
+  attempts: Generated<number>;
+  last_error: string | null;
+  created_at: Generated<Date>;
+  read_at: Date | null;
 }
 
 // ---------------------------------------------------------------- analysis (data model §5)
@@ -627,6 +685,9 @@ export type SetupTransitionRow = Selectable<SetupTransitionsTable>;
 export type SetupChecklistResultRow = Selectable<SetupChecklistResultsTable>;
 export type SetupOutcomeRow = Selectable<SetupOutcomesTable>;
 export type NewIndicatorValue = Insertable<IndicatorValuesTable>;
+export type AlertRuleRow = Selectable<AlertRulesTable>;
+export type AlertEventRow = Selectable<AlertEventsTable>;
+export type AlertNotificationRow = Selectable<AlertNotificationsTable>;
 
 export type UserRow = Selectable<UsersTable>;
 export type NewUser = Insertable<UsersTable>;

@@ -7,6 +7,12 @@ import type { Logger } from '@cip/observability';
 import { AdminAuditController } from './admin/admin-audit.controller.js';
 import { AdminUsersController } from './admin/admin-users.controller.js';
 import { AuditService } from './audit/audit.service.js';
+import {
+  AlertEventsController,
+  AlertRulesController,
+  NotificationsController,
+} from './alerts/alerts.controller.js';
+import { AlertsRepository } from './alerts/alerts.repository.js';
 import { CalendarController, CalendarSyncQueue } from './calendar/calendar.controller.js';
 import { CalendarRepository } from './calendar/calendar.repository.js';
 import { AccessGuard } from './auth/access.guard.js';
@@ -80,6 +86,9 @@ export class AppModule {
         SetupsController,
         ReplayController,
         CalendarController,
+        AlertRulesController,
+        AlertEventsController,
+        NotificationsController,
         SystemController,
         ProbesController,
       ],
@@ -122,6 +131,7 @@ export class AppModule {
         SetupsRepository,
         ReplayService,
         CalendarRepository,
+        AlertsRepository,
         CalendarSyncQueue,
         LiveGateway,
       ],

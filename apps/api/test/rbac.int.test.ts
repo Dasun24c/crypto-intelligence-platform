@@ -185,6 +185,43 @@ const ENDPOINTS: Endpoint[] = [
   },
   // Allowed: queues a sync on the jobs service's queue (no worker runs in this test).
   { method: 'POST', path: '/api/v1/calendar/sync', policy: 'settings.manage' },
+  // Phase 8: every role's own alert rules and inbox (another user's rule reads as not found).
+  { method: 'GET', path: '/api/v1/alerts/rules', policy: 'alerts.own' },
+  { method: 'POST', path: '/api/v1/alerts/rules', policy: 'alerts.own', body: {} },
+  {
+    method: 'GET',
+    path: `/api/v1/alerts/rules/${NOBODY}`,
+    policy: 'alerts.own',
+    route: '/api/v1/alerts/rules/:id',
+  },
+  {
+    method: 'PATCH',
+    path: `/api/v1/alerts/rules/${NOBODY}`,
+    policy: 'alerts.own',
+    body: {},
+    route: '/api/v1/alerts/rules/:id',
+  },
+  {
+    method: 'DELETE',
+    path: `/api/v1/alerts/rules/${NOBODY}`,
+    policy: 'alerts.own',
+    route: '/api/v1/alerts/rules/:id',
+  },
+  {
+    method: 'POST',
+    path: `/api/v1/alerts/rules/${NOBODY}/test`,
+    policy: 'alerts.own',
+    route: '/api/v1/alerts/rules/:id/test',
+  },
+  { method: 'GET', path: '/api/v1/alerts/events', policy: 'alerts.own' },
+  { method: 'GET', path: '/api/v1/notifications', policy: 'alerts.own' },
+  { method: 'POST', path: '/api/v1/notifications/read-all', policy: 'alerts.own', body: {} },
+  {
+    method: 'POST',
+    path: `/api/v1/notifications/${NOBODY}/read`,
+    policy: 'alerts.own',
+    route: '/api/v1/notifications/:id/read',
+  },
   { method: 'GET', path: '/api/v1/admin/instruments', policy: 'instruments.manage' },
   { method: 'POST', path: '/api/v1/admin/instruments', policy: 'instruments.manage', body: {} },
   { method: 'PATCH', path: `/api/v1/admin/instruments/${NOBODY}`, policy: 'instruments.manage', body: {} },

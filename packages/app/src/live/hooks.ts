@@ -1,7 +1,7 @@
 import { useEffect, useEffectEvent, useMemo, useSyncExternalStore } from 'react';
 import type { Envelope } from '@cip/contracts';
 import { useSession } from '../session.js';
-import type { ChannelStatus, ConnectionStatus, LiveClient } from './live-client.js';
+import type { ChannelStatus, ConnectionStatus, LiveClient, MessageMeta } from './live-client.js';
 
 export function useLiveClient(): LiveClient {
   return useSession().live;
@@ -125,9 +125,11 @@ export function useLatest<T>(channel: string | null, options: LatestOptions = {}
 }
 
 export interface ChannelEvents {
-  onMessage?: (message: Envelope) => void;
+  onMessage?: (message: Envelope, meta: MessageMeta) => void;
   /** A durable channel's resync snapshot (it replaces local state), with the channel it belongs to. */
   onSnapshot?: (snapshot: unknown, channel: string) => void;
+  /** A durable channel caught up after a reconnect (see `ChannelHandlers.onResynced`). */
+  onResynced?: (mode: 'replayed' | 'snapshot', channel: string) => void;
 }
 
 /**
@@ -137,16 +139,22 @@ export interface ChannelEvents {
 export function useChannels(names: readonly string[], events: ChannelEvents): void {
   const live = useLiveClient();
   const key = names.join(' ');
-  const onMessage = useEffectEvent((message: Envelope) => events.onMessage?.(message));
+  const onMessage = useEffectEvent((message: Envelope, meta: MessageMeta) =>
+    events.onMessage?.(message, meta),
+  );
   const onSnapshot = useEffectEvent((snapshot: unknown, channel: string) =>
     events.onSnapshot?.(snapshot, channel),
+  );
+  const onResynced = useEffectEvent((mode: 'replayed' | 'snapshot', channel: string) =>
+    events.onResynced?.(mode, channel),
   );
   useEffect(() => {
     if (key === '') return undefined;
     const releases = key.split(' ').map((name) =>
       live.subscribe(name, {
-        onMessage: (message) => onMessage(message),
+        onMessage: (message, meta) => onMessage(message, meta),
         onSnapshot: (snapshot) => onSnapshot(snapshot, name),
+        onResynced: (mode) => onResynced(mode, name),
       }),
     );
     return () => {

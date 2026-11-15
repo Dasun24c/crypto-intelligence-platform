@@ -5,6 +5,7 @@ import { type AnalysisStatus, analysisStatusKey } from '@cip/contracts';
 import type { Database } from '@cip/db';
 import type { Timeframe } from '@cip/domain';
 import type { HeartbeatProbe, Logger } from '@cip/observability';
+import { AlertService, type DeliveryQueue } from '../alerts/alert-service.js';
 import { InstrumentActor } from './actor.js';
 import { InstrumentLease, LEASE_RENEW_MS, LEASE_TTL_MS } from './lease.js';
 import { AnalysisRepository } from './repository.js';
@@ -28,6 +29,8 @@ export interface AnalyzerOptions {
   /** How long one blocking read of the wake-up streams waits (default 2 s). */
   blockMs?: number;
   now?: () => number;
+  /** Alert rules (Phase 8): fired alerts go to this queue; without it nothing is evaluated. */
+  alerts?: { queue: DeliveryQueue; tickMs?: number };
 }
 
 interface Held {
@@ -58,6 +61,8 @@ export class Analyzer {
   private readonly onStep: (ms: number) => void;
   /** The latest engine step times, for the step p95 the probe reports (criterion 4.6). */
   private readonly steps = new RecentValues(4_096);
+  /** Users' alert rules (ADR 020). */
+  readonly alerts: AlertService | null;
 
   constructor(private readonly o: AnalyzerOptions) {
     this.repo = new AnalysisRepository(o.db);
@@ -75,6 +80,18 @@ export class Analyzer {
       steps?.record(ms);
       this.steps.add(ms);
     };
+    this.alerts = o.alerts
+      ? new AlertService({
+          db: o.db,
+          redis: o.redis,
+          queue: o.alerts.queue,
+          log: o.log,
+          instance: o.instance,
+          held: () => [...this.held.keys()],
+          now: o.now,
+          tickMs: o.alerts.tickMs,
+        })
+      : null;
   }
 
   async start(): Promise<void> {
@@ -88,6 +105,7 @@ export class Analyzer {
       this.renewLeases().catch((err: unknown) => this.o.log.error({ err }, 'lease renewal failed'));
     }, this.o.leaseRenewMs ?? LEASE_RENEW_MS);
     await this.tick();
+    await this.alerts?.start();
     this.timer = setInterval(() => {
       this.ticking = this.tick().catch((err: unknown) => this.o.log.error({ err }, 'analyzer tick failed'));
     }, this.o.tickMs ?? 5_000);
@@ -106,6 +124,7 @@ export class Analyzer {
     this.reader?.disconnect();
     await this.following;
     await this.ticking;
+    await this.alerts?.stop();
     await this.leasing?.catch(() => undefined);
     if (opts.graceful === false) {
       for (const { actor } of this.held.values()) await actor.idle();
@@ -207,6 +226,7 @@ export class Analyzer {
             now: this.o.now,
             onPublished: this.onPublished,
             onStep: this.onStep,
+            onAlerts: this.alerts ? (id, items, at) => this.alerts!.published(id, items, at) : undefined,
           }),
         };
         this.held.set(instrument.id, h);

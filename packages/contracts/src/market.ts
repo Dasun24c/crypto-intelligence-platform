@@ -291,20 +291,24 @@ export const channels = {
   setups: (instrumentId?: string) => (instrumentId ? `setups:${instrumentId}` : 'setups'),
   /** The economic calendar (Phase 7): `calendar.updated` on every change. */
   calendar: 'calendar',
+  /** The signed-in user's alerts (Phase 8): implicit per user, so the name carries no id. */
+  alerts: 'alerts',
   systemHealth: 'system:health',
 } as const;
 
 const UUID = '[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}';
 export const CHANNEL_PATTERN = new RegExp(
-  `^(?:(?:ticker|book|trades|market|smc):${UUID}|(?:candles|indicators):${UUID}:(?:1m|5m|15m|1h|4h|1d)|setups(?::${UUID})?|calendar|system:health)$`,
+  `^(?:(?:ticker|book|trades|market|smc):${UUID}|(?:candles|indicators):${UUID}:(?:1m|5m|15m|1h|4h|1d)|setups(?::${UUID})?|calendar|alerts|system:health)$`,
 );
 
 /**
  * Durable channels carry `seq` (the id of the stream entry behind the message: md:events for
- * trades and market, an:events for indicators, smc and setups) and can be replayed after a reconnect.
+ * trades and market, an:events for indicators, smc and setups, alerts:events for alerts) and can be
+ * replayed after a reconnect.
  */
 export function isDurableChannel(channel: string): boolean {
   return (
+    channel === 'alerts' ||
     channel.startsWith('trades:') ||
     channel.startsWith('market:') ||
     channel.startsWith('indicators:') ||
@@ -405,6 +409,8 @@ export type MarketMessageType =
   | 'zone.status'
   | 'setup.transition'
   | 'calendar.updated'
+  | 'alert.fired'
+  | 'notification.read'
   | 'health.update';
 
 /** A stored or live candle in its wire form (structural, so this package stays dependency-free). */
@@ -443,4 +449,6 @@ export const CONFIG_CHANNELS = {
   instruments: 'config:instruments',
   closures: 'config:closures',
   calendar: 'config:calendar',
+  /** A user's alert rules changed (Phase 8): the analyzer reloads its rule cache. */
+  alerts: 'config:alerts',
 } as const;

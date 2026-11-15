@@ -17,6 +17,9 @@ export interface PlatformNotification {
   body: string;
 }
 
+/** Whether the host may show notifications ('unsupported': it cannot show any). */
+export type NotificationPermission = 'granted' | 'denied' | 'default' | 'unsupported';
+
 export interface Platform {
   kind: 'web' | 'desktop';
   appVersion: string;
@@ -30,6 +33,10 @@ export interface Platform {
   /** Desktop: the OS keychain. Web: null (the refresh token is an httpOnly cookie the app never sees). */
   secureStore: SecureStore | null;
   notify(notification: PlatformNotification): Promise<void>;
+  /** Whether `notify` can show anything now (the Alert Center offers to ask when it cannot). */
+  notificationPermission?: () => Promise<NotificationPermission>;
+  /** Asks the user (call it from a click: browsers ignore requests made without one). */
+  requestNotificationPermission?: () => Promise<NotificationPermission>;
   openExternal(url: string): Promise<void>;
   /** Calls back after the machine wakes or the network comes back; returns an unsubscribe function. */
   onSleepWake(callback: () => void): () => void;

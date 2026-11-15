@@ -53,6 +53,27 @@ export async function signInAdmin(page: Page): Promise<void> {
   await expect(home).toBeVisible();
 }
 
+/**
+ * The seeded admin's access token through the API (password, then TOTP), for admin calls a test
+ * makes beside the page. The admin must have enrolled already (admin.spec.ts does on a fresh stack).
+ */
+export async function adminAccessToken(request: APIRequestContext): Promise<Record<string, string>> {
+  const login = await request.post('/api/v1/auth/login', { data: { email: ADMIN, password: DEV_PASSWORD } });
+  expect(login.status(), await login.text()).toBe(200);
+  const { mfaToken } = (await login.json()) as { mfaToken?: string };
+  expect(typeof mfaToken).toBe('string');
+  const secret = readFileSync(SECRET_FILE, 'utf8').trim();
+  let last: string | undefined;
+  for (let attempt = 0; attempt < 3; attempt++) {
+    // A code from a time step another spec just used is refused: the next step's is not.
+    last = await freshTotp(secret, last);
+    const res = await request.post('/api/v1/auth/mfa', { data: { mfaToken, code: last } });
+    if (res.ok())
+      return { authorization: `Bearer ${((await res.json()) as { accessToken: string }).accessToken}` };
+  }
+  throw new Error('the admin could not complete the second factor');
+}
+
 /** An access token from the login endpoint, for reading the API alongside the page. */
 export async function accessToken(
   request: APIRequestContext,

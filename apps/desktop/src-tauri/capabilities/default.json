@@ -16,6 +16,8 @@
     "allow-secure-store-get",
     "allow-secure-store-set",
     "allow-secure-store-delete",
+    "allow-settings-get-server-url",
+    "allow-settings-set-server-url",
     "allow-set-tray-status"
   ]
 }
