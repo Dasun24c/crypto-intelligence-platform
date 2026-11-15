@@ -1,0 +1,13 @@
+pnpm-lock.yaml
+**/dist/
+**/coverage/
+**/.turbo/
+apps/desktop/src-tauri/
+e2e/test-results/
+e2e/playwright-report/
+packages/db/src/generated/
+docs/
+REQUIREMENTS.md
+*.md
+# Generated golden fixtures (packages/smc-engine/scripts/fixtures): one candle per line, not Prettier style
+packages/smc-engine/fixtures/

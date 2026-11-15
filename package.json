@@ -1,0 +1,56 @@
+{
+  "name": "crypto-intelligence-platform",
+  "private": true,
+  "type": "module",
+  "packageManager": "pnpm@12.18.0",
+  "engines": {
+    "node": ">=26.13.0 <27"
+  },
+  "devEngines": {
+    "runtime": {
+      "name": "node",
+      "version": "26.13.0",
+      "onFail": "download"
+    }
+  },
+  "scripts": {
+    "dev": "turbo run dev --filter=./apps/* --filter=!@cip/desktop",
+    "build": "turbo run build",
+    "typecheck": "turbo run typecheck",
+    "lint": "eslint . --max-warnings=0",
+    "format": "prettier --write .",
+    "format:check": "prettier --check .",
+    "depcruise": "depcruise apps packages --config .dependency-cruiser.cjs",
+    "test": "turbo run test",
+    "test:coverage": "turbo run test -- --coverage",
+    "test:integration": "turbo run test:integration --concurrency=1",
+    "test:integration:coverage": "turbo run test:integration --concurrency=1 -- --coverage",
+    "e2e": "playwright test --config e2e/playwright.config.ts",
+    "check:no-trading": "node scripts/check-no-trading.mjs",
+    "scan:artifacts": "node scripts/scan-artifacts.mjs",
+    "prove:checks-fail": "bash scripts/prove-checks-fail.sh",
+    "stack:up": "docker compose up --build --wait",
+    "stack:down": "docker compose down",
+    "stack:reset": "docker compose down --volumes",
+    "infra:up": "docker compose up --wait db valkey",
+    "db:migrate": "pnpm --filter @cip/db migrate",
+    "db:seed:dev": "pnpm --filter @cip/db seed:dev",
+    "verify": "pnpm run format:check && pnpm run lint && pnpm run typecheck && pnpm run depcruise && pnpm run check:no-trading && pnpm run test:coverage && pnpm run build && pnpm run scan:artifacts apps/web/dist"
+  },
+  "devDependencies": {
+    "@axe-core/playwright": "catalog:",
+    "@eslint/js": "catalog:",
+    "@playwright/test": "catalog:",
+    "@types/node": "catalog:",
+    "@typescript/native": "catalog:",
+    "dependency-cruiser": "catalog:",
+    "eslint": "catalog:",
+    "eslint-plugin-react-hooks": "catalog:",
+    "globals": "catalog:",
+    "prettier": "catalog:",
+    "turbo": "catalog:",
+    "typescript": "catalog:",
+    "typescript-eslint": "catalog:",
+    "vitest": "catalog:"
+  }
+}

@@ -183,8 +183,14 @@ docs/
 | Stream | `ai:events` | jobs → api | AI analysis lifecycle |
 | Stream | `alerts:events` | analyzer → jobs, api | Fired alerts |
 | Stream | `sys:activity` | all → api | Activity counters for the 3D view |
-| Pub/sub (Socket.IO Redis emitter) | rooms `ticker:*`, `book:*`, `candles:*` | ingestor → api → clients | High-frequency, conflated, no replay |
+| Pub/sub | `live:{channel}` (`ticker:*`, `book:*`, `candles:*`, `spread` on `market:*`) | ingestor → every api → clients | High-frequency, conflated, no replay; plain JSON envelopes ([ADR 014](../adr/014-live-fan-out-without-socketio-adapter.md) replaced the Socket.IO emitter) |
+| Pub/sub | `config:instruments`, `config:closures` | api, jobs → ingestor, api | Admin changes and pair-status changes take effect without a restart |
+| Keys | `ticker:{id}`, `book:{id}` (60 s / 30 s TTL), `feed:status:{venue}` (15 s TTL) | ingestor → api | Latest values for REST and subscribe snapshots; feed health per venue, written by that venue's lease holder |
 | BullMQ | `ai-analysis`, `notifications`, `backfill`, `replay`, `calendar-sync`, `pair-status`, `closure-calendar`, `maintenance`, `onchain` | → jobs | Units of work with retries, rate limits and scheduling |
+
+> Phase 2 runs `pair-status` (every 5 min), `closure-calendar` (daily) and the nightly candle consistency check as scheduled tasks on the `maintenance` queue rather than queues of their own: each is one small job at a time, so separate queues would add nothing.
+>
+> Phase 4: the analyzer, not `jobs`, consumes the `replay` queue ([ADR 017](../adr/017-smc-runtime-boundaries-ids-digests-replays.md)). `an:events` carries indicator points (`indicators.closed`) and SMC detections (`smc`). A new key, `an:published:{runId}`, records how far each run's detections have been published.
 
 - Streams are capped (`MAXLEN ~`) at about 7 days of entries. Every api instance reads every stream with its own cursor, so each one can fan out to its own clients.
 - **Leases** (`lease:ingestor:{venue}`, `lease:analyzer:{instrumentId}`) have a 15 s TTL and are renewed every 5 s. Each lease carries a fencing epoch. Analyzer checkpoints are updated only `WHERE lease_epoch <= $epoch`, so a former owner can't overwrite a newer one.
@@ -200,6 +206,66 @@ docs/
 - **Outcomes** are part of engine state. Ambiguity is resolved with 1m candles (rulebook §6.1).
 - **Alert evaluation** runs inside each instrument actor on 1 Hz ticker updates, `an:events` and `md:events`. Rules are cached and refreshed on `config:alerts`. Cooldowns and de-duplication keys live in Redis.
 - **Replays** run on the `replay` queue: the same engine, a new `run_id` with `mode = replay`, and a digest that can be compared with the live run.
+
+> **As implemented in Phase 3 (indicators only).** The analyzer (`apps/analyzer/src/analysis/`) runs the parts of this pipeline the indicators need.
+>
+> **Runs and leases**
+>
+> - One actor per instrument, behind `lease:analyzer:{id}`: 15 s TTL, renewed every 5 s.
+> - One open live run per instrument. A change of profile, settings (`params_hash`) or rules version (`ruleset_version`, today `indicators-1`) supersedes the run and starts a new one.
+> - The lease has no fencing epoch yet. Indicator writes are idempotent and deterministic, so a brief overlap between two holders writes the same values twice. Epochs arrive with the Phase 4 checkpoints, which are not idempotent.
+>
+> **Warm-up**
+>
+> - Each timeframe starts `HISTORY_CANDLES` (1,000) candles before the run's start, which meets the "at least 500 candles of the highest timeframe" rule.
+> - The ingestor records history gaps so the backfill job fetches that history. 1m comes from 7 days of 1m candles. 5m, 15m, 1h, 4h and 1d come from the venues' REST candles directly whenever the stored history is short; with 7 days of 1m, 5m is long enough without them.
+> - A timeframe waits while its history is incomplete or being backfilled.
+> - It waits at most 120 s for a gap to be recorded. After that it accepts a shorter history: the pair was listed later, or the venue is the replay venue, which has no history at all.
+> - The candle each timeframe starts at is stored on the run (`series_origins`) the first time. A restart, or older history that arrives later, never changes what a run computes.
+>
+> **Live**
+>
+> - A `md:candles:{id}` entry wakes the actor. Every 5 s it is also woken to retry paused timeframes.
+> - A missing candle, or a partial one whose gap is still open, holds that timeframe back. Its state reads "paused: data gap", as ADR 005 requires.
+> - Some minutes were lost before anything recorded a gap, for example by Phase 2's defect 1. Nothing would ever repair those minutes, and analysis would wait at them for ever. The nightly consistency check therefore looks for holes in each instrument's stored 1m history, records each hole as a gap and queues it for the backfill. It also runs on demand: `cip-jobs consistency YYYY-MM-DD`.
+> - Values go to `analysis.indicator_values`. Points stored for the first time are published on `an:events`.
+>
+> **Restarts**: there are no checkpoints yet. A restart recomputes the run from its start (the same values; nothing is re-published), and its cost grows with the run's age until Phase 4 adds checkpoints.
+
+> **As implemented in Phase 4** ([ADR 017](../adr/017-smc-runtime-boundaries-ids-digests-replays.md)). The SMC engine (`packages/smc-engine`) joins the indicators in the same loop.
+>
+> **One loop per instrument**
+>
+> - The actor's `RunProcessor` walks the run boundary by boundary from each timeframe's origin. At each boundary every due timeframe's candle steps its indicator series, and the candles step the engine together, in one call.
+> - The rules version is now `indicators-1+smc-0.1.0`. Profiles moved to version 2 (with `smc` settings), which superseded the Phase 3 runs.
+> - Phase 5 adds the points of interest to the same loop: rules version `indicators-1+smc-0.2.0`, profiles version 3, a `poi_zones` projection, and `zone.created` and `zone.status` on `an:events` and the `smc` channel. The runtime itself is unchanged.
+> - Phase 6 adds the setups (rulebook §5–§8) to the same loop: rules version `indicators-1+smc-0.3.0`, profiles version 4, four setup projections, and `setup` entries on `an:events` for the `setups` channels. Outcomes are part of engine state, and the 1m candles the engine already takes resolve ambiguity, as this section says. The engine's checkpoint format is 4: a run whose checkpoint the code cannot continue is superseded and a new one warms up, as any rules change does. The runtime itself is unchanged.
+> - The whole instrument now waits at the first candle that can still be repaired, where Phase 3 held back only that timeframe. This is ADR 005's strict order. A gap declared unrepairable is stepped over with a gap marker, which ends ranges and drops pending sweeps on that timeframe.
+>
+> **Writes, checkpoints and fencing**
+>
+> - Values, detection events, projections and (every 60 boundaries, and on shutdown) the checkpoint are written in one transaction. The checkpoint holds the engine state, every indicator series and the next candle per timeframe, as gzip JSON.
+> - A restart resumes from its checkpoint instead of recomputing the run.
+> - Each lease acquisition takes an epoch from `lease:analyzer:{id}:epoch`, a counter with no TTL. Each transaction first locks the run's checkpoint row and stops if a newer epoch holds it. A checkpoint is replaced only by an epoch at least as new.
+> - Each step writes under the epoch it started with. Leases are renewed on their own 5 s timer, never behind analysis work such as a warm-up.
+> - Detection ids are derived from the run and the event's natural key, so a takeover rewrites the same rows instead of adding new ones.
+>
+> **Publishing**
+>
+> - Detections are published on `an:events` after the commit, as entries of type `smc`. Warm-up detections are not published.
+> - A cursor, `an:published:{runId}`, acts as an outbox. A new holder first publishes what a dead holder stored but never published.
+> - Detections published more than 120 s after their candle closed carry `late_detection`.
+>
+> **Replays**
+>
+> - The analyzer consumes the `replay` queue (`ReplayWorker`, one job at a time), not `jobs`: the engine runtime lives in the analyzer.
+> - A replay copies the series origins and profile of the live run that covers the period, and records it as its source. Its digest must then equal the live run's.
+> - `node apps/analyzer/dist/cli.js replay <instrumentId> <from> <to>` runs a replay in-process and prints both digests. `digest <runId> <from> <to>` prints one run's.
+>
+> **Observability**
+>
+> - A new metric, `cip_smc_step_ms`, records the engine time per boundary. Phase 3's `cip_analysis_publish_lag_ms` now covers SMC detections too, labelled by `kind`.
+> - The analyzer's heartbeat detail reports the step p95 over the latest 4,096 boundaries.
 
 ## 8. AI pipeline
 

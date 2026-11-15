@@ -1,0 +1,33 @@
+{
+  "name": "@cip/smc-engine",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "description": "The SMC rulebook (docs/phase-0/07-smc-rulebook.md) as a deterministic, event-sourced reducer (ADR 004): swings, structure, displacement, ranges, liquidity levels and sweeps. Pure: no I/O, no clock, no framework.",
+  "exports": {
+    ".": {
+      "@cip/source": "./src/index.ts",
+      "default": "./dist/index.js"
+    }
+  },
+  "scripts": {
+    "build": "swc src -d dist --strip-leading-paths --config-file ../../.swcrc --ignore \"**/*.test.ts\"",
+    "typecheck": "tsc -p tsconfig.json",
+    "test": "vitest run",
+    "fixtures": "node scripts/fixtures/build.ts"
+  },
+  "dependencies": {
+    "@cip/domain": "workspace:*",
+    "@cip/indicators": "workspace:*"
+  },
+  "devDependencies": {
+    "@cip/config": "workspace:*",
+    "@swc/cli": "catalog:",
+    "@swc/core": "catalog:",
+    "@types/node": "catalog:",
+    "@typescript/native": "catalog:",
+    "@vitest/coverage-v8": "catalog:",
+    "fast-check": "catalog:",
+    "vitest": "catalog:"
+  }
+}

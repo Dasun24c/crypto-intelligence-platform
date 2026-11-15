@@ -1,0 +1,5 @@
+# Dev-only (ADR 012). Pinned: every dataset records the versions that produced it.
+# Python 3.11 or later, so pip installs the official TA-Lib wheel (it has no wheel for 3.10 and
+# would compile TA-Lib from source; the output is the same, but the wheel is the reference).
+TA-Lib==0.8.3
+numpy==2.5.4

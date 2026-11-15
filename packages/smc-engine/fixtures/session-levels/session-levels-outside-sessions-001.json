@@ -1,0 +1,42 @@
+{
+  "id": "session-levels-outside-sessions-001",
+  "concept": "session-levels",
+  "class": "negative",
+  "description": "Only 21:00–24:00, between New York’s close and Asia’s open: no session levels.",
+  "profile": "crypto-majors",
+  "tick": "0.01",
+  "source": "synthetic: packages/smc-engine/scripts/fixtures",
+  "candles": {
+    "1h": [
+      [1767646800000, "100", "100.6", "99.4", "100", "10"],
+      [1767650400000, "100", "100.7", "99.3", "100", "10"],
+      [1767654000000, "100", "100.8", "99.2", "100", "10"]
+    ]
+  },
+  "context": {
+    "closures": [],
+    "economicEvents": []
+  },
+  "expected": [],
+  "notExpected": [
+    {
+      "type": "level_created"
+    }
+  ],
+  "exhaustive": [
+    {
+      "type": "level_created",
+      "data": {
+        "type": "session_high"
+      }
+    },
+    {
+      "type": "level_created",
+      "data": {
+        "type": "session_low"
+      }
+    }
+  ],
+  "labelledBy": "synthetic: worked out by hand from the rulebook (Claude); bearish twins by exact mirroring",
+  "reviewedBy": null
+}

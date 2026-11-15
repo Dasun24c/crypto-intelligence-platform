@@ -86,6 +86,38 @@ Roles: **V** viewer, **A** analyst, **Ad** admin. Every endpoint needs authentic
 | GET | `/smc/{instrumentId}/sweeps?tf&from&to` | V | `Sweep[]` |
 | GET | `/smc/{instrumentId}/zones?tf&types&status` | V | `PoiZone[]` |
 
+> **As implemented in Phase 3.** `GET /indicators/{instrumentId}?tf&from&to&limit` returns an `IndicatorSeries` rather than a bare `IndicatorPoint[]`:
+>
+> - **Shape**: `{ instrumentId, tf, run, params, points }`. `run` is `{ id, status, from, profile: { name, version } }` for the instrument's open live run (else its latest run), or `null` if it was never analysed. `params` holds the run's indicator settings, so a chart can label "EMA 20" without hard-coding periods.
+> - **Points**: oldest first; by default the latest 1,000 (`limit` up to 5,000). With `from`, the first `limit` from there.
+> - **`IndicatorPoint`**: `{ t, rsi, macd, macdSignal, macdHist, emaFast, emaMid, emaSlow, vwap, atr, volumeZ, volumeAnomaly, trend, trendStrength, warmup }`. Values are null during each indicator's own warm-up. `warmup` is true for candles before the run's start.
+> - **Schemas**: all in `packages/contracts/src/analysis.ts`.
+
+> **As implemented in Phase 4.** The SMC endpoints read one run: the instrument's open live run (else its latest), or the run named by an optional `runId` (for example a replay's). An instrument never analysed gives empty lists and `run: null`.
+>
+> - **Windows**: swings, structure, ranges and sweeps take `from`, `to` and `limit` (default 1,000, at most 5,000). With `from` a list gives the first `limit` from there; without it, the latest `limit`.
+>   - Swings are windowed by their candle, structure by its break candle, sweeps by their confirming candle.
+>   - Ranges give what was alive in the window: detected by `to` and not ended before `from`.
+> - **Levels**: `?tf` shows levels whose origin timeframe is `tf` or longer. `status` (comma-separated, default `active`) and `types` filter them; `/levels` takes no window. The overlay's levels are those known by its end and still active at its start.
+> - **Overlay**: `GET /smc/{id}/overlay?tf` covers the latest 300 candles of `tf` unless `from`/`to` are given. Its shape is `{ instrumentId, tf, run, swings, structure, ranges, levels, sweeps, zones, setups, closures }`.
+>   - `zones` and `setups` stay empty until Phases 5 and 6.
+>   - `closures` lists the gold-market closures in the window (gold instruments only).
+> - **Times**: candle times (`candleTime`, `breakCandleTime`, `windowStart`, `breachAt`) are open times. Decision times (`confirmedAt`, `detectedAt`, `knownAt`, `endedAt`, `statusChangedAt`) are the close of the deciding candle.
+> - **Flags**: `flags` holds the engine's flags (`deep`, `thin_book`, `liquidity_unverified`, `underlying_closed`, `data_gap`) and the run's: `warmup` (decided before the run started) and `late_detection` (decided more than 120 s after its candle closed).
+> - **Not yet**: `/smc/{id}/zones` arrives with Phase 5.
+> - **Schemas**: all in `packages/contracts/src/smc.ts`.
+
+> **As implemented in Phase 5.** Points of interest (rulebook §4):
+>
+> - **`GET /smc/{id}/zones?tf&status&types&runId&limit`** returns `PoiZone[]`, oldest first. It covers zones whose timeframe is `tf` or longer. `status` and `types` are comma-separated; `status` defaults to the live statuses (`untouched`, `partially_filled`, `filled`).
+> - **Overlay**: `zones` now holds the zones known by the window's end that were still live at its start, so a zone shows until it ended.
+> - **`PoiZone`** is the shape above, plus five fields:
+>   - `firstTouchAt` and `statusChangedAt`: decision times, null until they happen.
+>   - `structureEventId`: for an order block, the break whose leg it starts.
+>   - `linkedZoneId`: an order block, or supply/demand zone, of the other kind that it overlaps by more than half (set on both).
+>   - `sweptLiquidityAtOrigin`: for an order block.
+> - **`fillPct`** is a number with at most two decimals, the deepest penetration from the proximal edge (a bullish zone's top, a bearish zone's bottom).
+
 ### Setups and replays
 
 | Method | Path | Role | Returns |
@@ -95,6 +127,28 @@ Roles: **V** viewer, **A** analyst, **Ad** admin. Every endpoint needs authentic
 | GET | `/setups/stats?groupBy&from&to` | V | `SetupStats` (groupBy: pattern, variant, direction, tfPair, instrument, session) |
 | POST | `/replays` | A | `{instrumentId, from, to, profileVersion?}` → `202 {runId}` |
 | GET | `/replays/{runId}` | V | `ReplayStatus`, including the digest comparison with the live run where the periods overlap |
+
+> **As implemented in Phase 4** ([ADR 017](../adr/017-smc-runtime-boundaries-ids-digests-replays.md)). The setup endpoints arrive with Phase 6.
+>
+> - **`POST /replays`**: the body is `{ instrumentId, from, to }`, at most 31 days, ending in the past. It returns `202 { runId }` and puts a job on the `replay` queue, which the analyzer takes one at a time. `profileVersion` is not accepted.
+>   - The replay uses the profile and series origins of the live run that covers the period (see ADR 017), else the instrument's current profile.
+>   - It answers 429 when the user already has two replays waiting or running.
+>   - It needs the `replays.run` capability and writes the audit entry `replay.requested`.
+> - **`ReplayStatus`**: `{ runId, instrumentId, status, from, to, digest, events, comparison, error }`, with `status` one of `queued`, `running`, `completed` or `failed`.
+>   - Once completed, `comparison` holds `{ liveRunId, from, to, liveEvents, replayEvents, liveDigest, replayDigest, equal }`. The live run is the one the replay copied.
+>   - The digests cover the events decided in (`from`, `to`].
+>   - `comparison` is `null` when no live run covered the period.
+
+> **As implemented in Phase 6.** Setups (rulebook §6–§8). `GET /setups/stats` arrives with Phase 12, with the statistics.
+>
+> - **`GET /setups?instrumentId&pattern&direction&state&minScore&from&to&runId&cursor&limit`** returns `Page<SetupSummary>`, newest change first (keyset on the latest transition's time). `pattern` and `state` are comma-separated. `from` and `to` bound the latest transition's decision time. Without `runId` it reads each instrument's live run (else its latest live run).
+> - **`GET /setups/{id}`** returns `SetupDetail`: the summary plus `transitions` (oldest first), `checklist` (as evaluated at the current state) and `checklistByState`, `outcome` (setups that confirmed, once resolved), `targets` (`{kind, id, price}`) and `refs`:
+>   - `sweeps`, `entryZone`, `levels`, `range` and `poi` as the SMC endpoints give them;
+>   - `mss` is the sweep-anchored MSS: `{ anchorId, anchorPrice, breakCandleTime, displacement, structureEvent }`, with the engine's structure event at its break when there is one (rulebook I31).
+> - **`SetupSummary`** is the shape in §4, with these differences: it adds `runId`, `flags` (the run's: `warmup`, `late_detection`) and `resolvedAt`; `score` is never null (the checklist is evaluated at every transition); `resolution` can also be `expired` (rulebook I26).
+> - **Transitions**: `{ from, to, reason, candleTime, decidedAt, processedAt, late, evidence }`. `candleTime` is the deciding candle's open time and `decidedAt` its close; `late` is true when a live run stored it more than 120 s after `decidedAt`. `evidence` names what decided it, never empty (rulebook I37).
+> - **Overlay**: `setups` holds the run's setups whose setup timeframe is `tf` and that were alive in the window (formed by its end, not resolved before its start).
+> - **Position size** (SMC-06): the calculator is `positionSize` in `packages/domain`, for the UI to call; there is no endpoint.
 
 ### Calendar, AI, alerts, whales
 
@@ -122,6 +176,8 @@ Roles: **V** viewer, **A** analyst, **Ad** admin. Every endpoint needs authentic
 | GET | `/system/health` | V | `SystemHealth` |
 | GET | `/system/feeds` | V | `FeedStatus[]` |
 | GET | `/system/runs` | V | Live and replay runs with status and lag |
+
+> **As implemented in Phase 3.** `GET /system/runs?instrumentId&limit` returns `DetectionRun[]`, newest first: `{ id, mode, instrumentId, profile, rulesetVersion, paramsHash, from, to, status, startedAt, finishedAt, lagSec, paused, pauseReason }`. The last three come from the analyzer's live state and are `null`/`false` for closed runs. Profiles are not editable yet. Migration 0006 seeds version 1 of `crypto-majors` and `gold`, and new instruments get their asset class's profile.
 | GET / POST / PATCH | `/admin/users[/{id}]` | Ad | User management; `POST /admin/users/{id}/reset-mfa` |
 | POST / PATCH | `/admin/instruments[/{id}]` | Ad | Add an instrument (triggers backfill), enable/disable, assign profile, primary venue |
 | GET / POST | `/admin/profiles[/{name}/versions]` | Ad | Create a new profile version (starts a new live run with warm-up) |
@@ -147,8 +203,9 @@ interface Instrument {
   assetClass: 'crypto' | 'tokenised_gold' | 'stablecoin';
   role: 'monitored' | 'reference';
   displayName: string;            // e.g. 'PAXG (gold-backed token) · Binance PAXG/USDT'
-  priceTick: Decimal; isPrimaryVenue: boolean;
+  priceTick: Decimal; qtyStep: Decimal; isPrimaryVenue: boolean;   // qtyStep: Phase 2
   venueStatus: 'trading' | 'halted' | 'delisted' | 'unknown';
+  enabled: boolean;               // Phase 2; GET /instruments lists enabled ones, /admin/instruments all
   profile: { name: string; version: number } | null;
   underlyingCalendar: 'gold' | null;
 }
@@ -161,6 +218,38 @@ interface Candle {
 
 interface Ticker { instrumentId: string; ts: Ts; last: Decimal; bid: Decimal; ask: Decimal; change24hPct: number; volume24hQuote: Decimal; }
 interface BookSnapshot { instrumentId: string; ts: Ts; bids: [Decimal, Decimal][]; asks: [Decimal, Decimal][]; coverageBps: number; }
+
+// Market data detail (as implemented in Phase 2; zod schemas in packages/contracts/src/market.ts)
+interface BookMetrics {           // 1 Hz; depth is quote-currency notional within ±0.1/0.5/1% of mid
+  ts: Ts; mid: Decimal; spreadBps: number;
+  bidDepth10bp: number | null; askDepth10bp: number | null; bidDepth50bp: number | null; askDepth50bp: number | null;
+  bidDepth100bp: number | null; askDepth100bp: number | null;
+  imbalance10bp: number | null; imbalance50bp: number | null; imbalance100bp: number | null; coverageBps: number | null;
+}
+interface LargeTrade {            // one taker order (architecture §5.6)
+  id: string; instrumentId: string; ts: Ts; takerSide: 'buy' | 'sell';
+  avgPrice: Decimal; qty: Decimal; notionalUsd: Decimal;
+  grouping: 'single' | 'taker_order' | 'burst'; fillCount: number; priceLevels: number;
+  thresholdUsd: Decimal;          // the threshold in force when the order completed
+}
+interface Wall {
+  id: string; instrumentId: string; side: 'bid' | 'ask'; price: Decimal;
+  firstSeen: Ts; lastSeen: Ts; maxNotionalUsd: Decimal;
+  endedReason: 'filled' | 'pulled' | 'unknown' | null;   // null while it stands
+}
+interface CrossVenueSpread {      // stored every 10 s; published at 1 Hz on the market channels
+  baseAsset: string; ts: Ts; primaryInstrumentId: string; secondaryInstrumentId: string;
+  primaryUsd: Decimal;            // primary venue price × USDT-USD
+  secondaryUsd: Decimal; usdtUsd: Decimal; spreadBps: number;   // (secondary − primary) / primary
+}
+interface DataGap {
+  id: string; instrumentId: string; stream: 'trades' | 'depth' | 'kline' | 'ticker';
+  from: Ts; to: Ts | null; detectedAt: Ts;
+  detectedBy: 'sequence' | 'heartbeat' | 'timer' | 'reconnect' | 'consistency_check';
+  status: 'open' | 'backfilling' | 'repaired' | 'unrepairable'; resolvedAt: Ts | null;
+  details: Record<string, unknown>;   // reason, and the repair's outcome (inserted, aggregates)
+}
+interface Closure { calendar: 'gold'; from: Ts; to: Ts; reason: 'weekend' | 'daily_break' | 'holiday'; source: 'generated' | 'manual'; }
 
 interface LiquidityLevel {
   id: string; tf: Tf; type: LevelType; side: 'buy_side' | 'sell_side'; price: Decimal;
@@ -226,6 +315,15 @@ interface SystemHealth {
 interface FeedStatus { instrumentId: string; stream: 'trades' | 'depth' | 'kline' | 'ticker'; state: 'connected' | 'degraded' | 'disconnected'; lastMessageAt: Ts; lagMsP50: number; lagMsP95: number; openGaps: number; }
 ```
 
+> **As implemented through Phase 2.** `SystemHealth` is built up phase by phase. Today it is `{ status, checkedAt, dependencies: {name: 'database' | 'redis', status, latencyMs, detail}[], services: {service, status, instances[]}[], feeds: FeedStatus[], analysis: AnalysisStatus[] }`; `ai` arrives with Phase 6. `FeedStatus` also carries `detail` (`streaming`, `no messages`, `delayed`, `disconnected`, `not streaming`, `halted`, `delisted`), and `lastMessageAt`, `lagMsP50` and `lagMsP95` are `null` when unknown. Lag is measured against venue time corrected for the measured clock offset of the host (architecture §5.4).
+
+> **As implemented in Phase 3.** `analysis` arrived a phase early, with the indicators. Each entry is `AnalysisStatus`: `{ instrumentId, runId, status, lagSec, paused, pauseReason?, detail, updatedAt }`.
+>
+> - **Where it comes from**: the analyzer holding the instrument's lease writes it to `analysis:status:{instrumentId}` every 5 s, with a 15 s TTL.
+> - **`detail`**: names the timeframes held back, for example "1m: missing 2026-11-10 12:01 (backfill running)".
+> - **`lagSec`**: the newest stored candle minus the newest analysed one, worst timeframe.
+> - **Effect on `status`**: while any instrument is paused, the overall status is `degraded`.
+
 ### Alert conditions
 
 ```ts
@@ -248,8 +346,9 @@ type AlertCondition =
 
 ### 5.1 Connection
 
-- Connect to `wss://<host>/v1` (Socket.IO, `transports: ['websocket']`) with `auth: { token: <accessToken> }`.
-- When the token is about to expire, the server emits `auth:expired`. The client refreshes and sends `auth:renew { token }` without reconnecting.
+- Connect to the Socket.IO namespace `/v1` at `wss://<host>` (HTTP path `/socket.io`, `transports: ['websocket']`) with `auth: { token: <accessToken> }`. A refused handshake fails with `connect_error` whose message is `AUTH_REQUIRED`, `AUTH_EXPIRED` or `FORBIDDEN`.
+- About 60 s before the token expires, the server emits `auth:expired`. The client refreshes and sends `auth:renew { token }` (acknowledged with `{ ok }`) without reconnecting. Without a valid renewal the server disconnects 30 s after expiry.
+- Fan-out (ADR 014): non-durable messages reach every `api` instance over Redis pub/sub (`live:{channel}`), durable ones from the `md:events` stream; each instance serves its own sockets.
 
 ### 5.2 Messages
 
@@ -303,13 +402,38 @@ interface ActivitySnapshot {
 interface ActivityPulse { ts: Ts; kind: 'pattern' | 'sweep' | 'mss' | 'ai_completed' | 'alert'; refId: string; instrumentId?: string; }
 ```
 
+> **As implemented in Phase 3.** The `indicators:{instrumentId}:{tf}` channel works as follows:
+>
+> - **Source**: it is read from the `an:events` stream, which the analyzer writes. Its `seq` is that stream's entry id, so it is compared only with other `indicators:` seqs.
+> - **Message**: `indicators.closed` carries `{ instrumentId, tf, runId, point: IndicatorPoint }`, once for each candle the analyzer stores for the first time. Warm-up points and values recomputed after a restart are not sent.
+> - **Snapshot**: when a resync cannot replay, the snapshot is `{ series: IndicatorSeries }` holding the latest 500 points.
+
+> **As implemented in Phase 4.** The `smc:{instrumentId}` channel works as follows:
+>
+> - **Source**: it is read from `an:events`, like `indicators:`.
+> - **Message types**: `swing.confirmed`, `structure`, `range.detected`, `range.ended`, `level.created`, `level.status` and `sweep`. `zone.*` arrives with Phase 5.
+> - **Message data**: the entity in its REST form. Two types carry only what changed:
+>   - `level.status` carries `{ id, status, price, touches, sweepCount, statusChangedAt }`, to merge into the level with that id.
+>   - `range.ended` carries `{ id, endedAt, endReason }`.
+> - **What is sent**: each detection once, when the live run first stores it. Warm-up detections and those recomputed after a restart are not sent. A new lease holder first publishes what a dead holder stored but did not publish.
+> - **Snapshot**: `{ run, levels, ranges }`, holding the live run's active levels and ranges. History comes from `GET /smc/{id}/overlay`.
+>
+> Phase 5 adds `zone.created` (a `PoiZone`) and `zone.status` (`{ id, status, fillPct, firstTouchAt, statusChangedAt }`, to merge into the zone with that id). The snapshot adds `zones`, the live run's live zones.
+
+> **As implemented in Phase 6.** The `setups` and `setups:{instrumentId}` channels:
+>
+> - **Source**: `an:events` entries of type `setup`, which the analyzer writes for each setup transition a live run stores for the first time (never warm-up ones). Each entry reaches its instrument's `setups:{id}` and `setups`, with the same `seq`.
+> - **Message**: `setup.transition` carries a `SetupSummary` after the transition, with the transition itself in `transition`.
+> - **Snapshot**: `{ setups, transitions }`: the setups of the current live runs that are not resolved, and their latest 50 transitions, each with its `setupId`.
+> - **Subscribing**: `setups` needs no instrument id; `setups:{id}` needs an enabled instrument, like the other channels.
+
 ### 5.4 Sequencing and resync
 
 1. Durable channels carry `seq`: the id of the Redis stream entry that produced the message. It increases monotonically but not contiguously. Within one connection, Socket.IO preserves order, so messages can only be lost across a disconnect.
 2. The client remembers the last `seq` per durable channel.
 3. After reconnecting, the client subscribes with `since: { [channel]: lastSeq }`.
 4. If the stream still holds entries after `lastSeq`, the server replays them in order (`mode: 'replayed'`) and then continues live.
-5. Otherwise the server returns `mode: 'snapshot'` with the current state (for example, all non-resolved setups and the latest 50 transitions), and the client replaces its local state.
+5. Otherwise the server returns `mode: 'snapshot'` with the current state (for example, all non-resolved setups and the latest 50 transitions), and the client replaces its local state. Phase 2 snapshots: `trades:{id}` → `{ largeTrades: LargeTrade[] }` (latest 50); `market:{id}` → `{ openGaps: DataGap[], activeWalls: Wall[] }`. A subscribe without `since` answers `mode: 'live'` with the current `seq`. Around a resubscribe a message can arrive twice: clients drop durable messages whose `seq` is not newer than the last one they applied.
 6. Non-durable channels always return a snapshot on subscribe. Candle charts reload missing closed candles over REST.
 
 ## 6. AI contract

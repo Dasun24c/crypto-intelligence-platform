@@ -1,0 +1,156 @@
+import { type Job, Queue, Worker } from 'bullmq';
+import { Redis } from 'ioredis';
+import { type Kysely, sql } from 'kysely';
+import type { Database } from '@cip/db';
+import type { Logger } from '@cip/observability';
+
+export const MAINTENANCE_QUEUE = 'maintenance';
+export const PRUNE_REFRESH_TOKENS = 'refresh-tokens.prune';
+/** Expired or revoked tokens are kept this long for investigations, then removed. */
+export const REFRESH_TOKEN_RETENTION_DAYS = 7;
+
+export type MaintenanceJob = { name: typeof PRUNE_REFRESH_TOKENS; data: Record<string, never> };
+
+/** Deletes refresh tokens that expired, or were revoked, more than the retention period ago. */
+export async function pruneRefreshTokens(db: Kysely<Database>): Promise<number> {
+  const cutoff = sql<Date>`now() - make_interval(days => ${REFRESH_TOKEN_RETENTION_DAYS})`;
+  // Successors point at their predecessors (replaced_by), so delete whole families whose newest token is old.
+  const result = await db
+    .deleteFrom('app.refresh_tokens')
+    .where((eb) =>
+      eb.not(
+        eb.exists(
+          eb
+            .selectFrom('app.refresh_tokens as live')
+            .select('live.id')
+            .whereRef('live.family_id', '=', 'app.refresh_tokens.family_id')
+            .where((w) =>
+              w.and([
+                w('live.expires_at', '>', cutoff),
+                w.or([w('live.revoked_at', 'is', null), w('live.revoked_at', '>', cutoff)]),
+              ]),
+            ),
+        ),
+      ),
+    )
+    .executeTakeFirst();
+  return Number(result.numDeletedRows);
+}
+
+/** A recurring task on the maintenance queue (pair status, closure calendar, ...). */
+export interface ScheduledTask {
+  name: string;
+  /** Every N ms, or on a cron pattern in UTC (one of the two). */
+  everyMs?: number;
+  pattern?: string;
+  run: () => Promise<Record<string, unknown>>;
+}
+
+export interface MaintenanceOptions {
+  redisUrl: string;
+  prefix: string;
+  pruneEveryMs: number;
+  tasks?: ScheduledTask[];
+  db: Kysely<Database>;
+  log: Logger;
+  onCompleted?: (name: string) => void;
+  onFailed?: (name: string) => void;
+}
+
+/**
+ * The maintenance queue: one BullMQ job scheduler and one worker (ADR 003: BullMQ carries units of
+ * work). Later phases add their queues (ai-analysis, notifications, backfill, ...) the same way.
+ */
+export class Maintenance {
+  readonly queue: Queue;
+  readonly worker: Worker;
+  private readonly connections: Redis[] = [];
+  /** The queue's connection, also used to count recent failures. */
+  private readonly redis: Redis;
+
+  constructor(private readonly opts: MaintenanceOptions) {
+    // BullMQ needs maxRetriesPerRequest: null for blocking worker connections.
+    const connection = () => {
+      const c = new Redis(opts.redisUrl, { maxRetriesPerRequest: null, connectionName: 'cip-jobs-bullmq' });
+      this.connections.push(c);
+      return c;
+    };
+    this.redis = connection();
+    this.queue = new Queue(MAINTENANCE_QUEUE, { connection: this.redis, prefix: opts.prefix });
+    this.worker = new Worker(MAINTENANCE_QUEUE, (job) => this.process(job), {
+      connection: connection(),
+      prefix: opts.prefix,
+      concurrency: 1,
+    });
+    this.worker.on('completed', (job) => opts.onCompleted?.(job.name));
+    this.worker.on('failed', (job, err) => {
+      opts.log.error({ err, job: job?.name, attempts: job?.attemptsMade }, 'maintenance job failed');
+      opts.onFailed?.(job?.name ?? 'unknown');
+    });
+  }
+
+  async start(): Promise<void> {
+    await this.queue.upsertJobScheduler(
+      PRUNE_REFRESH_TOKENS,
+      { every: this.opts.pruneEveryMs },
+      {
+        name: PRUNE_REFRESH_TOKENS,
+        data: {},
+        opts: {
+          attempts: 3,
+          backoff: { type: 'exponential', delay: 10_000 },
+          removeOnComplete: 100,
+          removeOnFail: 500,
+        },
+      },
+    );
+    for (const task of this.opts.tasks ?? [])
+      await this.queue.upsertJobScheduler(
+        task.name,
+        task.pattern ? { pattern: task.pattern, tz: 'UTC' } : { every: task.everyMs! },
+        {
+          name: task.name,
+          data: {},
+          opts: {
+            attempts: 3,
+            backoff: { type: 'exponential', delay: 30_000 },
+            removeOnComplete: 100,
+            removeOnFail: 500,
+          },
+        },
+      );
+    await this.worker.waitUntilReady();
+  }
+
+  private async process(job: Job): Promise<Record<string, unknown>> {
+    const task = this.opts.tasks?.find((t) => t.name === job.name);
+    if (task) {
+      const result = await task.run();
+      this.opts.log.info({ job: job.name, ...result }, 'maintenance task done');
+      return result;
+    }
+    if (job.name !== PRUNE_REFRESH_TOKENS) throw new Error(`unknown maintenance job ${job.name}`);
+    const deleted = await pruneRefreshTokens(this.opts.db);
+    this.opts.log.info({ job: job.name, deleted }, 'pruned refresh tokens');
+    return { deleted };
+  }
+
+  async counts(): Promise<Record<string, number>> {
+    return this.queue.getJobCounts('waiting', 'active', 'delayed', 'failed');
+  }
+
+  /**
+   * Jobs that failed at or after `since` (epoch ms). The failed set keeps up to 500 jobs for
+   * inspection, however old; health must look at recent failures only. BullMQ scores that set by
+   * the time each job finished.
+   */
+  async failedSince(since: number): Promise<number> {
+    return this.redis.zcount(this.queue.keys.failed!, since, '+inf');
+  }
+
+  async close(): Promise<void> {
+    await this.worker.close();
+    await this.queue.close();
+    await Promise.all(this.connections.map((c) => c.quit().catch(() => c.disconnect())));
+  }
+}

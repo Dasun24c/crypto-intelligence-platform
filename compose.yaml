@@ -1,0 +1,4 @@
+# Entry point for the local stack: `docker compose up --build --wait` (see README).
+name: cip
+include:
+  - infra/docker/compose.dev.yaml

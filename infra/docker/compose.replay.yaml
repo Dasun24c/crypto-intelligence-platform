@@ -1,0 +1,22 @@
+# The replay venue (ADR 015): the stack streams recorded public market data instead of Binance and Coinbase,
+# and nothing contacts the venues (live instruments are disabled). For CI end-to-end tests and offline demos:
+#
+#   COMPOSE_FILE=compose.yaml:infra/docker/compose.replay.yaml docker compose up --build --wait
+#   (PowerShell: $env:COMPOSE_FILE='compose.yaml;infra/docker/compose.replay.yaml')
+#
+# Paths resolve from the project directory (the repository root). The UI labels replay instruments as replays.
+services:
+  migrate:
+    command:
+      - sh
+      - -c
+      - >-
+        node packages/db/dist/cli.js migrate &&
+        node packages/db/dist/cli.js seed-replay --only &&
+        node apps/api/dist/cli.js seed-dev
+  ingestor:
+    environment:
+      MARKET_SOURCE: replay
+      REPLAY_FILES: /replay/binance-demo.jsonl.gz,/replay/coinbase-demo.jsonl.gz
+    volumes:
+      - ./packages/exchange-adapters/fixtures/replay:/replay:ro

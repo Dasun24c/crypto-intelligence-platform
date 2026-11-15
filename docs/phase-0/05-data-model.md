@@ -657,6 +657,59 @@ CREATE TABLE ops.system_events (                        -- hypertable on ts
 );
 ```
 
+> **As implemented in Phase 3** (migration 0006):
+>
+> - **Tables**: `analysis.detection_runs` and `analysis.indicator_values` are as above, plus an index `(instrument_id, started_at DESC)` on runs.
+> - **Run FK**: `indicator_values.run_id` references `detection_runs(id)`.
+> - **`series_origins`**: a new jsonb column on `detection_runs`. It maps each timeframe to the open time (epoch ms) of the candle the run's series starts at. It is set once, when the timeframe starts, so that what a run computes never depends on when it was restarted.
+> - **`params_hash`**: the SHA-256 of the profile's `params::text`. PostgreSQL prints jsonb keys in one canonical order, so equal settings hash the same.
+> - **Profiles**: version 1 of `crypto-majors` and `gold` is seeded with the indicator settings under `params.indicators`, and every instrument is assigned one by asset class. The SMC settings arrive as new versions.
+> - **Grants**: svc_analyzer and svc_jobs may INSERT and UPDATE runs and INSERT values; all four services may read them.
+> - **-0**: node-postgres sends -0 as 0, but the indicators never produce -0.
+
+> **As implemented in Phase 4** (migration 0007; [ADR 017](../adr/017-smc-runtime-boundaries-ids-digests-replays.md)):
+>
+> - **Tables**: `analysis.engine_checkpoints`, `analysis.detection_events` and the five §5.1 projections Phase 4 fills (`swing_points`, `structure_events`, `trading_ranges`, `liquidity_levels`, `sweeps`) are as above, with these differences:
+>   - CHECK lists on `detection_events.timeframe` and `type`. The types are the eight the engine emits: `swing_confirmed`, `structure`, `range_detected`, `range_ended`, `level_created`, `level_status`, `sweep`, `gap_marker`.
+>   - A query index on each table, led by `run_id`.
+>   - `liquidity_levels.source_ref` holds the natural keys of what a level came from (swings, a range, sweeps), not row ids.
+>   - `poi_zones` and `setups` arrive in Phases 5 and 6.
+> - **`detection_events.payload`**: the engine's event as emitted, `{key, data}`. `key` is the natural key (for example `lv:1d:pdh:b:<knownAt>`), the same in every run. The run digest is computed from these rows. `entity_id` is the projection row's id.
+> - **Ids**: every projection id is derived from the run id and the natural key (UUIDv7-shaped, ADR 017). A restart writes the same rows; a replay writes its own.
+> - **Times**: candle columns in the projections (`candle_time`, `break_candle_time`, `breach_candle_time`, `confirmed_candle_time`, `window_start`) are candle open times. `confirmed_at`, `known_at`, `detected_at`, `ended_at`, `status_changed_at` and `detection_events.candle_time` are decision times: the close of the deciding candle.
+> - **Flags**: the engine's (`deep`, `thin_book`, `liquidity_unverified`, `underlying_closed`, `data_gap`) and the run's (`warmup`, `late_detection`). Only the engine's are in the event log and the digest.
+> - **`detection_runs.source_run_id`**: a new nullable column. On a replay, it names the live run whose series origins and profile the replay copied, the run whose digest it must reproduce. A CHECK keeps it null on live runs.
+> - **Profiles**: version 2 of `crypto-majors` and `gold` adds `params.smc` (rulebook §10), and every instrument moves to it.
+> - **Grants**: all three services may read the new tables; only svc_analyzer may INSERT and UPDATE them. Replays run in the analyzer (ADR 017), so svc_jobs does not write them.
+
+> **As implemented in Phase 5** (migration 0008):
+>
+> - **`analysis.poi_zones`** is as in §5.1, with these differences:
+>   - `fill_pct` is `numeric(5,2)`, exact to 0.01 % as the engine computes it (rulebook I16), not `real`.
+>   - `bottom` must be strictly below `top`.
+>   - `first_touch_at` and `status_changed_at` are decision times: the close of the deciding candle.
+>   - `origin_from` and `origin_to` are open times.
+>   - `linked_zone_id` is set both ways: the zone created later records the link, and the projection sets the earlier zone's link if it has none (rulebook I23).
+>   - A query index on `(run_id, known_at)`.
+> - **Event log**: `detection_events.type` adds `zone_created` and `zone_status`. A status event carries the zone's whole state (status, fill, first touch, last status change), so a projection update takes the last one.
+> - **Profiles**: version 3 of `crypto-majors` (`…0205`) and `gold` (`…0206`) adds the zone settings of rulebook §10, and every instrument moves to it.
+> - **Grants**: as for the Phase 4 projections.
+
+> **As implemented in Phase 6** (migration 0009):
+>
+> - **The four §5.2 tables** are as above, with these differences:
+>   - `setups.resolution` and `setup_outcomes.result` add `expired`: a setup that ended before it ever confirmed (rulebook I26).
+>   - `confluence_score` is `numeric(4,1)`: half credits on weights of 15 make scores like 62.5.
+>   - `setups.flags` holds the run's flags on its latest transition (`warmup`, `late_detection`), as on the other projections. `quality_flags` holds the engine's (rulebook §7).
+>   - `target1_ref` and `target2_ref` are `{kind: level | zone, id, price}`. `refs` holds `{sweeps, mss: {anchorId, anchorPrice, breakCandleTime, displacement, structureEventId}, rangeId, poiId, levelIds}`, all projection ids.
+>   - `created_candle_time`, `updated_candle_time` and `resolved_candle_time` are decision times (the close of the deciding candle).
+>   - `setup_transitions` adds `event_seq` (the run's event that recorded it, unique per setup) and `decided_at`; its `candle_time` is the deciding candle's open time. A confirmation that failed its checklist is a `triggered` → `triggered` row.
+>   - `setup_checklist_results` holds the evaluation at each state reached (the latest one for that state).
+>   - `setup_outcomes` holds a row only for setups that confirmed.
+> - **Event log**: `detection_events.type` adds `setup_transition`. Each carries the whole setup, so the projection takes the latest one.
+> - **Profiles**: version 4 of `crypto-majors` (`…0207`) and `gold` (`…0208`) adds `params.smc.setups` (rulebook §10), and every instrument moves to it.
+> - **Grants**: as for the Phase 4 projections, plus the transitions' identity sequence for svc_analyzer.
+
 ## 8. Hypertables, columnstore and retention
 
 | Table | Chunk interval | Columnstore after | Retention | Estimated rows/day (9 pairs) |

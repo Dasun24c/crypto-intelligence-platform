@@ -1,0 +1,31 @@
+{
+  "name": "@cip/exchange-adapters",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "description": "Binance, Coinbase and replay venues: public market-data streams and REST, normalised (architecture §5.1). Framework-free; no API keys, no private endpoints.",
+  "exports": {
+    ".": {
+      "@cip/source": "./src/index.ts",
+      "default": "./dist/index.js"
+    },
+    "./fixtures/*": "./fixtures/*"
+  },
+  "scripts": {
+    "build": "swc src -d dist --strip-leading-paths --config-file ../../.swcrc --ignore \"**/*.test.ts\"",
+    "typecheck": "tsc -p tsconfig.json",
+    "test": "vitest run"
+  },
+  "dependencies": {
+    "@cip/domain": "workspace:*"
+  },
+  "devDependencies": {
+    "@cip/config": "workspace:*",
+    "@swc/cli": "catalog:",
+    "@swc/core": "catalog:",
+    "@types/node": "catalog:",
+    "@typescript/native": "catalog:",
+    "@vitest/coverage-v8": "catalog:",
+    "vitest": "catalog:"
+  }
+}

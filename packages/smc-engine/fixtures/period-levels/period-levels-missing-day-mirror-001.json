@@ -1,0 +1,632 @@
+{
+  "id": "period-levels-missing-day-mirror-001",
+  "concept": "period-levels",
+  "class": "bearish",
+  "description": "Mirror image of period-levels-missing-day-001. Three weeks from Monday 5 January with Wednesday 14 January missing for good: no levels for that day, and the second week’s levels carry data_gap. January was not seen from the 1st: no monthly levels.",
+  "profile": "crypto-majors",
+  "tick": "0.01",
+  "source": "synthetic: packages/smc-engine/scripts/fixtures",
+  "candles": {
+    "1d": [
+      [1767571200000, "100", "101", "99", "100", "10"],
+      [1767657600000, "100", "101.3", "98.3", "100", "10"],
+      [1767744000000, "100", "101.6", "98.6", "100", "10"],
+      [1767830400000, "100", "101.9", "98.9", "100", "10"],
+      [1767916800000, "100", "101.2", "98.2", "100", "10"],
+      [1768003200000, "100", "101.5", "98.5", "100", "10"],
+      [1768089600000, "100", "101.8", "98.8", "100", "10"],
+      [1768176000000, "100", "101.1", "98.1", "100", "10"],
+      [1768262400000, "100", "101.4", "98.4", "100", "10"],
+      [1768435200000, "100", "101", "99", "100", "10"],
+      [1768521600000, "100", "101.3", "98.3", "100", "10"],
+      [1768608000000, "100", "101.6", "98.6", "100", "10"],
+      [1768694400000, "100", "101.9", "98.9", "100", "10"],
+      [1768780800000, "100", "101.2", "98.2", "100", "10"],
+      [1768867200000, "100", "101.5", "98.5", "100", "10"],
+      [1768953600000, "100", "101.8", "98.8", "100", "10"],
+      [1769040000000, "100", "101.1", "98.1", "100", "10"],
+      [1769126400000, "100", "101.4", "98.4", "100", "10"],
+      [1769212800000, "100", "101.7", "98.7", "100", "10"],
+      [1769299200000, "100", "101", "99", "100", "10"]
+    ]
+  },
+  "context": {
+    "closures": [],
+    "economicEvents": []
+  },
+  "expected": [
+    {
+      "type": "level_created",
+      "tf": "1d",
+      "at": "2026-01-06T00:00:00.000Z",
+      "key": "lv:1d:pdl:s:1767657600000",
+      "data": {
+        "type": "pdl",
+        "side": "sell_side",
+        "price": "99",
+        "flags": []
+      }
+    },
+    {
+      "type": "level_created",
+      "tf": "1d",
+      "at": "2026-01-06T00:00:00.000Z",
+      "key": "lv:1d:pdh:b:1767657600000",
+      "data": {
+        "type": "pdh",
+        "side": "buy_side",
+        "price": "101",
+        "flags": []
+      }
+    },
+    {
+      "type": "level_created",
+      "tf": "1d",
+      "at": "2026-01-07T00:00:00.000Z",
+      "key": "lv:1d:pdl:s:1767744000000",
+      "data": {
+        "type": "pdl",
+        "side": "sell_side",
+        "price": "98.3",
+        "flags": []
+      }
+    },
+    {
+      "type": "level_created",
+      "tf": "1d",
+      "at": "2026-01-07T00:00:00.000Z",
+      "key": "lv:1d:pdh:b:1767744000000",
+      "data": {
+        "type": "pdh",
+        "side": "buy_side",
+        "price": "101.3",
+        "flags": []
+      }
+    },
+    {
+      "type": "level_created",
+      "tf": "1d",
+      "at": "2026-01-08T00:00:00.000Z",
+      "key": "lv:1d:pdl:s:1767830400000",
+      "data": {
+        "type": "pdl",
+        "side": "sell_side",
+        "price": "98.6",
+        "flags": []
+      }
+    },
+    {
+      "type": "level_created",
+      "tf": "1d",
+      "at": "2026-01-08T00:00:00.000Z",
+      "key": "lv:1d:pdh:b:1767830400000",
+      "data": {
+        "type": "pdh",
+        "side": "buy_side",
+        "price": "101.6",
+        "flags": []
+      }
+    },
+    {
+      "type": "level_created",
+      "tf": "1d",
+      "at": "2026-01-09T00:00:00.000Z",
+      "key": "lv:1d:pdl:s:1767916800000",
+      "data": {
+        "type": "pdl",
+        "side": "sell_side",
+        "price": "98.9",
+        "flags": []
+      }
+    },
+    {
+      "type": "level_created",
+      "tf": "1d",
+      "at": "2026-01-09T00:00:00.000Z",
+      "key": "lv:1d:pdh:b:1767916800000",
+      "data": {
+        "type": "pdh",
+        "side": "buy_side",
+        "price": "101.9",
+        "flags": []
+      }
+    },
+    {
+      "type": "level_created",
+      "tf": "1d",
+      "at": "2026-01-10T00:00:00.000Z",
+      "key": "lv:1d:pdl:s:1768003200000",
+      "data": {
+        "type": "pdl",
+        "side": "sell_side",
+        "price": "98.2",
+        "flags": []
+      }
+    },
+    {
+      "type": "level_created",
+      "tf": "1d",
+      "at": "2026-01-10T00:00:00.000Z",
+      "key": "lv:1d:pdh:b:1768003200000",
+      "data": {
+        "type": "pdh",
+        "side": "buy_side",
+        "price": "101.2",
+        "flags": []
+      }
+    },
+    {
+      "type": "level_created",
+      "tf": "1d",
+      "at": "2026-01-11T00:00:00.000Z",
+      "key": "lv:1d:pdl:s:1768089600000",
+      "data": {
+        "type": "pdl",
+        "side": "sell_side",
+        "price": "98.5",
+        "flags": []
+      }
+    },
+    {
+      "type": "level_created",
+      "tf": "1d",
+      "at": "2026-01-11T00:00:00.000Z",
+      "key": "lv:1d:pdh:b:1768089600000",
+      "data": {
+        "type": "pdh",
+        "side": "buy_side",
+        "price": "101.5",
+        "flags": []
+      }
+    },
+    {
+      "type": "level_created",
+      "tf": "1d",
+      "at": "2026-01-12T00:00:00.000Z",
+      "key": "lv:1d:pdl:s:1768176000000",
+      "data": {
+        "type": "pdl",
+        "side": "sell_side",
+        "price": "98.8",
+        "flags": []
+      }
+    },
+    {
+      "type": "level_created",
+      "tf": "1d",
+      "at": "2026-01-12T00:00:00.000Z",
+      "key": "lv:1d:pdh:b:1768176000000",
+      "data": {
+        "type": "pdh",
+        "side": "buy_side",
+        "price": "101.8",
+        "flags": []
+      }
+    },
+    {
+      "type": "level_created",
+      "tf": "1d",
+      "at": "2026-01-13T00:00:00.000Z",
+      "key": "lv:1d:pdl:s:1768262400000",
+      "data": {
+        "type": "pdl",
+        "side": "sell_side",
+        "price": "98.1",
+        "flags": []
+      }
+    },
+    {
+      "type": "level_created",
+      "tf": "1d",
+      "at": "2026-01-13T00:00:00.000Z",
+      "key": "lv:1d:pdh:b:1768262400000",
+      "data": {
+        "type": "pdh",
+        "side": "buy_side",
+        "price": "101.1",
+        "flags": []
+      }
+    },
+    {
+      "type": "level_created",
+      "tf": "1d",
+      "at": "2026-01-14T00:00:00.000Z",
+      "key": "lv:1d:pdl:s:1768348800000",
+      "data": {
+        "type": "pdl",
+        "side": "sell_side",
+        "price": "98.4",
+        "flags": []
+      }
+    },
+    {
+      "type": "level_created",
+      "tf": "1d",
+      "at": "2026-01-14T00:00:00.000Z",
+      "key": "lv:1d:pdh:b:1768348800000",
+      "data": {
+        "type": "pdh",
+        "side": "buy_side",
+        "price": "101.4",
+        "flags": []
+      }
+    },
+    {
+      "type": "level_created",
+      "tf": "1d",
+      "at": "2026-01-16T00:00:00.000Z",
+      "key": "lv:1d:pdl:s:1768521600000",
+      "data": {
+        "type": "pdl",
+        "side": "sell_side",
+        "price": "99",
+        "flags": []
+      }
+    },
+    {
+      "type": "level_created",
+      "tf": "1d",
+      "at": "2026-01-16T00:00:00.000Z",
+      "key": "lv:1d:pdh:b:1768521600000",
+      "data": {
+        "type": "pdh",
+        "side": "buy_side",
+        "price": "101",
+        "flags": []
+      }
+    },
+    {
+      "type": "level_created",
+      "tf": "1d",
+      "at": "2026-01-17T00:00:00.000Z",
+      "key": "lv:1d:pdl:s:1768608000000",
+      "data": {
+        "type": "pdl",
+        "side": "sell_side",
+        "price": "98.3",
+        "flags": []
+      }
+    },
+    {
+      "type": "level_created",
+      "tf": "1d",
+      "at": "2026-01-17T00:00:00.000Z",
+      "key": "lv:1d:pdh:b:1768608000000",
+      "data": {
+        "type": "pdh",
+        "side": "buy_side",
+        "price": "101.3",
+        "flags": []
+      }
+    },
+    {
+      "type": "level_created",
+      "tf": "1d",
+      "at": "2026-01-18T00:00:00.000Z",
+      "key": "lv:1d:pdl:s:1768694400000",
+      "data": {
+        "type": "pdl",
+        "side": "sell_side",
+        "price": "98.6",
+        "flags": []
+      }
+    },
+    {
+      "type": "level_created",
+      "tf": "1d",
+      "at": "2026-01-18T00:00:00.000Z",
+      "key": "lv:1d:pdh:b:1768694400000",
+      "data": {
+        "type": "pdh",
+        "side": "buy_side",
+        "price": "101.6",
+        "flags": []
+      }
+    },
+    {
+      "type": "level_created",
+      "tf": "1d",
+      "at": "2026-01-19T00:00:00.000Z",
+      "key": "lv:1d:pdl:s:1768780800000",
+      "data": {
+        "type": "pdl",
+        "side": "sell_side",
+        "price": "98.9",
+        "flags": []
+      }
+    },
+    {
+      "type": "level_created",
+      "tf": "1d",
+      "at": "2026-01-19T00:00:00.000Z",
+      "key": "lv:1d:pdh:b:1768780800000",
+      "data": {
+        "type": "pdh",
+        "side": "buy_side",
+        "price": "101.9",
+        "flags": []
+      }
+    },
+    {
+      "type": "level_created",
+      "tf": "1d",
+      "at": "2026-01-20T00:00:00.000Z",
+      "key": "lv:1d:pdl:s:1768867200000",
+      "data": {
+        "type": "pdl",
+        "side": "sell_side",
+        "price": "98.2",
+        "flags": []
+      }
+    },
+    {
+      "type": "level_created",
+      "tf": "1d",
+      "at": "2026-01-20T00:00:00.000Z",
+      "key": "lv:1d:pdh:b:1768867200000",
+      "data": {
+        "type": "pdh",
+        "side": "buy_side",
+        "price": "101.2",
+        "flags": []
+      }
+    },
+    {
+      "type": "level_created",
+      "tf": "1d",
+      "at": "2026-01-21T00:00:00.000Z",
+      "key": "lv:1d:pdl:s:1768953600000",
+      "data": {
+        "type": "pdl",
+        "side": "sell_side",
+        "price": "98.5",
+        "flags": []
+      }
+    },
+    {
+      "type": "level_created",
+      "tf": "1d",
+      "at": "2026-01-21T00:00:00.000Z",
+      "key": "lv:1d:pdh:b:1768953600000",
+      "data": {
+        "type": "pdh",
+        "side": "buy_side",
+        "price": "101.5",
+        "flags": []
+      }
+    },
+    {
+      "type": "level_created",
+      "tf": "1d",
+      "at": "2026-01-22T00:00:00.000Z",
+      "key": "lv:1d:pdl:s:1769040000000",
+      "data": {
+        "type": "pdl",
+        "side": "sell_side",
+        "price": "98.8",
+        "flags": []
+      }
+    },
+    {
+      "type": "level_created",
+      "tf": "1d",
+      "at": "2026-01-22T00:00:00.000Z",
+      "key": "lv:1d:pdh:b:1769040000000",
+      "data": {
+        "type": "pdh",
+        "side": "buy_side",
+        "price": "101.8",
+        "flags": []
+      }
+    },
+    {
+      "type": "level_created",
+      "tf": "1d",
+      "at": "2026-01-23T00:00:00.000Z",
+      "key": "lv:1d:pdl:s:1769126400000",
+      "data": {
+        "type": "pdl",
+        "side": "sell_side",
+        "price": "98.1",
+        "flags": []
+      }
+    },
+    {
+      "type": "level_created",
+      "tf": "1d",
+      "at": "2026-01-23T00:00:00.000Z",
+      "key": "lv:1d:pdh:b:1769126400000",
+      "data": {
+        "type": "pdh",
+        "side": "buy_side",
+        "price": "101.1",
+        "flags": []
+      }
+    },
+    {
+      "type": "level_created",
+      "tf": "1d",
+      "at": "2026-01-24T00:00:00.000Z",
+      "key": "lv:1d:pdl:s:1769212800000",
+      "data": {
+        "type": "pdl",
+        "side": "sell_side",
+        "price": "98.4",
+        "flags": []
+      }
+    },
+    {
+      "type": "level_created",
+      "tf": "1d",
+      "at": "2026-01-24T00:00:00.000Z",
+      "key": "lv:1d:pdh:b:1769212800000",
+      "data": {
+        "type": "pdh",
+        "side": "buy_side",
+        "price": "101.4",
+        "flags": []
+      }
+    },
+    {
+      "type": "level_created",
+      "tf": "1d",
+      "at": "2026-01-25T00:00:00.000Z",
+      "key": "lv:1d:pdl:s:1769299200000",
+      "data": {
+        "type": "pdl",
+        "side": "sell_side",
+        "price": "98.7",
+        "flags": []
+      }
+    },
+    {
+      "type": "level_created",
+      "tf": "1d",
+      "at": "2026-01-25T00:00:00.000Z",
+      "key": "lv:1d:pdh:b:1769299200000",
+      "data": {
+        "type": "pdh",
+        "side": "buy_side",
+        "price": "101.7",
+        "flags": []
+      }
+    },
+    {
+      "type": "level_created",
+      "tf": "1d",
+      "at": "2026-01-26T00:00:00.000Z",
+      "key": "lv:1d:pdl:s:1769385600000",
+      "data": {
+        "type": "pdl",
+        "side": "sell_side",
+        "price": "99",
+        "flags": []
+      }
+    },
+    {
+      "type": "level_created",
+      "tf": "1d",
+      "at": "2026-01-26T00:00:00.000Z",
+      "key": "lv:1d:pdh:b:1769385600000",
+      "data": {
+        "type": "pdh",
+        "side": "buy_side",
+        "price": "101",
+        "flags": []
+      }
+    },
+    {
+      "type": "level_created",
+      "tf": "1d",
+      "at": "2026-01-12T00:00:00.000Z",
+      "key": "lv:1d:pwl:s:1768176000000",
+      "data": {
+        "type": "pwl",
+        "side": "sell_side",
+        "price": "98.2",
+        "flags": []
+      }
+    },
+    {
+      "type": "level_created",
+      "tf": "1d",
+      "at": "2026-01-12T00:00:00.000Z",
+      "key": "lv:1d:pwh:b:1768176000000",
+      "data": {
+        "type": "pwh",
+        "side": "buy_side",
+        "price": "101.9",
+        "flags": []
+      }
+    },
+    {
+      "type": "level_created",
+      "tf": "1d",
+      "at": "2026-01-19T00:00:00.000Z",
+      "key": "lv:1d:pwl:s:1768780800000",
+      "data": {
+        "type": "pwl",
+        "side": "sell_side",
+        "price": "98.1",
+        "flags": ["data_gap"]
+      }
+    },
+    {
+      "type": "level_created",
+      "tf": "1d",
+      "at": "2026-01-19T00:00:00.000Z",
+      "key": "lv:1d:pwh:b:1768780800000",
+      "data": {
+        "type": "pwh",
+        "side": "buy_side",
+        "price": "101.9",
+        "flags": ["data_gap"]
+      }
+    },
+    {
+      "type": "level_created",
+      "tf": "1d",
+      "at": "2026-01-26T00:00:00.000Z",
+      "key": "lv:1d:pwl:s:1769385600000",
+      "data": {
+        "type": "pwl",
+        "side": "sell_side",
+        "price": "98.1",
+        "flags": []
+      }
+    },
+    {
+      "type": "level_created",
+      "tf": "1d",
+      "at": "2026-01-26T00:00:00.000Z",
+      "key": "lv:1d:pwh:b:1769385600000",
+      "data": {
+        "type": "pwh",
+        "side": "buy_side",
+        "price": "101.8",
+        "flags": []
+      }
+    }
+  ],
+  "notExpected": [],
+  "exhaustive": [
+    {
+      "type": "level_created",
+      "data": {
+        "type": "pdl"
+      }
+    },
+    {
+      "type": "level_created",
+      "data": {
+        "type": "pdh"
+      }
+    },
+    {
+      "type": "level_created",
+      "data": {
+        "type": "pwl"
+      }
+    },
+    {
+      "type": "level_created",
+      "data": {
+        "type": "pwh"
+      }
+    },
+    {
+      "type": "level_created",
+      "data": {
+        "type": "pml"
+      }
+    },
+    {
+      "type": "level_created",
+      "data": {
+        "type": "pmh"
+      }
+    }
+  ],
+  "labelledBy": "synthetic: worked out by hand from the rulebook (Claude); bearish twins by exact mirroring",
+  "reviewedBy": null
+}

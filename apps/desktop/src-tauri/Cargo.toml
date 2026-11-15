@@ -1,0 +1,29 @@
+[package]
+name = "cip-desktop"
+version = "0.1.0"
+description = "Crypto Intelligence Platform desktop client: the Tauri host for packages/app"
+edition = "2021"
+publish = false
+
+[lib]
+# The `_lib` suffix stops the library's build artefacts colliding with the binary's on Windows
+# (rust-lang/cargo#8519).
+name = "cip_desktop_lib"
+
+# Tilde requirements: `cargo update` takes patch releases only, so the crates stay on the same minor
+# versions as the pinned @tauri-apps npm packages (the Tauri CLI rejects mismatched minors).
+[build-dependencies]
+tauri-build = "~2.7.4"
+
+[dependencies]
+tauri = { version = "~2.12.5", features = ["tray-icon"] }
+tauri-plugin-notification = "~2.8.0"
+tauri-plugin-opener = "~2.7.2"
+tauri-plugin-window-state = "~2.5.0"
+# The default `v1` feature uses each platform's native store: Keychain Services on macOS,
+# Credential Manager on Windows and the Secret Service on Linux.
+keyring = "4.2.0"
+serde = { version = "1.0.228", features = ["derive"] }
+
+[dev-dependencies]
+serde_json = "1.0.145"

@@ -1,0 +1,7 @@
+@import 'tailwindcss';
+@import '@cip/ui/theme.css';
+@import '@fontsource-variable/inter';
+
+/* Tailwind scans these sources for class names (they live outside the host app's folder). */
+@source '../../ui/src';
+@source './';

@@ -1,0 +1,35 @@
+{
+  "name": "@cip/desktop",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "Tauri 2 desktop host for the shared app: OS keychain, tray and native notifications (architecture §13).",
+  "scripts": {
+    "dev": "tauri dev",
+    "dev:web": "vite",
+    "build": "vite build",
+    "bundle": "tauri build",
+    "tauri": "tauri",
+    "typecheck": "tsc -p tsconfig.json"
+  },
+  "dependencies": {
+    "@cip/app": "workspace:*",
+    "@tauri-apps/api": "catalog:",
+    "@tauri-apps/plugin-notification": "catalog:",
+    "@tauri-apps/plugin-opener": "catalog:",
+    "@tauri-apps/plugin-window-state": "catalog:",
+    "react": "catalog:",
+    "react-dom": "catalog:"
+  },
+  "devDependencies": {
+    "@cip/config": "workspace:*",
+    "@tailwindcss/vite": "catalog:",
+    "@tauri-apps/cli": "catalog:",
+    "@types/react": "catalog:",
+    "@types/react-dom": "catalog:",
+    "@typescript/native": "catalog:",
+    "@vitejs/plugin-react": "catalog:",
+    "tailwindcss": "catalog:",
+    "vite": "catalog:"
+  }
+}

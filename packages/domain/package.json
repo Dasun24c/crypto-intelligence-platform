@@ -1,0 +1,31 @@
+{
+  "name": "@cip/domain",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "description": "Entities and value objects shared by the pure packages: timeframes, decimals, candles, instruments, the gold-market calendar.",
+  "exports": {
+    ".": {
+      "@cip/source": "./src/index.ts",
+      "default": "./dist/index.js"
+    }
+  },
+  "scripts": {
+    "build": "swc src -d dist --strip-leading-paths --config-file ../../.swcrc --ignore \"**/*.test.ts\"",
+    "typecheck": "tsc -p tsconfig.json",
+    "test": "vitest run"
+  },
+  "dependencies": {
+    "big.js": "catalog:"
+  },
+  "devDependencies": {
+    "@cip/config": "workspace:*",
+    "@swc/cli": "catalog:",
+    "@swc/core": "catalog:",
+    "@types/big.js": "catalog:",
+    "@types/node": "catalog:",
+    "@typescript/native": "catalog:",
+    "@vitest/coverage-v8": "catalog:",
+    "vitest": "catalog:"
+  }
+}

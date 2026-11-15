@@ -1,0 +1,105 @@
+{
+  "id": "session-levels-start-at-london-001",
+  "concept": "session-levels",
+  "class": "negative",
+  "description": "Hourly candles from 07:00: that day’s Asia session is not in the data, so it has no levels (London and New York do).",
+  "profile": "crypto-majors",
+  "tick": "0.01",
+  "source": "synthetic: packages/smc-engine/scripts/fixtures",
+  "candles": {
+    "1h": [
+      [1767596400000, "100", "100.7", "99.2", "100", "10"],
+      [1767600000000, "100", "100.8", "99.5", "100", "10"],
+      [1767603600000, "100", "100.9", "99.4", "100", "10"],
+      [1767607200000, "100", "100.5", "99.3", "100", "10"],
+      [1767610800000, "100", "100.6", "99.2", "100", "10"],
+      [1767614400000, "100", "100.7", "99.5", "100", "10"],
+      [1767618000000, "100", "100.8", "99.4", "100", "10"],
+      [1767621600000, "100", "100.9", "99.3", "100", "10"],
+      [1767625200000, "100", "100.5", "99.2", "100", "10"],
+      [1767628800000, "100", "100.6", "99.5", "100", "10"],
+      [1767632400000, "100", "100.7", "99.4", "100", "10"],
+      [1767636000000, "100", "100.8", "99.3", "100", "10"],
+      [1767639600000, "100", "100.9", "99.2", "100", "10"],
+      [1767643200000, "100", "100.5", "99.5", "100", "10"]
+    ]
+  },
+  "context": {
+    "closures": [],
+    "economicEvents": []
+  },
+  "expected": [
+    {
+      "type": "level_created",
+      "tf": "1h",
+      "at": "2026-01-05T13:00:00.000Z",
+      "key": "lv:1h:session_high:b:1767618000000",
+      "data": {
+        "type": "session_high",
+        "sessionName": "london",
+        "price": "100.9",
+        "flags": []
+      }
+    },
+    {
+      "type": "level_created",
+      "tf": "1h",
+      "at": "2026-01-05T13:00:00.000Z",
+      "key": "lv:1h:session_low:s:1767618000000",
+      "data": {
+        "type": "session_low",
+        "sessionName": "london",
+        "price": "99.2",
+        "flags": []
+      }
+    },
+    {
+      "type": "level_created",
+      "tf": "1h",
+      "at": "2026-01-05T21:00:00.000Z",
+      "key": "lv:1h:session_high:b:1767646800000",
+      "data": {
+        "type": "session_high",
+        "sessionName": "new_york",
+        "price": "100.9",
+        "flags": []
+      }
+    },
+    {
+      "type": "level_created",
+      "tf": "1h",
+      "at": "2026-01-05T21:00:00.000Z",
+      "key": "lv:1h:session_low:s:1767646800000",
+      "data": {
+        "type": "session_low",
+        "sessionName": "new_york",
+        "price": "99.2",
+        "flags": []
+      }
+    }
+  ],
+  "notExpected": [
+    {
+      "type": "level_created",
+      "data": {
+        "sessionName": "asia"
+      }
+    }
+  ],
+  "exhaustive": [
+    {
+      "type": "level_created",
+      "data": {
+        "type": "session_high"
+      }
+    },
+    {
+      "type": "level_created",
+      "data": {
+        "type": "session_low"
+      }
+    }
+  ],
+  "labelledBy": "synthetic: worked out by hand from the rulebook (Claude); bearish twins by exact mirroring",
+  "reviewedBy": null
+}

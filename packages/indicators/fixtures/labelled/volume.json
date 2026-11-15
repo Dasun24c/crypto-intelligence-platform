@@ -1,0 +1,68 @@
+{
+  "description": "Labelled volume-anomaly fixtures (implementation plan, criterion 3.3), for the default lookback (50) and threshold (z ≥ 3.5). Each case gives the 50 volumes before a candle and the candle's own volume. 'z' is worked by hand from the median and the MAD (or the mean absolute deviation when the MAD is 0).",
+  "cases": [
+    {
+      "name": "a spike far above a steady market",
+      "label": "anomaly",
+      "history": { "repeat": ["8", "9", "10", "11", "12"], "times": 10 },
+      "volume": "60",
+      "z": "median 10, MAD 1: (60 − 10) / 1.4826 = 33.72"
+    },
+    {
+      "name": "a moderate spike just past the threshold",
+      "label": "anomaly",
+      "history": { "repeat": ["8", "9", "10", "11", "12"], "times": 10 },
+      "volume": "16",
+      "z": "(16 − 10) / 1.4826 = 4.05"
+    },
+    {
+      "name": "a busy but ordinary candle",
+      "label": "normal",
+      "history": { "repeat": ["8", "9", "10", "11", "12"], "times": 10 },
+      "volume": "14",
+      "z": "(14 − 10) / 1.4826 = 2.70"
+    },
+    {
+      "name": "just under the threshold",
+      "label": "normal",
+      "history": { "repeat": ["8", "9", "10", "11", "12"], "times": 10 },
+      "volume": "15.1",
+      "z": "(15.1 − 10) / 1.4826 = 3.44"
+    },
+    {
+      "name": "an unusually quiet candle (only spikes are anomalies)",
+      "label": "normal",
+      "history": { "repeat": ["8", "9", "10", "11", "12"], "times": 10 },
+      "volume": "0",
+      "z": "(0 − 10) / 1.4826 = −6.74"
+    },
+    {
+      "name": "a thin market: a trade after mostly empty candles stands out",
+      "label": "anomaly",
+      "history": { "repeat": ["0", "0", "0", "0", "0", "0", "0", "0", "0", "1"], "times": 5 },
+      "volume": "2",
+      "z": "median 0 and MAD 0, so the mean absolute deviation (5 / 50 = 0.1) stands in: 2 / (1.253314 × 0.1) = 15.96"
+    },
+    {
+      "name": "the same thin market, an ordinary small trade",
+      "label": "normal",
+      "history": { "repeat": ["0", "0", "0", "0", "0", "0", "0", "0", "0", "1"], "times": 5 },
+      "volume": "0.1",
+      "z": "0.1 / (1.253314 × 0.1) = 0.80"
+    },
+    {
+      "name": "steadily rising volume is not a spike",
+      "label": "normal",
+      "history": { "range": [10, 59] },
+      "volume": "60",
+      "z": "median 34.5, MAD 12.5: (60 − 34.5) / (1.4826 × 12.5) = 1.38"
+    },
+    {
+      "name": "identical volumes give nothing to compare with",
+      "label": "no basis",
+      "history": { "repeat": ["10"], "times": 50 },
+      "volume": "100",
+      "z": "MAD 0 and mean absolute deviation 0: no z-score"
+    }
+  ]
+}

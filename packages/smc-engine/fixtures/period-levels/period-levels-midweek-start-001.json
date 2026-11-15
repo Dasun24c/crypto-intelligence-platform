@@ -1,0 +1,198 @@
+{
+  "id": "period-levels-midweek-start-001",
+  "concept": "period-levels",
+  "class": "negative",
+  "description": "Wednesday 7 to Sunday 11 January: day levels every midnight, but the week was not seen from its Monday, so no weekly levels at Monday 12 January.",
+  "profile": "crypto-majors",
+  "tick": "0.01",
+  "source": "synthetic: packages/smc-engine/scripts/fixtures",
+  "candles": {
+    "1d": [
+      [1767744000000, "100", "101", "99", "100", "10"],
+      [1767830400000, "100", "101.7", "98.7", "100", "10"],
+      [1767916800000, "100", "101.4", "98.4", "100", "10"],
+      [1768003200000, "100", "101.1", "98.1", "100", "10"],
+      [1768089600000, "100", "101.8", "98.8", "100", "10"]
+    ]
+  },
+  "context": {
+    "closures": [],
+    "economicEvents": []
+  },
+  "expected": [
+    {
+      "type": "level_created",
+      "tf": "1d",
+      "at": "2026-01-08T00:00:00.000Z",
+      "key": "lv:1d:pdh:b:1767830400000",
+      "data": {
+        "type": "pdh",
+        "side": "buy_side",
+        "price": "101",
+        "flags": []
+      }
+    },
+    {
+      "type": "level_created",
+      "tf": "1d",
+      "at": "2026-01-08T00:00:00.000Z",
+      "key": "lv:1d:pdl:s:1767830400000",
+      "data": {
+        "type": "pdl",
+        "side": "sell_side",
+        "price": "99",
+        "flags": []
+      }
+    },
+    {
+      "type": "level_created",
+      "tf": "1d",
+      "at": "2026-01-09T00:00:00.000Z",
+      "key": "lv:1d:pdh:b:1767916800000",
+      "data": {
+        "type": "pdh",
+        "side": "buy_side",
+        "price": "101.7",
+        "flags": []
+      }
+    },
+    {
+      "type": "level_created",
+      "tf": "1d",
+      "at": "2026-01-09T00:00:00.000Z",
+      "key": "lv:1d:pdl:s:1767916800000",
+      "data": {
+        "type": "pdl",
+        "side": "sell_side",
+        "price": "98.7",
+        "flags": []
+      }
+    },
+    {
+      "type": "level_created",
+      "tf": "1d",
+      "at": "2026-01-10T00:00:00.000Z",
+      "key": "lv:1d:pdh:b:1768003200000",
+      "data": {
+        "type": "pdh",
+        "side": "buy_side",
+        "price": "101.4",
+        "flags": []
+      }
+    },
+    {
+      "type": "level_created",
+      "tf": "1d",
+      "at": "2026-01-10T00:00:00.000Z",
+      "key": "lv:1d:pdl:s:1768003200000",
+      "data": {
+        "type": "pdl",
+        "side": "sell_side",
+        "price": "98.4",
+        "flags": []
+      }
+    },
+    {
+      "type": "level_created",
+      "tf": "1d",
+      "at": "2026-01-11T00:00:00.000Z",
+      "key": "lv:1d:pdh:b:1768089600000",
+      "data": {
+        "type": "pdh",
+        "side": "buy_side",
+        "price": "101.1",
+        "flags": []
+      }
+    },
+    {
+      "type": "level_created",
+      "tf": "1d",
+      "at": "2026-01-11T00:00:00.000Z",
+      "key": "lv:1d:pdl:s:1768089600000",
+      "data": {
+        "type": "pdl",
+        "side": "sell_side",
+        "price": "98.1",
+        "flags": []
+      }
+    },
+    {
+      "type": "level_created",
+      "tf": "1d",
+      "at": "2026-01-12T00:00:00.000Z",
+      "key": "lv:1d:pdh:b:1768176000000",
+      "data": {
+        "type": "pdh",
+        "side": "buy_side",
+        "price": "101.8",
+        "flags": []
+      }
+    },
+    {
+      "type": "level_created",
+      "tf": "1d",
+      "at": "2026-01-12T00:00:00.000Z",
+      "key": "lv:1d:pdl:s:1768176000000",
+      "data": {
+        "type": "pdl",
+        "side": "sell_side",
+        "price": "98.8",
+        "flags": []
+      }
+    }
+  ],
+  "notExpected": [
+    {
+      "type": "level_created",
+      "data": {
+        "type": "pwh"
+      }
+    },
+    {
+      "type": "level_created",
+      "data": {
+        "type": "pwl"
+      }
+    }
+  ],
+  "exhaustive": [
+    {
+      "type": "level_created",
+      "data": {
+        "type": "pdh"
+      }
+    },
+    {
+      "type": "level_created",
+      "data": {
+        "type": "pdl"
+      }
+    },
+    {
+      "type": "level_created",
+      "data": {
+        "type": "pwh"
+      }
+    },
+    {
+      "type": "level_created",
+      "data": {
+        "type": "pwl"
+      }
+    },
+    {
+      "type": "level_created",
+      "data": {
+        "type": "pmh"
+      }
+    },
+    {
+      "type": "level_created",
+      "data": {
+        "type": "pml"
+      }
+    }
+  ],
+  "labelledBy": "synthetic: worked out by hand from the rulebook (Claude); bearish twins by exact mirroring",
+  "reviewedBy": null
+}
