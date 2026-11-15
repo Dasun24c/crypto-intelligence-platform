@@ -1,5 +1,7 @@
 # Project: AI-Powered Cryptocurrency Intelligence & Monitoring Platform
 
+> Revision 5 (2026-11-15) — adds automatic practice trading: rules a user sets may place practice orders on their own practice account, switched on by them, within their limits (section 11), plus changes to section 3.1, the data model and the final acceptance criteria. Real-money trading stays out of the initial release, and the AI never decides an order. See [proposal 002](docs/proposals/002-automatic-practice-trading.md).
+>
 > Revision 4 (2026-11-13) — adds practice trading with simulated orders (new section 11), plus changes to the main objective, sections 3.1, 3.7, 6, 8 and 10, the data model and the final acceptance criteria. Real-money trading stays out of the initial release. See [proposal 001](docs/proposals/001-trading.md).
 >
 > Revision 3 — adds gold through PAX Gold (PAXG): new section 1.1, plus changes to the main objective, sections 1, 3, 4, 6, 7 and 8, the data model, the development approach and the acceptance criteria.
@@ -114,7 +116,7 @@ Validate all calculations against reference datasets.
 - **Closed candles only** for structure decisions (BOS, MSS/CHOCH, sweep confirmation). Intra-candle events may raise provisional alerts but must not change the confirmed state.
 - **Multi-timeframe model:** H4 and H1 provide context (trend, POIs, liquidity pools). M15 and M5 provide confirmation (sweep, MSS, entry zone). Which timeframes play each role must be configurable per instrument.
 - **Instrument profiles:** SMC and indicator parameters belong to an instrument profile. Ship at least two default profiles, **crypto majors** (BTC, ETH, SOL) and **gold** (PAXG). Calibrate each one against its own labelled data rather than copying values from the other.
-- The output is **analysis and education, not trading signals.** The system never places orders by itself, and no order reaches an exchange. Users can place practice orders, which are simulated inside the platform (see 11). A person places every order. Entry, stop-loss and take-profit levels are hypothetical reference levels used to evaluate setups.
+- The output is **analysis and education, not trading signals.** No order reaches an exchange. Users can place practice orders, which are simulated inside the platform (see 11). A person places each manual order; automatic practice orders are placed only for a user who has switched automatic trading on, only on their own practice account, under the rules and limits they set (see 11). Entry, stop-loss and take-profit levels are hypothetical reference levels used to evaluate setups.
 
 #### 3.2 Market structure
 
@@ -335,8 +337,18 @@ Let users practise buying and selling without real money. Practice orders are si
 - Spot only, on every monitored pair: buy with cash, sell what you hold. No margin, leverage, futures or short selling.
 - Market and limit orders, to buy or sell, and cancelling an open order.
 - An optional protective stop and target attached to a buy. When one fills, the other is cancelled.
-- A person places every order, after a confirmation step. Setups and the position-size calculator may fill in the order ticket ("Practise this setup"); the user reviews and submits it.
-- Setups, alerts, the AI and scheduled jobs never place, change or cancel an order. The order ticket never opens from AI output, and the AI never sees users' orders or balances.
+- A person places every manual order, after a confirmation step. Setups and the position-size calculator may fill in the order ticket ("Practise this setup"); the user reviews and submits it.
+- Apart from a user's own automatic practice trading (below), setups, alerts, the AI and scheduled jobs never place, change or cancel an order. The order ticket never opens from AI output, and the AI never sees users' orders or balances.
+
+**Automatic practice trading**
+
+- Each user may switch on automatic trading for their own practice account. It is off by default, and nobody, admins included, can switch it on for someone else.
+- It acts only on confirmed bullish setups that match the user's rules: the patterns, the pairs, a minimum checklist score and a minimum reward for the risk at target 1. The AI never decides an automatic order, and an indicator on its own never triggers one.
+- For each such setup it places a practice limit buy at the setup's entry, sized by the position-size calculator at the user's risk per trade, with a protective stop at the invalidation and a target at target 1. It cancels the buy if the setup expires or is invalidated before the buy fills.
+- Limits: the most open automatic trades (one per pair), the most automatic orders a day, and a daily loss limit that pauses it until the next UTC day. A stop control switches it off and cancels its open orders within 5 seconds.
+- Every decision is logged with its reason, placed or skipped. Every automatic order is labelled "Automatic", audited with the setup and rules version that caused it, and alerted. Rule changes are audited.
+- Decisions are deterministic: replaying the same setups, market data and rules gives the same decisions and fills.
+- Its results are practice results like any other: labelled as simulated, never presented as expected performance.
 
 **Simulated fills**
 
@@ -359,7 +371,7 @@ Let users practise buying and selling without real money. Practice orders are si
 
 - No order reaches an exchange, and no money moves: no deposits, withdrawals or transfers.
 - Orders on exchange test networks, which use test funds, may follow in a later phase after a separate decision.
-- Real-money trading stays out of the initial release (see 10).
+- Real-money trading stays out of the initial release (see 10), automatic or not.
 
 ## Engineering requirements
 
@@ -395,9 +407,11 @@ Implement:
 - `underlying_market_closures` (calendar, start, end, reason: weekend / daily break / holiday)
 - `cross_venue_spreads` (instrument, venue pair, USD-normalised price difference, time)
 - `practice_accounts` (user, venue, starting balance, resets)
-- `practice_orders` (account, instrument, side, type, quantity, limit and stop prices, status, idempotency key, source: manual or setup)
+- `practice_orders` (account, instrument, side, type, quantity, limit and stop prices, status, idempotency key, source: manual, setup or automatic)
 - `practice_fills` (order, price, quantity, fee, maker or taker, the market data the fill was based on)
 - `practice_ledger` (account, asset, amount, reason, reference)
+- `practice_strategies` (user, account, switched on, rules, limits, version)
+- `practice_auto_decisions` (strategy, setup, placed or skipped, reason, rules version, order)
 
 Time-series tables use TimescaleDB hypertables where appropriate.
 
@@ -446,6 +460,7 @@ The finished application must:
 - Store historical analysis, signals, **setup state histories and setup outcomes**.
 - Generate configurable alerts.
 - **Let users practise buying and selling with simulated orders filled from live market data, clearly labelled as simulated, without any exchange connection.**
+- **Let users switch on automatic practice trading under their own rules and limits, on practice balances only, with every decision logged and every automatic order labelled and audited.**
 - Work as both a web and desktop application.
 - Recover correctly from network interruptions.
 - Have automated tests and deployment documentation.

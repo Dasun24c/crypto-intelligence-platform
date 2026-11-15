@@ -12,7 +12,12 @@ import {
   AlertRulesController,
   NotificationsController,
 } from './alerts/alerts.controller.js';
-import { AdminPracticeSettingsController, PracticeController } from './practice/practice.controller.js';
+import { AutomaticService } from './practice/automatic.service.js';
+import {
+  AdminPracticeSettingsController,
+  PracticeAutomaticController,
+  PracticeController,
+} from './practice/practice.controller.js';
 import { PracticeRepository } from './practice/practice.repository.js';
 import { PracticeService } from './practice/practice.service.js';
 import { AlertsRepository } from './alerts/alerts.repository.js';
@@ -93,6 +98,7 @@ export class AppModule {
         AlertEventsController,
         NotificationsController,
         PracticeController,
+        PracticeAutomaticController,
         AdminPracticeSettingsController,
         SystemController,
         ProbesController,
@@ -139,6 +145,7 @@ export class AppModule {
         AlertsRepository,
         PracticeRepository,
         PracticeService,
+        AutomaticService,
         CalendarSyncQueue,
         LiveGateway,
       ],

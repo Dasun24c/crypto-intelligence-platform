@@ -24,6 +24,7 @@ interface AccountState {
   venue: string;
   epoch: number;
   available: Map<string, Decimal>;
+  starting: Record<string, string> | null;
 }
 
 /** Collects what one input changed; each order once, as it ends up. */
@@ -81,6 +82,7 @@ export class PaperEngine {
         venue: a.venue,
         epoch: a.epoch,
         available: new Map(Object.entries(a.available).map(([asset, v]) => [asset, dec(v)])),
+        starting: a.starting ? { ...a.starting } : null,
       });
     }
     for (const o of orders) {
@@ -101,7 +103,23 @@ export class PaperEngine {
       venue: a.venue,
       epoch: a.epoch,
       available: Object.fromEntries([...a.available].map(([asset, v]) => [asset, v.toString()])),
+      ...(a.starting ? { starting: { ...a.starting } } : {}),
     };
+  }
+
+  /** The pair's order rules, as the engine reads them. */
+  rulesOf(instrumentId: string): InstrumentRules | undefined {
+    return this.opts.rules(instrumentId);
+  }
+
+  /** The venue's fees, as the engine reads them. */
+  feesOf(venue: string): FeeRates {
+    return this.opts.fees(venue);
+  }
+
+  /** Whether the order is live: taken up and not finished. */
+  isLive(orderId: string): boolean {
+    return this.live.has(orderId);
   }
 
   liveOrders(): EngineOrder[] {
@@ -251,6 +269,7 @@ export class PaperEngine {
     }
     account.epoch += 1;
     account.available = new Map();
+    account.starting = { ...starting };
     for (const [asset, amount] of Object.entries(starting)) {
       account.available.set(asset, dec(amount));
       ch.ledger.push(this.entry(account, asset, dec(amount), 'start', null, null));

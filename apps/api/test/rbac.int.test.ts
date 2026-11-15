@@ -241,6 +241,13 @@ const ENDPOINTS: Endpoint[] = [
   },
   { method: 'GET', path: '/api/v1/practice/fills', policy: 'practice.own' },
   { method: 'GET', path: '/api/v1/practice/positions', policy: 'practice.own' },
+  // Phase 16: automatic practice trading, on the user's own practice account (every role).
+  { method: 'GET', path: '/api/v1/practice/automatic', policy: 'practice.own' },
+  { method: 'PUT', path: '/api/v1/practice/automatic', policy: 'practice.own', body: {} },
+  { method: 'POST', path: '/api/v1/practice/automatic/on', policy: 'practice.own', body: {} },
+  { method: 'POST', path: '/api/v1/practice/automatic/off', policy: 'practice.own' },
+  { method: 'POST', path: '/api/v1/practice/automatic/stop', policy: 'practice.own' },
+  { method: 'GET', path: '/api/v1/practice/automatic/decisions', policy: 'practice.own' },
   { method: 'GET', path: '/api/v1/admin/settings/practice', policy: 'settings.manage' },
   { method: 'PUT', path: '/api/v1/admin/settings/practice', policy: 'settings.manage', body: {} },
   { method: 'GET', path: '/api/v1/admin/instruments', policy: 'instruments.manage' },

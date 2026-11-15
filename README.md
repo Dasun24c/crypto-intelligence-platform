@@ -2,7 +2,7 @@
 
 Real-time monitoring and analysis of crypto markets, and of gold through the PAXG token: market data from Binance and Coinbase, technical indicators, Smart Money Concepts detection, AI analysis with Grok, alerts, and a web and desktop app.
 
-**Status:** Phases 1–8 and 14 are accepted; see the [Phase 14 acceptance report](docs/phase-14/acceptance-report.md). In Phase 14 (Practice trading), every user got a practice account per venue: they buy and sell with market and limit orders, attach a protective stop and a target, cancel, and see balances, holdings, profit and loss and their history. Orders are simulated inside the platform by a new broker service, which fills them from the venues' live trades and order books, with fees, slippage and the venues' order rules; nothing reaches an exchange and no real money is involved. A person places every order: "Practise this setup" only fills in the ticket. Practice fills can raise alerts. See the [Phase 8 report](docs/phase-8/acceptance-report.md) for alerts and notifications, and the [implementation plan](docs/phase-0/08-implementation-plan.md).
+**Status:** Phase 16 (Automatic practice trading, [proposal 002](docs/proposals/002-automatic-practice-trading.md), [ADR 022](docs/adr/022-automatic-practice-trading.md)) is built and waits for your acceptance; see the [Phase 16 acceptance report](docs/phase-16/acceptance-report.md). Phases 1–8 and 14 are accepted. With Phase 16 a user can switch on automatic practice trading for their own practice account: on each confirmed bullish setup that matches their rules, the broker places a practice limit buy with a stop and a target, sized by the position-size calculator, within their limits (open trades, orders per day, the day's loss). Every decision is logged with its reason; automatic orders are labelled, audited and alerted; a stop button cancels them. Practice balances only: no real money, nothing reaches an exchange, and the AI never decides an order. In Phase 14 (Practice trading), every user got a practice account per venue: they buy and sell with market and limit orders, attach a protective stop and a target, cancel, and see balances, holdings, profit and loss and their history. Orders are simulated inside the platform by a new broker service, which fills them from the venues' live trades and order books, with fees, slippage and the venues' order rules; nothing reaches an exchange and no real money is involved. A person places every order: "Practise this setup" only fills in the ticket. Practice fills can raise alerts. See the [Phase 8 report](docs/phase-8/acceptance-report.md) for alerts and notifications, and the [implementation plan](docs/phase-0/08-implementation-plan.md).
 
 ## Quick start
 
@@ -57,7 +57,8 @@ COMPOSE_FILE=compose.yaml:infra/docker/compose.replay.yaml docker compose -p cip
 |---|---|
 | `node scripts/practice-latency.mjs [minutes]` | Submitted → published latency of practice fills (NFR-16: p95 ≤ 1 s), market orders and waiting orders, on the Redis clock |
 | `node scripts/practice-latency.mjs --drive [orders] [minutes]` | Places practice orders as the development viewer first (simulated; practice balances only), then measures |
-| `docker compose exec broker node apps/broker/dist/cli.js replay [--since <seq>]` | Replays the practice journal and compares every fill with what was stored (criterion 14.3); read-only |
+| `node scripts/practice-latency.mjs --auto [setups] [minutes]` | Switches on the development viewer's automatic practice trading for BTC/USDT, appends synthetic confirmed setups to `an:events`, switches it off, then measures NFR-17: setup confirmed → automatic order published, p95 ≤ 2 s |
+| `docker compose exec broker node apps/broker/dist/cli.js replay [--since <seq>]` | Replays the practice journal and compares every fill and every automatic decision with what was stored (criteria 14.3 and 16.6); read-only |
 
 ### HTTPS for the desktop app (optional)
 
@@ -126,6 +127,7 @@ Workspace packages are consumed from source through the `@cip/source` export con
 - [Phase 8 acceptance report](docs/phase-8/acceptance-report.md)
 - [Phase 14 acceptance report](docs/phase-14/acceptance-report.md)
 - [Proposal 001: buying and selling](docs/proposals/001-trading.md) (approved 2026-11-13): practice trading, then exchange test networks; no real money in the initial release
+- [Proposal 002: automatic practice trading](docs/proposals/002-automatic-practice-trading.md) (approved 2026-11-15): a user's own rules trade their practice balance; Phase 16, after Phase 14
 - [Desktop app](apps/desktop/README.md)
 
 The platform is for analysis and education. It holds no exchange API keys and places no order on any exchange: practice trading is simulated inside the platform, with practice balances and no real money. It never presents analysis, or simulated results, as a guaranteed prediction.

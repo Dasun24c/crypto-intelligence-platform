@@ -124,6 +124,11 @@ export interface EngineAccount {
   epoch: number;
   /** Available balances by asset. */
   available: Record<string, DecimalString>;
+  /**
+   * The current period's starting balances (Phase 16: the daily loss limit of automatic trading is a
+   * share of them). Absent in journals written before Phase 16.
+   */
+  starting?: Record<string, DecimalString>;
 }
 
 /** A new order as the api stored it (status `new`), with its attached stop and target. */

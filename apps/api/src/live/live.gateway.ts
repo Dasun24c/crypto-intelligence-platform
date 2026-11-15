@@ -67,7 +67,7 @@ const USER_CHANNELS = {
   practice: {
     stream: PRACTICE_EVENTS_STREAM,
     capability: 'practice.own',
-    types: ['practice.order', 'practice.fill', 'practice.account'],
+    types: ['practice.order', 'practice.fill', 'practice.account', 'practice.automatic'],
   },
 } as const satisfies Record<
   string,
@@ -588,7 +588,8 @@ export function toEnvelope(seq: string, fields: string[]): Envelope | null {
 /**
  * An entry of a per-user stream (`type`, `user`, `data`) as the envelope of its user's channel:
  * `alerts` (`alert.fired`, `notification.read`; ADR 020) or `practice` (`practice.order`,
- * `practice.fill`, `practice.account`; ADR 021). Null for a type the channel does not carry.
+ * `practice.fill`, `practice.account`; ADR 021; `practice.automatic`, ADR 022). Null for a type the
+ * channel does not carry.
  */
 export function toUserEnvelope(
   ch: UserChannel,

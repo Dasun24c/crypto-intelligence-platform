@@ -2,15 +2,16 @@
 import { createDb } from '@cip/db';
 import { createLogger, INSTANCE_ID } from '@cip/observability';
 import { type JournalEntry, type JournalInput, replayJournal } from '@cip/paper-engine';
-import { fillId } from './broker.js';
+import { fillId, nameId } from './broker.js';
 import { loadBrokerConfig } from './config.js';
 import { BrokerStore } from './store.js';
 
 /**
- * `cip-broker replay [--since <journal seq>]`: replays the practice journal (criterion 14.3), read-only.
- * Each engine run starts at a `load` entry (a broker taking the lease, or reloading); it is fed to a
- * fresh engine with the rules and fees it journalled, and every fill's digest line is compared with
- * what was stored. Prints one line per run; exits 2 when any run differs.
+ * `cip-broker replay [--since <journal seq>]`: replays the practice journal (criteria 14.3 and 16.6),
+ * read-only. Each engine run starts at a `load` entry (a broker taking the lease, or reloading); it is
+ * fed to a fresh engine and auto-trader with the rules and fees it journalled, and every fill's and
+ * every automatic decision's digest line is compared with what was stored. Prints one line per run;
+ * exits 2 when any run differs.
  *
  * Runs journalled before the broker recorded its configuration replay with today's rules and fees,
  * and differ if those changed since.
@@ -36,16 +37,17 @@ async function main(argv: string[]): Promise<number> {
       fees: (venue: string) =>
         settings.fees[venue as keyof typeof settings.fees] ?? { maker: '0', taker: '0' },
       fillId,
+      nameId,
     };
     const rows = await db
       .selectFrom('trading.journal')
-      .select(['seq', 'kind', 'input', 'fills'])
+      .select(['seq', 'kind', 'input', 'fills', 'decisions'])
       .where('seq', '>=', String(since))
       .orderBy('seq')
       .execute();
     const runs: { from: string; entries: JournalEntry[]; seqs: string[] }[] = [];
     for (const r of rows) {
-      const entry = { input: r.input as unknown as JournalInput, fills: r.fills };
+      const entry = { input: r.input as unknown as JournalInput, fills: r.fills, decisions: r.decisions };
       if (r.kind === 'load') runs.push({ from: r.seq, entries: [entry], seqs: [r.seq] });
       else if (runs.length) {
         runs.at(-1)!.entries.push(entry);
@@ -56,11 +58,16 @@ async function main(argv: string[]): Promise<number> {
     for (const run of runs) {
       const result = replayJournal(run.entries, opts);
       const fills = run.entries.reduce((n, e) => n + e.fills.length, 0);
+      const decisions = run.entries.reduce(
+        (n, e) => n + (e.decisions ?? []).filter((l) => l.startsWith('decision|')).length,
+        0,
+      );
       const configured = run.entries.some((e) => e.input.config !== undefined);
       const line = {
         fromSeq: run.from,
         entries: run.entries.length,
         fills,
+        decisions,
         configuration: configured ? 'journalled' : "today's",
         result: result.mismatchAt === null ? 'identical' : `differs at seq ${run.seqs[result.mismatchAt]}`,
       };
@@ -68,7 +75,7 @@ async function main(argv: string[]): Promise<number> {
       process.stdout.write(`${JSON.stringify(line)}\n`);
     }
     process.stdout.write(
-      `${runs.length} run(s), ${rows.length} journal entries: ${differ === 0 ? 'every fill identical' : `${differ} run(s) differ`}\n`,
+      `${runs.length} run(s), ${rows.length} journal entries: ${differ === 0 ? 'every fill and decision identical' : `${differ} run(s) differ`}\n`,
     );
     return differ === 0 ? 0 : 2;
   } finally {

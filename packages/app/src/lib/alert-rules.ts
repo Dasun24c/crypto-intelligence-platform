@@ -1,7 +1,7 @@
 import type { AlertCondition, AlertConditionKind, AlertRule } from '@cip/contracts';
 import { PATTERN_SHORT, STATE_TITLE } from './setups.js';
 
-/** The fourteen condition kinds, in the order the rule form offers them. */
+/** The sixteen condition kinds, in the order the rule form offers them. */
 export const KIND_LABELS: Record<AlertConditionKind, string> = {
   price_cross: 'Price crosses a level',
   price_change_pct: 'Price moves by a percentage',
@@ -17,12 +17,22 @@ export const KIND_LABELS: Record<AlertConditionKind, string> = {
   feed_health: 'Data feed health',
   practice_order_filled: 'Practice order filled (simulated)',
   practice_exit: 'Practice stop or target reached (simulated)',
+  practice_auto_order: 'Automatic practice order placed (simulated)',
+  practice_auto_paused: 'Automatic practice trading paused (simulated)',
 };
 export const KINDS = Object.keys(KIND_LABELS) as AlertConditionKind[];
 
-/** Kinds that watch instruments (the rest are about PAXG's spread, the calendar or the gold market). */
+/**
+ * Kinds that watch instruments (the rest are about PAXG's spread, the calendar, the gold market, or
+ * the pause of the user's automatic practice trading).
+ */
 export function watchesInstruments(kind: AlertConditionKind): boolean {
-  return kind !== 'spread_threshold' && kind !== 'economic_event_upcoming' && kind !== 'gold_market_session';
+  return (
+    kind !== 'spread_threshold' &&
+    kind !== 'economic_event_upcoming' &&
+    kind !== 'gold_market_session' &&
+    kind !== 'practice_auto_paused'
+  );
 }
 
 /** A sensible starting condition for each kind, for the rule form. */
@@ -56,6 +66,9 @@ export function defaultCondition(kind: AlertConditionKind): AlertCondition {
       return { kind };
     case 'practice_exit':
       return { kind, on: ['stop', 'target'] };
+    case 'practice_auto_order':
+    case 'practice_auto_paused':
+      return { kind };
   }
 }
 
@@ -116,6 +129,10 @@ export function describeCondition(c: AlertCondition): string {
       return 'One of your practice orders filled (simulated)';
     case 'practice_exit':
       return `Your practice ${c.on.join(' or ')} sold (simulated)`;
+    case 'practice_auto_order':
+      return 'Your automatic practice trading placed an order (simulated)';
+    case 'practice_auto_paused':
+      return 'Your automatic practice trading paused at its daily loss limit (simulated)';
   }
 }
 

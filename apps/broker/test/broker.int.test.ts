@@ -2,13 +2,22 @@ import { randomUUID } from 'node:crypto';
 import { readFileSync } from 'node:fs';
 import net from 'node:net';
 import { Redis } from 'ioredis';
+import { sql } from 'kysely';
 import { afterAll, beforeAll, describe, expect, inject, it } from 'vitest';
-import { DEFAULT_PRACTICE_SETTINGS, PRACTICE_EVENTS_STREAM, tradesStream } from '@cip/contracts';
+import {
+  ANALYSIS_EVENTS_STREAM,
+  DEFAULT_AUTO_RULES,
+  DEFAULT_PRACTICE_SETTINGS,
+  PRACTICE_EVENTS_STREAM,
+  SETUP_DISCLAIMER,
+  tradesStream,
+} from '@cip/contracts';
 import { PRACTICE_COMMANDS_STREAM } from '@cip/contracts/practice-commands';
 import { createDb } from '@cip/db';
+import { dec, positionSize } from '@cip/domain';
 import { createLogger } from '@cip/observability';
 import { type JournalEntry, type JournalInput, replayJournal } from '@cip/paper-engine';
-import { Broker, fillId } from '../src/broker.ts';
+import { Broker, fillId, nameId } from '../src/broker.ts';
 import { BrokerStore, LeaseLost } from '../src/store.ts';
 
 const BTC = '019a6f00-0000-7000-8000-000000000001';
@@ -520,7 +529,7 @@ describe('the broker (ADR 021, Phase 14)', () => {
   it('replays its journal with the same fills (14.3)', async () => {
     const rows = await owner
       .selectFrom('trading.journal')
-      .select(['kind', 'input', 'fills'])
+      .select(['kind', 'input', 'fills', 'decisions'])
       .orderBy('seq')
       .execute();
     const instruments = await new BrokerStore(brokerDb).instruments();
@@ -530,11 +539,12 @@ describe('the broker (ADR 021, Phase 14)', () => {
       fees: (venue: string) =>
         DEFAULT_PRACTICE_SETTINGS.fees[venue as 'binance'] ?? { maker: '0', taker: '0' },
       fillId,
+      nameId,
     };
     // Each instance's run starts with the state it loaded; replay each run on its own.
     const runs: JournalEntry[][] = [];
     for (const r of rows) {
-      const entry = { input: r.input as unknown as JournalInput, fills: r.fills };
+      const entry = { input: r.input as unknown as JournalInput, fills: r.fills, decisions: r.decisions };
       if (r.kind === 'load') runs.push([entry]);
       else runs.at(-1)?.push(entry);
     }
@@ -570,5 +580,586 @@ describe('the broker (ADR 021, Phase 14)', () => {
     expect(Object.keys(pkg.dependencies).filter((d) => /binance|coinbase|ccxt|exchange/i.test(d))).toEqual(
       [],
     );
+  });
+});
+
+describe('automatic practice trading in the broker (ADR 022, Phase 16)', () => {
+  const RUN = randomUUID();
+  const strategyId = randomUUID();
+  let broker16: Broker = first;
+
+  /** A setup transition as the analyzer appends it to an:events. */
+  function transition(
+    id: string,
+    o: {
+      to?: 'confirmed' | 'resolved';
+      resolution?: 'invalidated' | 'expired_no_entry' | null;
+      score?: number;
+      processedAt?: number;
+    } = {},
+  ) {
+    const now = Date.now();
+    const to = o.to ?? 'confirmed';
+    return {
+      id,
+      instrumentId: BTC,
+      runId: RUN,
+      pattern: 'htf_order_block',
+      variant: null,
+      direction: 'bullish',
+      contextTf: '1h',
+      setupTf: '15m',
+      state: to,
+      resolution: o.resolution ?? null,
+      displayLabel: to === 'resolved' ? 'Resolved' : 'Confirmed',
+      levels: { entry: '99.00', invalidation: '97.00', target1: '105.00', target2: null, rr: 3 },
+      score: o.score ?? 80,
+      mandatoryPassed: true,
+      qualityFlags: [],
+      flags: [],
+      createdAt: now - 3_600_000,
+      updatedAt: now,
+      resolvedAt: to === 'resolved' ? now : null,
+      disclaimer: SETUP_DISCLAIMER,
+      transition: {
+        from: to === 'resolved' ? 'confirmed' : 'triggered',
+        to,
+        reason: 'test',
+        candleTime: now - 900_000,
+        decidedAt: now - 1_000,
+        processedAt: o.processedAt ?? now,
+        late: false,
+        evidence: {},
+      },
+    };
+  }
+
+  const publish = (message: unknown) =>
+    redis.xadd(ANALYSIS_EVENTS_STREAM, '*', 'type', 'setup', 'data', JSON.stringify(message));
+  const command = (type: 'strategy' | 'stop_auto') =>
+    redis.xadd(PRACTICE_COMMANDS_STREAM, '*', 'type', type, 'user', userId);
+  const buyOf = (setupId: string) => nameId(`practice-auto:${strategyId}:${setupId}`);
+  const decisions = (setupId: string) =>
+    owner
+      .selectFrom('trading.auto_decisions')
+      .select(['outcome', 'reason', 'order_id', 'strategy_version', 'run_id'])
+      .where('setup_id', '=', setupId)
+      .orderBy('created_at')
+      .execute();
+  const decided = async (setupId: string, n = 1) => {
+    await expect
+      .poll(async () => (await decisions(setupId)).length, { timeout: 15_000, interval: 100 })
+      .toBe(n);
+    return decisions(setupId);
+  };
+  const automatic = async () =>
+    (await redis.xrange(PRACTICE_EVENTS_STREAM, '-', '+'))
+      .filter(([, f]) => f[1] === 'practice.automatic')
+      .map(([, f]) => ({
+        user: f[3],
+        ...(JSON.parse(f[5]!) as { event: string; decision?: { outcome: string }; [k: string]: unknown }),
+      }));
+  const strategyRow = () =>
+    owner.selectFrom('trading.strategies').selectAll().where('id', '=', strategyId).executeTakeFirstOrThrow();
+  async function setStrategy(change: { enabled?: boolean; dailyLossPct?: number }) {
+    const row = await strategyRow();
+    const rules = {
+      ...(row.rules as typeof DEFAULT_AUTO_RULES),
+      ...(change.dailyLossPct ? { dailyLossPct: change.dailyLossPct } : {}),
+    };
+    await owner
+      .updateTable('trading.strategies')
+      .set({
+        enabled: change.enabled ?? row.enabled,
+        rules,
+        version: row.version + 1,
+        updated_at: new Date(),
+      })
+      .where('id', '=', strategyId)
+      .execute();
+  }
+  async function tradeAt(price: string, qty: string) {
+    await redis.xadd(
+      tradesStream(BTC),
+      '*',
+      'id',
+      randomUUID(),
+      'ts',
+      String(Date.now()),
+      'price',
+      price,
+      'qty',
+      qty,
+      'side',
+      'sell',
+    );
+  }
+
+  /** The account's free USDT, exactly: the sum of its current period's ledger. */
+  async function freeUsdt(): Promise<string> {
+    const account = await owner
+      .selectFrom('trading.accounts')
+      .select('reset_epoch')
+      .where('id', '=', accountId)
+      .executeTakeFirstOrThrow();
+    const r = await owner
+      .selectFrom('trading.ledger')
+      .select(sql<string>`coalesce(sum(amount), 0)::text`.as('total'))
+      .where('account_id', '=', accountId)
+      .where('reset_epoch', '=', account.reset_epoch)
+      .where('asset', '=', 'USDT')
+      .executeTakeFirstOrThrow();
+    return dec(r.total).toString();
+  }
+
+  beforeAll(async () => {
+    await owner
+      .insertInto('trading.strategies')
+      .values({
+        id: strategyId,
+        user_id: userId,
+        enabled: true,
+        rules: { ...DEFAULT_AUTO_RULES },
+        version: 1,
+        updated_by: userId,
+      })
+      .execute();
+    await command('strategy');
+  });
+
+  it('turns a confirmed bullish setup into a labelled, audited limit buy with its stop and target, and cancels it when the setup ends first (16.1, 16.2, 16.5, 16.7)', async () => {
+    const free = await freeUsdt();
+    const setupId = randomUUID();
+    const sent = Date.now();
+    await publish(transition(setupId));
+    const buy = await settled(buyOf(setupId), ['open']);
+    expect(Date.now() - sent).toBeLessThan(5_000);
+    // 1 % of the free balance at risk over 99 − 97, rounded down to the quantity step: the calculator's size.
+    const size = positionSize({
+      accountSize: free,
+      riskPct: '1',
+      entry: '99',
+      invalidation: '97',
+      qtyStep: '0.00001',
+    });
+    expect(dec(buy.quantity).eq(size.quantity)).toBe(true);
+    expect(buy).toMatchObject({
+      source: 'auto',
+      setup_id: setupId,
+      client_order_id: `auto:${setupId}`,
+      side: 'buy',
+      type: 'limit',
+      limit_price: '99',
+    });
+    const legs = await owner
+      .selectFrom('trading.orders')
+      .select(['id', 'type', 'stop_price', 'limit_price', 'status', 'source'])
+      .where('parent_id', '=', buy.id)
+      .orderBy('type')
+      .execute();
+    expect(legs).toEqual([
+      {
+        id: nameId(`practice-auto:${strategyId}:${setupId}:stop`),
+        type: 'stop',
+        stop_price: '97',
+        limit_price: null,
+        status: 'pending',
+        source: 'auto',
+      },
+      {
+        id: nameId(`practice-auto:${strategyId}:${setupId}:target`),
+        type: 'target',
+        stop_price: null,
+        limit_price: '105',
+        status: 'pending',
+        source: 'auto',
+      },
+    ]);
+    expect(await decided(setupId)).toEqual([
+      { outcome: 'placed', reason: null, order_id: buy.id, strategy_version: 1, run_id: RUN },
+    ]);
+    const audit = await owner
+      .selectFrom('app.audit_log')
+      .select(['action', 'actor_type', 'details'])
+      .where('target_id', '=', buy.id)
+      .where('action', '=', 'practice_order.placed')
+      .executeTakeFirstOrThrow();
+    expect(audit).toMatchObject({
+      actor_type: 'system',
+      details: {
+        source: 'auto',
+        strategyId,
+        setupId,
+        runId: RUN,
+        stop: '97',
+        target: '105',
+        limitPrice: '99',
+      },
+    });
+    const day = await owner
+      .selectFrom('trading.auto_days')
+      .selectAll()
+      .where('account_id', '=', accountId)
+      .execute();
+    expect(day.map((d) => [d.day, d.orders])).toEqual([[new Date().toISOString().slice(0, 10), 1]]);
+    await expect
+      .poll(
+        async () =>
+          (await automatic()).map((m) => [m.user, m.event, (m.decision as { outcome?: string })?.outcome]),
+        { timeout: 5_000 },
+      )
+      .toContainEqual([userId, 'decision', 'placed']);
+    const message = (await automatic()).find(
+      (m) => m.event === 'decision' && (m.decision as { orderId?: string }).orderId === buy.id,
+    );
+    expect(message?.decision).toMatchObject({
+      outcome: 'placed',
+      order: { quantity: dec(buy.quantity).toString(), limitPrice: '99', stop: '97', target: '105' },
+    });
+    const journal = await owner
+      .selectFrom('trading.journal')
+      .select(['input', 'decisions'])
+      .where('kind', '=', 'setup')
+      .orderBy('seq', 'desc')
+      .executeTakeFirstOrThrow();
+    expect(journal.decisions).toContain(
+      `decision|${nameId(`practice-auto-decision:${strategyId}:${setupId}:placed:`)}|placed||${buy.id}`,
+    );
+
+    // One per pair: another setup on BTC is skipped while this one is open; a weak one, for its score.
+    const second = randomUUID();
+    await publish(transition(second));
+    expect(await decided(second)).toMatchObject([
+      { outcome: 'skipped', reason: 'open_limit', order_id: null },
+    ]);
+    const weak = randomUUID();
+    await publish(transition(weak, { score: 40 }));
+    expect(await decided(weak)).toMatchObject([{ outcome: 'skipped', reason: 'score' }]);
+
+    // The setup ends before the buy filled: the buy goes, with its stop and target.
+    await publish(transition(setupId, { to: 'resolved', resolution: 'invalidated' }));
+    expect(await settled(buy.id, ['cancelled'])).toMatchObject({ reserved: '0' });
+    expect((await decided(setupId, 2))[1]).toMatchObject({
+      outcome: 'cancelled',
+      reason: 'invalidated',
+      order_id: buy.id,
+    });
+    expect(await freeUsdt()).toBe(free);
+  });
+
+  it('stops: switched off, its live orders cancelled within 5 s (16.3)', async () => {
+    const setupId = randomUUID();
+    await publish(transition(setupId));
+    const buy = await settled(buyOf(setupId), ['open']);
+    await setStrategy({ enabled: false });
+    const sent = Date.now();
+    await command('stop_auto');
+    expect(await settled(buy.id, ['cancelled'])).toMatchObject({ reserved: '0' });
+    expect(Date.now() - sent).toBeLessThan(5_000);
+    expect((await decided(setupId, 2))[1]).toMatchObject({ outcome: 'cancelled', reason: 'stopped' });
+    await expect
+      .poll(async () => (await automatic()).filter((m) => m.event === 'stopped'), { timeout: 5_000 })
+      .toEqual([{ user: userId, event: 'stopped', cancelled: 3 }]);
+    // Off: a confirmed setup is not even logged.
+    const ignored = randomUUID();
+    await publish(transition(ignored));
+    await new Promise((r) => setTimeout(r, 1_000));
+    expect(await decisions(ignored)).toEqual([]);
+  });
+
+  it('adds up the closed trades of the day, and pauses at the daily loss limit until 00:00 UTC (16.2)', async () => {
+    await setStrategy({ enabled: true, dailyLossPct: 1 });
+    await command('strategy');
+    const setupId = randomUUID();
+    await publish(transition(setupId));
+    const buy = await settled(buyOf(setupId), ['open']);
+    // A trade through the entry fills the buy; the stop then sells into a falling book.
+    await tradeAt('98.50', '1000');
+    await settled(buy.id, ['filled']);
+    await redis.set(
+      `book:${BTC}`,
+      JSON.stringify({
+        instrumentId: BTC,
+        ts: Date.now(),
+        bids: [['96.00', '1000']],
+        asks: [['96.50', '1000']],
+        coverageBps: 50,
+      }),
+    );
+    await tradeAt('96.90', '1');
+    const stop = nameId(`practice-auto:${strategyId}:${setupId}:stop`);
+    await settled(stop, ['filled']);
+    const tomorrow = new Date();
+    tomorrow.setUTCHours(24, 0, 0, 0);
+    await expect
+      .poll(async () => (await strategyRow()).paused_until?.getTime(), { timeout: 10_000 })
+      .toBe(tomorrow.getTime());
+    const day = await owner
+      .selectFrom('trading.auto_days')
+      .select(['orders', 'result'])
+      .where('account_id', '=', accountId)
+      .executeTakeFirstOrThrow();
+    expect(Number(day.result)).toBeLessThan(-100);
+    expect((await automatic()).filter((m) => m.event === 'paused')).toEqual([
+      {
+        user: userId,
+        event: 'paused',
+        at: expect.any(Number),
+        until: tomorrow.getTime(),
+        result: day.result,
+        asset: 'USDT',
+      },
+    ]);
+    const audit = await owner
+      .selectFrom('app.audit_log')
+      .select(['action', 'target_type', 'details'])
+      .where('target_id', '=', strategyId)
+      .execute();
+    expect(audit).toEqual([
+      {
+        action: 'practice_auto.paused',
+        target_type: 'practice_strategy',
+        details: { userId, until: tomorrow.getTime(), result: day.result, asset: 'USDT' },
+      },
+    ]);
+    // Paused: the next confirmed setup is logged as skipped.
+    const next = randomUUID();
+    await publish(transition(next));
+    expect(await decided(next)).toMatchObject([{ outcome: 'skipped', reason: 'paused' }]);
+  });
+
+  it('recovers from a failed write: it reloads, reads the setup again, and decides it once', async () => {
+    // The day's pause lifted (as at 00:00 UTC) and the limit raised to 10 %, so the day's loss so far
+    // no longer reaches it; the rules read again.
+    await owner
+      .updateTable('trading.strategies')
+      .set({ paused_until: null })
+      .where('id', '=', strategyId)
+      .execute();
+    await setStrategy({ dailyLossPct: 10 });
+    await command('strategy');
+    await redis.set(
+      `book:${BTC}`,
+      JSON.stringify({
+        instrumentId: BTC,
+        ts: Date.now(),
+        bids: [['98.00', '1000']],
+        asks: [['100.00', '1000']],
+        coverageBps: 50,
+      }),
+    );
+    const { reset_epoch } = await owner
+      .selectFrom('trading.accounts')
+      .select('reset_epoch')
+      .where('id', '=', accountId)
+      .executeTakeFirstOrThrow();
+    const setupId = randomUUID();
+    // A stored order already has the client order id the automatic buy will use, so its write fails.
+    const blocker = randomUUID();
+    await owner
+      .insertInto('trading.orders')
+      .values({
+        id: blocker,
+        account_id: accountId,
+        instrument_id: BTC,
+        client_order_id: `auto:${setupId}`,
+        side: 'buy',
+        type: 'limit',
+        quantity: '1',
+        limit_price: '1',
+        stop_price: null,
+        status: 'cancelled',
+        refusal_reason: null,
+        parent_id: null,
+        oco_group: null,
+        source: 'manual',
+        setup_id: null,
+        reset_epoch,
+      })
+      .execute();
+    await publish(transition(setupId));
+    await expect.poll(() => first.probe().status, { timeout: 15_000, interval: 50 }).toBe('degraded');
+    expect(await decisions(setupId)).toEqual([]);
+    await owner.deleteFrom('trading.orders').where('id', '=', blocker).execute();
+    const buy = await settled(buyOf(setupId), ['open']);
+    expect(await decided(setupId)).toMatchObject([{ outcome: 'placed', order_id: buy.id }]);
+    await expect.poll(() => first.probe().status, { timeout: 15_000 }).toBe('ok');
+  });
+
+  it('after a restart, it carries on with its open trades and never decides a setup twice; nothing for users who have not switched it on (16.4, 16.6)', async () => {
+    const open = await owner
+      .selectFrom('trading.orders')
+      .selectAll()
+      .where('source', '=', 'auto')
+      .where('status', '=', 'open')
+      .where('parent_id', 'is', null)
+      .executeTakeFirstOrThrow();
+    // Partly filled before the restart.
+    await tradeAt('98.50', '1');
+    await expect
+      .poll(async () => (await order(open.id)).status, { timeout: 10_000 })
+      .toBe('partially_filled');
+    // Someone whose stored rules no longer validate: loaded switched off.
+    const broken = randomUUID();
+    await owner
+      .insertInto('app.users')
+      .values({
+        id: broken,
+        email: `${broken}@cip.test`,
+        display_name: 'x',
+        role: 'viewer',
+        password_hash: 'x',
+      })
+      .execute();
+    await owner
+      .insertInto('trading.strategies')
+      .values({ id: randomUUID(), user_id: broken, enabled: true, rules: { venue: 'binance' }, version: 1 })
+      .execute();
+    const count = async () =>
+      (await owner.selectFrom('trading.auto_decisions').select('id').execute()).length;
+    const before = await count();
+    const earlier = await owner
+      .selectFrom('trading.auto_decisions')
+      .select('setup_id')
+      .where('outcome', '=', 'placed')
+      .orderBy('created_at')
+      .executeTakeFirstOrThrow();
+    const dayResult = async () =>
+      (
+        await owner
+          .selectFrom('trading.auto_days')
+          .select('result')
+          .where('account_id', '=', accountId)
+          .executeTakeFirstOrThrow()
+      ).result;
+    const resultBefore = await dayResult();
+
+    broker16 = broker('broker-c');
+    await first.stop();
+    await broker16.start();
+    await expect.poll(() => broker16.active, { timeout: 15_000, interval: 200 }).toBe(true);
+    // A repeated confirmation of a setup it already decided; a new one on the pair it holds.
+    await publish(transition(earlier.setup_id));
+    const fresh = randomUUID();
+    await publish(transition(fresh));
+    expect(await decided(fresh)).toMatchObject([{ outcome: 'skipped', reason: 'open_limit' }]);
+    expect(await count()).toBe(before + 1);
+
+    // The open trade's setup ends: what is left of its buy goes; its stop and target keep what it bought.
+    await publish(transition(open.setup_id!, { to: 'resolved', resolution: 'expired_no_entry' }));
+    expect(await settled(open.id, ['cancelled'])).toMatchObject({ filled_quantity: '1' });
+    const target = nameId(`practice-auto:${strategyId}:${open.setup_id}:target`);
+    expect(await order(target)).toMatchObject({ status: 'open', quantity: '1' });
+    // The target sells it: the trade closes with a gain, counted for the day.
+    await tradeAt('105.50', '5');
+    await settled(target, ['filled']);
+    const maker = DEFAULT_PRACTICE_SETTINGS.fees.binance.maker;
+    const gain = dec(105).minus(99).minus(dec(99).times(maker)).minus(dec(105).times(maker));
+    await expect
+      .poll(
+        async () =>
+          dec(await dayResult())
+            .minus(resultBefore)
+            .toString(),
+        { timeout: 10_000 },
+      )
+      .toBe(gain.toString());
+
+    // A user who switches on after the broker started; then a setup on a pair whose data is not live:
+    // both decide, and the order checks refuse both orders.
+    const late = randomUUID();
+    const lateAccount = randomUUID();
+    await owner
+      .insertInto('app.users')
+      .values({ id: late, email: `${late}@cip.test`, display_name: 'x', role: 'viewer', password_hash: 'x' })
+      .execute();
+    await owner
+      .insertInto('trading.accounts')
+      .values({ id: lateAccount, user_id: late, venue_id: 'binance', starting_balances: { USDT: '10000' } })
+      .execute();
+    await owner
+      .insertInto('trading.ledger')
+      .values({
+        account_id: lateAccount,
+        reset_epoch: 0,
+        asset: 'USDT',
+        amount: '10000',
+        reason: 'start',
+        order_id: null,
+        fill_id: null,
+      })
+      .execute();
+    await owner
+      .insertInto('trading.strategies')
+      .values({
+        id: randomUUID(),
+        user_id: late,
+        enabled: true,
+        rules: { ...DEFAULT_AUTO_RULES },
+        version: 1,
+      })
+      .execute();
+    await redis.xadd(PRACTICE_COMMANDS_STREAM, '*', 'type', 'strategy', 'user', late);
+    const ethSetup = randomUUID();
+    await publish({ ...transition(ethSetup), instrumentId: '019a6f00-0000-7000-8000-000000000002' });
+    const both = await decided(ethSetup, 2);
+    expect(both.map((d) => [d.outcome, d.reason])).toEqual([
+      ['refused', 'data_delayed'],
+      ['refused', 'data_delayed'],
+    ]);
+    // An unreadable setup message is passed over.
+    await redis.xadd(ANALYSIS_EVENTS_STREAM, '*', 'type', 'setup', 'data', '{"not":"a setup"}');
+    await redis.xadd(ANALYSIS_EVENTS_STREAM, '*', 'type', 'setup', 'data', 'not json');
+    const last = await publish(transition(randomUUID(), { score: 1 }));
+    await expect
+      .poll(
+        async () =>
+          (await owner.selectFrom('trading.broker_state').select('setups_cursor').executeTakeFirstOrThrow())
+            .setups_cursor,
+        { timeout: 10_000 },
+      )
+      .toBe(last);
+
+    await broker16.stop();
+    await first.start();
+    await expect.poll(() => first.active, { timeout: 15_000, interval: 200 }).toBe(true);
+    await redis.set(
+      `book:${BTC}`,
+      JSON.stringify({
+        instrumentId: BTC,
+        ts: Date.now(),
+        bids: [['99.90', '5']],
+        asks: [['100.00', '5']],
+        coverageBps: 50,
+      }),
+    );
+  });
+
+  it('replays every run of its journal with the same fills and the same decisions (16.6)', async () => {
+    const rows = await owner
+      .selectFrom('trading.journal')
+      .select(['kind', 'input', 'fills', 'decisions'])
+      .orderBy('seq')
+      .execute();
+    const instruments = await new BrokerStore(brokerDb).instruments();
+    const rules = new Map(instruments.filter((i) => i.role === 'monitored').map((i) => [i.instrumentId, i]));
+    const opts = {
+      rules: (id: string) => rules.get(id),
+      fees: (venue: string) =>
+        DEFAULT_PRACTICE_SETTINGS.fees[venue as 'binance'] ?? { maker: '0', taker: '0' },
+      fillId,
+      nameId,
+    };
+    const runs: JournalEntry[][] = [];
+    for (const r of rows) {
+      const entry = { input: r.input as unknown as JournalInput, fills: r.fills, decisions: r.decisions };
+      if (r.kind === 'load') runs.push([entry]);
+      else runs.at(-1)?.push(entry);
+    }
+    const lines = rows.flatMap((r) => r.decisions);
+    expect(lines.filter((l) => l.startsWith('decision|')).length).toBeGreaterThanOrEqual(8);
+    expect(lines.some((l) => l.startsWith('pause|'))).toBe(true);
+    expect(rows.some((r) => r.kind === 'strategy') && rows.some((r) => r.kind === 'setup')).toBe(true);
+    for (const run of runs) expect(replayJournal(run, opts)).toMatchObject({ mismatchAt: null });
   });
 });

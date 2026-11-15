@@ -102,6 +102,10 @@ export const AlertConditionSchema = z.discriminatedUnion('kind', [
   z.strictObject({ kind: z.literal('practice_order_filled') }),
   /** Practice trading: the owner's protective stop or target sold. */
   z.strictObject({ kind: z.literal('practice_exit'), on: nonEmpty(z.enum(['stop', 'target'])) }),
+  /** Automatic practice trading (ADR 022): it placed an order for the owner. */
+  z.strictObject({ kind: z.literal('practice_auto_order') }),
+  /** Automatic practice trading: the owner's daily loss limit paused it until 00:00 UTC. */
+  z.strictObject({ kind: z.literal('practice_auto_paused') }),
 ]);
 export type AlertCondition = z.infer<typeof AlertConditionSchema>;
 export type AlertConditionKind = AlertCondition['kind'];

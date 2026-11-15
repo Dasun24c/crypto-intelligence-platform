@@ -126,6 +126,10 @@ describe('exchange-flow detection in the pipeline', () => {
     expect(walls[1]!.first_seen.getTime()).toBe(T0 + 20_000);
     expect(walls[1]!.last_seen.getTime()).toBe(T0 + 24_000);
 
+    // The large trade is written after the bid wall's end (below): wait for it, not just the walls.
+    await expect
+      .poll(async () => (await owner.selectFrom('market.large_trades').select('id').execute()).length)
+      .toBe(1);
     const trades = await owner.selectFrom('market.large_trades').selectAll().execute();
     expect(trades).toHaveLength(1);
     expect(trades[0]).toMatchObject({
@@ -139,6 +143,8 @@ describe('exchange-flow detection in the pipeline', () => {
       threshold_usd: '50000',
     });
 
+    // Each is announced once stored.
+    await expect.poll(() => redis.xlen('md:events')).toBe(5);
     const types = (await redis.xrange('md:events', '-', '+')).map(([, f]) => f[1]);
     // The order is complete once 1 s passes with no further fill, so it follows the bid wall's end.
     expect(types).toEqual(['wall.appeared', 'wall.appeared', 'wall.ended', 'wall.ended', 'trade.large']);

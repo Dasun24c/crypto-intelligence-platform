@@ -2,12 +2,15 @@ import { act, cleanup, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import {
+  type AutoDecision,
   channels,
+  DEFAULT_AUTO_RULES,
   DEFAULT_PRACTICE_SETTINGS,
   PRACTICE_BANNER,
   type PracticeAccount,
   type PracticeFill,
   type PracticeOrder,
+  type PracticeStrategy,
 } from '@cip/contracts';
 import { BTC_BINANCE, BTC_COINBASE, ticker, USDT_COINBASE } from '../test/fixtures.js';
 import { type ApiRequest, json, mockApi, renderApp, signedIn } from '../test/harness.js';
@@ -83,6 +86,15 @@ function fill(n: number, o: PracticeOrder, extra: Partial<PracticeFill> = {}): P
   };
 }
 
+const STRATEGY: PracticeStrategy = {
+  enabled: false,
+  rules: DEFAULT_AUTO_RULES,
+  version: 0,
+  pausedUntil: null,
+  updatedAt: null,
+  today: { orders: 0, result: '0', asset: 'USDT' },
+};
+
 function api(opts: { open?: PracticeOrder[]; done?: PracticeOrder[]; extra?: Record<string, unknown> } = {}) {
   return mockApi({
     'GET /api/v1/instruments': [BTC_BINANCE, BTC_COINBASE, USDT_COINBASE],
@@ -93,6 +105,8 @@ function api(opts: { open?: PracticeOrder[]; done?: PracticeOrder[]; extra?: Rec
     }),
     'GET /api/v1/practice/fills': { items: [], nextCursor: null },
     'GET /api/v1/practice/positions': [],
+    'GET /api/v1/practice/automatic': STRATEGY,
+    'GET /api/v1/practice/automatic/decisions': { items: [], nextCursor: null },
     ...opts.extra,
   });
 }
@@ -376,5 +390,212 @@ describe('Practice Trading (Phase 14)', () => {
     expect((put!.body as typeof DEFAULT_PRACTICE_SETTINGS).startingBalances).toEqual(
       DEFAULT_PRACTICE_SETTINGS.startingBalances,
     );
+  });
+});
+
+describe('Automatic practice trading (Phase 16)', () => {
+  const card = () => within(screen.getByRole('region', { name: 'Automatic trading (simulated)' }));
+  const decision = (n: number, extra: Partial<AutoDecision> = {}): AutoDecision => ({
+    id: id(700 + n),
+    setupId: id(800 + n),
+    instrumentId: BTC_BINANCE.id,
+    pattern: 'htf_order_block',
+    outcome: 'skipped',
+    reason: 'score',
+    orderId: null,
+    order: null,
+    strategyVersion: 1,
+    decidedAt: T + n,
+    ...extra,
+  });
+
+  it('switches on only after the user confirms the saved rules, and says it is simulated (16.9)', async () => {
+    const { find } = api({
+      extra: {
+        'POST /api/v1/practice/automatic/on': { ...STRATEGY, enabled: true, version: 1 },
+      },
+    });
+    await practicePage();
+    const c = await waitFor(() => card());
+    expect(c.getByText('Off')).toBeTruthy();
+    expect(c.getByText(/no real money, and nothing reaches an exchange/)).toBeTruthy();
+    expect(c.getByText(/The AI never decides an order/)).toBeTruthy();
+
+    const u = userEvent.setup();
+    await u.click(c.getByRole('switch', { name: 'Automatic practice trading' }));
+    const confirm = c.getByRole('group', { name: 'Switch on automatic practice trading' });
+    expect(within(confirm).getByText(/each risking 1 % of the free balance/)).toBeTruthy();
+    expect(find('POST', '/api/v1/practice/automatic/on')).toHaveLength(0);
+    await u.click(within(confirm).getByRole('button', { name: 'Keep it off' }));
+    expect(find('POST', '/api/v1/practice/automatic/on')).toHaveLength(0);
+
+    await u.click(c.getByRole('switch', { name: 'Automatic practice trading' }));
+    await u.click(c.getByRole('button', { name: 'Switch on' }));
+    await waitFor(() => expect(c.getByText('On')).toBeTruthy());
+    expect(find('POST', '/api/v1/practice/automatic/on')[0]!.body).toEqual({ version: 0 });
+    expect(screen.getByText('Automatic practice trading is on.')).toBeTruthy();
+    expect(c.getByRole('button', { name: 'Stop and cancel its orders' })).toBeTruthy();
+  });
+
+  it('checks the rules before saving them against the version it read, and says when they changed elsewhere', async () => {
+    let conflict = true;
+    const { find } = api({
+      extra: {
+        'PUT /api/v1/practice/automatic': (r: ApiRequest) =>
+          conflict
+            ? json(409, {
+                type: 'about:blank',
+                title: 'Conflict',
+                status: 409,
+                code: 'CONFLICT',
+                detail: 'stale',
+              })
+            : { ...STRATEGY, version: 1, rules: (r.body as { rules: PracticeStrategy['rules'] }).rules },
+      },
+    });
+    await practicePage();
+    const c = await waitFor(() => card());
+    const u = userEvent.setup();
+    const risk = c.getByLabelText('Risk per trade (% of the free balance)');
+    await u.clear(risk);
+    await u.type(risk, '3');
+    for (const p of [
+      'Double liquidity trap',
+      'Equal highs or lows near a POI',
+      'Higher-timeframe order block',
+      'Sweep outside, fill inside',
+    ])
+      await u.click(c.getByLabelText(p));
+    // Unsaved changes: it cannot be switched on with them.
+    expect(c.getByRole<HTMLButtonElement>('switch', { name: 'Automatic practice trading' }).disabled).toBe(
+      true,
+    );
+    await u.click(c.getByRole('button', { name: 'Save rules' }));
+    expect(c.getByText('From 0.1 to 2.')).toBeTruthy();
+    expect(c.getByText('Choose at least one pattern.')).toBeTruthy();
+    expect(risk.getAttribute('aria-invalid')).toBe('true');
+    expect(find('PUT', '/api/v1/practice/automatic')).toHaveLength(0);
+
+    await u.clear(risk);
+    await u.type(risk, '0.5');
+    await u.click(c.getByLabelText('Higher-timeframe order block'));
+    await u.click(c.getByLabelText('BTC/USDT'));
+    await u.click(c.getByRole('button', { name: 'Save rules' }));
+    await waitFor(() => expect(c.getByText('Changed in another tab or device')).toBeTruthy());
+
+    conflict = false;
+    await u.click(c.getByRole('button', { name: 'Save rules' }));
+    await waitFor(() => expect(screen.getByText('Automatic trading rules saved.')).toBeTruthy());
+    expect(find('PUT', '/api/v1/practice/automatic').at(-1)!.body).toEqual({
+      version: 0,
+      rules: {
+        ...DEFAULT_AUTO_RULES,
+        instrumentIds: [BTC_BINANCE.id],
+        patterns: ['htf_order_block'],
+        riskPct: 0.5,
+      },
+    });
+  });
+
+  it('stops after confirming, cancelling its working orders; labels them Automatic (16.3, 16.7)', async () => {
+    const auto = order(30, { source: 'auto', setupId: SETUP_ID });
+    const { find } = api({
+      open: [auto],
+      extra: {
+        'GET /api/v1/practice/automatic': { ...STRATEGY, enabled: true, version: 4 },
+        'POST /api/v1/practice/automatic/stop': () => json(202, { ...STRATEGY, enabled: false, version: 5 }),
+      },
+    });
+    await practicePage();
+    await waitFor(() => expect(openTable().getByText('Automatic')).toBeTruthy());
+    const c = card();
+    const u = userEvent.setup();
+    await u.click(await c.findByRole('button', { name: 'Stop and cancel its orders' }));
+    const confirm = c.getByRole('group', { name: 'Stop automatic practice trading' });
+    expect(within(confirm).getByText(/its working order is cancelled/)).toBeTruthy();
+    expect(find('POST', '/api/v1/practice/automatic/stop')).toHaveLength(0);
+    await u.click(within(confirm).getByRole('button', { name: 'Stop it' }));
+    await waitFor(() => expect(c.getByText('Stopping')).toBeTruthy());
+    expect(c.getByText(/What it bought stays in your practice balance/)).toBeTruthy();
+    expect(find('POST', '/api/v1/practice/automatic/stop')).toHaveLength(1);
+  });
+
+  it('shows today’s figures, the pause, and every decision with its reason, page by page (16.1, 16.2)', async () => {
+    const until = Date.UTC(2026, 10, 15);
+    api({
+      extra: {
+        'GET /api/v1/practice/automatic': {
+          ...STRATEGY,
+          enabled: true,
+          version: 2,
+          pausedUntil: until,
+          today: { orders: 3, result: '-310.5', asset: 'USDT' },
+        },
+        'GET /api/v1/practice/automatic/decisions': (r: ApiRequest) =>
+          r.url.searchParams.get('cursor')
+            ? {
+                items: [decision(1, { outcome: 'cancelled', reason: 'stopped', orderId: id(31) })],
+                nextCursor: null,
+              }
+            : {
+                items: [
+                  decision(4, { outcome: 'skipped', reason: 'paused' }),
+                  decision(3, { outcome: 'refused', reason: 'data_delayed', orderId: id(32) }),
+                  decision(2, {
+                    outcome: 'placed',
+                    reason: null,
+                    orderId: id(33),
+                    order: { quantity: '0.5', limitPrice: '99', stop: '97', target: '105' },
+                  }),
+                ],
+                nextCursor: 'next',
+              },
+      },
+    });
+    await practicePage();
+    const c = await waitFor(() => card());
+    await waitFor(() => expect(c.getByText('Paused for today', { selector: 'span' })).toBeTruthy());
+    expect(c.getByText(/3 automatic buys placed/)).toBeTruthy();
+    expect(c.getByText('−310.5 USDT')).toBeTruthy();
+    const log = within(await c.findByRole('table', { name: 'Automatic trading decisions, newest first' }));
+    expect(log.getByText('Paused for the day: the daily loss limit was reached.')).toBeTruthy();
+    expect(log.getByText(/The order checks refused it/)).toBeTruthy();
+    expect(log.getByText('Buy 0.5 at 99, stop 97, target 105')).toBeTruthy();
+    expect(log.getByText('Matched your rules.')).toBeTruthy();
+    const u = userEvent.setup();
+    await u.click(c.getByRole('button', { name: 'Show older decisions' }));
+    await waitFor(() => expect(log.getByText('You stopped automatic trading.')).toBeTruthy());
+  });
+
+  it('reads its state again and announces a placed order when the practice channel says so', async () => {
+    let calls = 0;
+    api({
+      extra: {
+        'GET /api/v1/practice/automatic': () => {
+          calls += 1;
+          return {
+            ...STRATEGY,
+            enabled: true,
+            version: 1,
+            today: { orders: calls > 1 ? 1 : 0, result: '0', asset: 'USDT' },
+          };
+        },
+      },
+    });
+    const { server } = await practicePage();
+    const c = await waitFor(() => card());
+    await waitFor(() => expect(c.getByText(/0 automatic buys placed/)).toBeTruthy());
+    await waitFor(() => expect(server.subscribed()).toContain(channels.practice));
+    server.push(channels.practice, 'practice.automatic', {
+      event: 'decision',
+      decision: decision(9, {
+        outcome: 'placed',
+        reason: null,
+        orderId: id(40),
+        order: { quantity: '1', limitPrice: '99', stop: '97', target: '105' },
+      }),
+    });
+    await waitFor(() => expect(c.getByText(/1 automatic buy placed/)).toBeTruthy());
+    expect(screen.getByText('Automatic practice buy placed on BTC/USDT. Simulated.')).toBeTruthy();
   });
 });

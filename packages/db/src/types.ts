@@ -112,6 +112,9 @@ export interface Database {
   'trading.ledger': TradingLedgerTable;
   'trading.journal': TradingJournalTable;
   'trading.broker_state': TradingBrokerStateTable;
+  'trading.strategies': TradingStrategiesTable;
+  'trading.auto_decisions': TradingAutoDecisionsTable;
+  'trading.auto_days': TradingAutoDaysTable;
 }
 
 // ---------------------------------------------------------------- market (data model §4)
@@ -442,7 +445,7 @@ export interface TradingOrdersTable {
   reserved: ColumnType<string, string | undefined, string>;
   parent_id: string | null;
   oco_group: string | null;
-  source: 'manual' | 'setup';
+  source: 'manual' | 'setup' | 'auto';
   setup_id: string | null;
   underlying_closed: Generated<boolean>;
   reset_epoch: number;
@@ -488,15 +491,60 @@ export interface TradingLedgerTable {
 export interface TradingJournalTable {
   seq: Generated<string>;
   at: Generated<Date>;
-  kind: 'load' | 'place' | 'cancel' | 'reset' | 'trade';
+  kind: 'load' | 'place' | 'cancel' | 'reset' | 'trade' | 'setup' | 'strategy';
   input: ColumnType<Json, Json, Json>;
   fills: ColumnType<string[], string[] | undefined, string[]>;
+  /** The auto-trader's digest lines (migration 0013). */
+  decisions: ColumnType<string[], string[] | undefined, string[]>;
+}
+
+/** A user's automatic practice trading rules (migration 0013, ADR 022). */
+export interface TradingStrategiesTable {
+  id: string;
+  user_id: string;
+  enabled: Generated<boolean>;
+  rules: ColumnType<Json, Json, Json>;
+  version: Generated<number>;
+  paused_until: Date | null;
+  updated_by: string | null;
+  created_at: Generated<Date>;
+  updated_at: Generated<Date>;
+}
+
+/** Every confirmed setup the auto-trader considered for a user (migration 0013). */
+export interface TradingAutoDecisionsTable {
+  id: string;
+  strategy_id: string;
+  user_id: string;
+  setup_id: string;
+  /** The setup's analysis run: it names the ruleset version. */
+  run_id: string;
+  instrument_id: string;
+  pattern: string;
+  outcome: 'placed' | 'skipped' | 'refused' | 'cancelled';
+  reason: string | null;
+  order_id: string | null;
+  strategy_version: number;
+  decided_at: Date;
+  created_at: Generated<Date>;
+}
+
+/** One account's automatic trading on one UTC day (migration 0013). */
+export interface TradingAutoDaysTable {
+  account_id: string;
+  /** The UTC day, `YYYY-MM-DD`. */
+  day: string;
+  orders: Generated<number>;
+  result: ColumnType<string, string | undefined, string>;
+  updated_at: Generated<Date>;
 }
 
 export interface TradingBrokerStateTable {
   id: number;
   lease_epoch: ColumnType<string, string | number | undefined, string | number>;
   commands_cursor: Generated<string>;
+  /** Its position in an:events (migration 0013). */
+  setups_cursor: Generated<string>;
   trade_cursors: ColumnType<
     Record<string, string>,
     Record<string, string> | undefined,
@@ -800,6 +848,10 @@ export type NewTradingOrder = Insertable<TradingOrdersTable>;
 export type TradingFillRow = Selectable<TradingFillsTable>;
 export type NewTradingFill = Insertable<TradingFillsTable>;
 export type NewTradingLedgerEntry = Insertable<TradingLedgerTable>;
+export type TradingStrategyRow = Selectable<TradingStrategiesTable>;
+export type TradingAutoDecisionRow = Selectable<TradingAutoDecisionsTable>;
+export type NewTradingAutoDecision = Insertable<TradingAutoDecisionsTable>;
+export type TradingAutoDayRow = Selectable<TradingAutoDaysTable>;
 
 export type UserRow = Selectable<UsersTable>;
 export type NewUser = Insertable<UsersTable>;

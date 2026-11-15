@@ -106,21 +106,36 @@ export type AlertSource =
       processedAt: number;
     }
   /**
-   * One of a user's practice orders (ADR 021): a buy or sell that ended with fills (`order_done`), or
-   * a stop or target that sold. Only the order's owner's rules may match it.
+   * One of a user's practice orders (ADR 021): a buy or sell that ended with fills (`order_done`), a
+   * stop or target that sold, or a buy their automatic practice trading placed (`auto_placed`, ADR
+   * 022: what it placed, at its limit price). Only the order's owner's rules may match it.
    */
   | {
       kind: 'practice';
       userId: string;
       instrument: InstrumentRef;
       at: number;
-      event: 'order_done' | 'stop_filled' | 'target_filled';
+      event: 'order_done' | 'stop_filled' | 'target_filled' | 'auto_placed';
       orderId: string;
       side: 'buy' | 'sell';
       /** What it filled, and at what average price. */
       quantity: string;
       price: string;
       /** When the analyzer read it: a fill read long after (a catch-up) is labelled late. */
+      processedAt: number;
+    }
+  /**
+   * A user's automatic practice trading paused at their daily loss limit (ADR 022), until `until`
+   * (00:00 UTC). Only its owner's rules may match it.
+   */
+  | {
+      kind: 'practice_pause';
+      userId: string;
+      at: number;
+      until: number;
+      /** The day's result of its closed trades, in `asset`. */
+      result: string;
+      asset: string;
       processedAt: number;
     };
 
@@ -142,6 +157,8 @@ export const SOURCE_OF: Readonly<Record<AlertConditionKind, AlertSourceKind>> = 
   feed_health: 'feed',
   practice_order_filled: 'practice',
   practice_exit: 'practice',
+  practice_auto_order: 'practice',
+  practice_auto_paused: 'practice_pause',
 };
 
 /** Rulebook §8 `late_detection`: processed more than 120 s after the deciding candle closed. */
@@ -158,6 +175,7 @@ export function isLate(source: AlertSource): boolean {
     case 'wall':
     case 'feed':
     case 'practice':
+    case 'practice_pause':
       return source.processedAt - source.at > LATE_AFTER_MS;
     default:
       // Tickers, the spread and the clock are evaluated as they happen.

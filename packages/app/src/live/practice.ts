@@ -1,16 +1,20 @@
 import { type QueryClient, useInfiniteQuery, useQuery, useQueryClient } from '@tanstack/react-query';
 import {
+  type AutoDecision,
   channels,
   type Page,
   PracticeAccountMessageSchema,
   type PracticeAccounts,
   PracticeAccountsSchema,
+  type PracticeAutomaticMessage,
+  PracticeAutomaticMessageSchema,
   type PracticeFill,
   PracticeFillMessageSchema,
   type PracticeOrder,
   PracticeOrderMessageSchema,
   type PracticePosition,
   PracticeSnapshotSchema,
+  PracticeStrategySchema,
 } from '@cip/contracts';
 import { applyAccount, applyOrder, isLiveOrder } from '../lib/practice.js';
 import { useSession } from '../session.js';
@@ -28,6 +32,9 @@ export const PRACTICE_KEYS = {
   done: ['practice', 'orders', 'done'],
   fills: ['practice', 'fills'],
   positions: ['practice', 'positions'],
+  /** Automatic practice trading (ADR 022); its decision log sits under it. */
+  automatic: ['practice', 'automatic'],
+  decisions: ['practice', 'automatic', 'decisions'],
 } as const;
 
 const PAGE = 50;
@@ -92,7 +99,31 @@ export function usePracticeFills() {
   });
 }
 
-/** Puts an order into the open orders (or takes it out once finished). */
+/** The user's automatic practice trading: rules, switch, pause and today's figures. */
+export function useAutoStrategy() {
+  const { client } = useSession();
+  return useQuery({
+    queryKey: PRACTICE_KEYS.automatic,
+    queryFn: async () =>
+      PracticeStrategySchema.parse(await client.request<unknown>('GET', '/api/v1/practice/automatic')),
+  });
+}
+
+/** Every setup it considered, newest first. */
+export function useAutoDecisions() {
+  const { client } = useSession();
+  return useInfiniteQuery({
+    queryKey: PRACTICE_KEYS.decisions,
+    initialPageParam: null as string | null,
+    queryFn: ({ pageParam }) =>
+      client.request<Page<AutoDecision>>(
+        'GET',
+        `/api/v1/practice/automatic/decisions?limit=20${pageParam ? `&cursor=${encodeURIComponent(pageParam)}` : ''}`,
+      ),
+    getNextPageParam: (last) => last.nextCursor,
+  });
+}
+
 /**
  * The newest copy of every order this client has seen, finished ones included. The answer to a
  * request (placing or cancelling) can arrive after the channel has already said how the order ended:
@@ -140,10 +171,14 @@ export function useApplyOrder() {
 }
 
 /**
- * Follows the `practice` channel for as long as the page is shown. `onFill` hears each new fill
- * (not those replayed after a reconnect), for an announcement.
+ * Follows the `practice` channel for as long as the page is shown. `onFill` hears each new fill, and
+ * `onAutomatic` each automatic trading decision, pause or stop (not those replayed after a
+ * reconnect), for an announcement.
  */
-export function usePracticeChannel(onFill?: (fill: PracticeFill, order: PracticeOrder) => void): void {
+export function usePracticeChannel(
+  onFill?: (fill: PracticeFill, order: PracticeOrder) => void,
+  onAutomatic?: (message: PracticeAutomaticMessage) => void,
+): void {
   const queryClient = useQueryClient();
   const applyOrderUpdate = useApplyOrder();
   useChannel(channels.practice, {
@@ -155,7 +190,12 @@ export function usePracticeChannel(onFill?: (fill: PracticeFill, order: Practice
       );
       remember(queryClient, snap.data.openOrders);
       queryClient.setQueryData<PracticeOrder[]>(PRACTICE_KEYS.open, snap.data.openOrders);
-      for (const key of [PRACTICE_KEYS.done, PRACTICE_KEYS.fills, PRACTICE_KEYS.positions])
+      for (const key of [
+        PRACTICE_KEYS.done,
+        PRACTICE_KEYS.fills,
+        PRACTICE_KEYS.positions,
+        PRACTICE_KEYS.automatic,
+      ])
         void queryClient.invalidateQueries({ queryKey: key });
     },
     onMessage: (message, meta) => {
@@ -175,6 +215,12 @@ export function usePracticeChannel(onFill?: (fill: PracticeFill, order: Practice
         queryClient.setQueryData<PracticeAccounts>(PRACTICE_KEYS.account, (prev) =>
           prev ? { ...prev, accounts: applyAccount(prev.accounts, m.data.account) } : prev,
         );
+      } else if (message.type === 'practice.automatic') {
+        const m = PracticeAutomaticMessageSchema.safeParse(message.data);
+        if (!m.success) return;
+        // Its state, today's figures and the decision log: read again.
+        void queryClient.invalidateQueries({ queryKey: PRACTICE_KEYS.automatic });
+        if (!meta.resync) onAutomatic?.(m.data);
       }
     },
   });

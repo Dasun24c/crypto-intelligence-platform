@@ -225,6 +225,16 @@ Roles: **V** viewer, **A** analyst, **Ad** admin. Every endpoint needs authentic
 > - **Audit actions**: `practice_order.placed`, `.refused` (`by`: `api` or `broker`), `.cancel_requested`, `.cancelled` (with its `cause`) and `.filled`; `practice_account.reset_requested` and `.reset`.
 > - **Rate limit**: 5 orders per second per user (a token bucket in Redis); at most 200 open orders per account, attached stops and targets included.
 
+> **As implemented in Phase 16**, automatic practice trading ([ADR 022](../adr/022-automatic-practice-trading.md)). All need `practice.own` and reach only the caller's own rules:
+>
+> - `GET /practice/automatic` → `PracticeStrategy`: `enabled`, `rules`, `version`, `pausedUntil` (while paused), `updatedAt`, and `today` (`orders`, `result`, `asset`: automatic buys since 00:00 UTC and the result of the automatic trades closed, on the rules' account). Before the first save: the recommended rules, off, version 0.
+> - `PUT /practice/automatic` (`{ version, rules }`) → `200` with the new state; `409 CONFLICT` when the version moved on; `400` for rules out of bounds or pairs that are not practice pairs on the rules' venue. Audited as `practice_auto.rules_changed` (with the rules before and after).
+> - `POST /practice/automatic/on` (`{ version }`: switching on confirms the rules the user saw) → `200`, `409` when they changed; it opens the practice accounts on first use. `POST /practice/automatic/off` → `200`; already off changes nothing. Audited as `practice_auto.switched_on` and `.switched_off`.
+> - `POST /practice/automatic/stop` → `200` once its automatic orders are cancelled, or `202` while the broker has not finished (it waits up to 2 s). Audited as `practice_auto.stopped`, with the number of working orders.
+> - `GET /practice/automatic/decisions?cursor&limit` → `Page<AutoDecision>`, newest first: the setup, pair, pattern, outcome, reason, the order (its size, limit, stop and target) and the rules' version.
+> - Every change appends a `strategy` command (`stop_auto` for the stop) to `practice:commands`. Automatic orders appear in the order history with `source: 'auto'`; the broker audits each as `practice_order.placed` (actor `system`, with the strategy, its version, the setup and the run), and a pause as `practice_auto.paused`. Order keys starting `auto:` are kept for automatic orders (`400` otherwise).
+> - The `practice` channel carries `practice.automatic`: `{ event: 'decision', decision }`, `{ event: 'paused', at, until, result, asset }` or `{ event: 'stopped', cancelled }`. Two alert kinds read it: `practice_auto_order` (a buy placed) and `practice_auto_paused`.
+
 ### System and administration
 
 | Method | Path | Role | Returns |

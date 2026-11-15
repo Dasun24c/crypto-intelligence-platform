@@ -331,8 +331,8 @@ describe('conditions (criterion 8.1, unit)', () => {
   });
 
   it('covers every condition kind, each reading one source kind', () => {
-    // Twelve from Phase 8, and the two practice-trading kinds of Phase 14.
-    expect(Object.keys(SOURCE_OF).sort()).toHaveLength(14);
+    // Twelve from Phase 8, the two practice-trading kinds of Phase 14, and two of Phase 16.
+    expect(Object.keys(SOURCE_OF).sort()).toHaveLength(16);
   });
 });
 
@@ -714,5 +714,49 @@ describe('practice trading alerts (ADR 021)', () => {
     const onlyEth = rule({ kind: 'practice_order_filled' }, { scope: { instrumentIds: [ETH.id] } });
     expect(e.evaluate([onlyEth], practice())).toEqual([]);
     expect(e.evaluate([onlyEth], practice({ instrument: ETH }))).toHaveLength(1);
+  });
+
+  it('tell the owner when their automatic practice trading places an order (ADR 022)', () => {
+    const e = new AlertEvaluator();
+    const auto = rule({ kind: 'practice_auto_order' });
+    const placed = practice({ event: 'auto_placed', price: '99', quantity: '0.5' });
+    const [hit] = e.evaluate([auto], placed);
+    expect(hit?.match).toMatchObject({
+      dedupeKey: 'practice:order-1:auto',
+      subject: 'order-1',
+      title: 'BTC · Binance BTC/USDT: automatic practice buy placed',
+      body: 'Your automatic practice trading placed a limit buy of 0.5 at 99, with its stop and target, on a setup that matched your rules. Practice trading: simulated, no real money.',
+      instrumentId: BTC.id,
+    });
+    // Its fills are ordinary practice fills; other owners' orders are not theirs.
+    expect(e.evaluate([auto], practice())).toEqual([]);
+    expect(e.evaluate([rule({ kind: 'practice_order_filled' })], placed)).toEqual([]);
+    expect(e.evaluate([auto], practice({ event: 'auto_placed', userId: 'someone-else' }))).toEqual([]);
+  });
+
+  it('tell the owner once when the daily loss limit pauses it', () => {
+    const e = new AlertEvaluator();
+    const paused = rule({ kind: 'practice_auto_paused' }, { scope: { instrumentIds: [ETH.id] } });
+    const until = Date.UTC(2026, 10, 17);
+    const source: AlertSource = {
+      kind: 'practice_pause',
+      userId: 'owner-1',
+      at: T,
+      until,
+      result: '-310.5',
+      asset: 'USDT',
+      processedAt: T + LATE_AFTER_MS + 1,
+    };
+    const [hit] = e.evaluate([paused], source);
+    expect(hit?.match).toMatchObject({
+      dedupeKey: `practice-pause:owner-1:${until}`,
+      subject: 'owner-1',
+      title: 'Automatic practice trading paused',
+      body: "Today's closed automatic trades come to -310.5 USDT, which reaches your daily loss limit. It places nothing more until 00:00 UTC. Practice trading: simulated, no real money.",
+      instrumentId: null,
+      late: true,
+    });
+    expect(e.evaluate([paused], { ...source, userId: 'someone-else' })).toEqual([]);
+    expect(e.evaluate([rule({ kind: 'practice_auto_order' })], source)).toEqual([]);
   });
 });

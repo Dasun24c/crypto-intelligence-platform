@@ -35,8 +35,8 @@ This proposal adds trading in stages, so each stage can be judged on what the on
 
 These keep the platform a tool for analysis and education, even with order screens.
 
-1. **A person places every order.** One order at a time, from the order ticket, after a confirmation step. A protective stop or target that the person attaches to their order is part of that order; the platform only carries it out.
-2. **Nothing trades automatically.** Setups, alerts, the AI and scheduled jobs never place, change or cancel an order. A setup can fill in the ticket, and the person reviews and submits it. There is no "auto-trade", no copy trading and no strategy that runs by itself.
+1. **A person places every order.** One order at a time, from the order ticket, after a confirmation step. A protective stop or target that the person attaches to their order is part of that order; the platform only carries it out. *Amended 2026-11-15 by [proposal 002](002-automatic-practice-trading.md): a person places every manual order; automatic practice orders follow a user's own rules, switched on by them.*
+2. **Nothing trades automatically.** Setups, alerts, the AI and scheduled jobs never place, change or cancel an order. A setup can fill in the ticket, and the person reviews and submits it. There is no "auto-trade", no copy trading and no strategy that runs by itself. *Amended 2026-11-15 by [proposal 002](002-automatic-practice-trading.md): nothing trades automatically except a user's own automatic practice trading, under their rules and limits, on practice balances only. No copy trading, and the AI never decides an order.*
 3. **The AI stays out of orders.** The order ticket never opens from an AI analysis. The AI never sees anyone's orders or balances, and never suggests an order.
 4. **Analysis stays educational.** "Educational analysis — not financial advice" stays wherever setup levels appear. Practice and test results are labelled as such, and never presented as expected performance.
 5. **Money never moves.** No deposits, withdrawals or transfers, in any stage. Keys that allow withdrawals are refused.

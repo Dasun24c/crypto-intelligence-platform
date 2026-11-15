@@ -3,6 +3,9 @@ import type { Response } from 'express';
 import type { Kysely } from 'kysely';
 import { z } from 'zod';
 import {
+  type AutoDecision,
+  AutoDecisionsQuerySchema,
+  AutoSwitchOnRequestSchema,
   type Page,
   PlacePracticeOrderRequestSchema,
   type PracticeAccount,
@@ -15,12 +18,16 @@ import {
   PracticeResetRequestSchema,
   type PracticeSettings,
   PracticeSettingsSchema,
+  type PracticeStrategy,
+  type UpdateAutoRulesRequest,
+  UpdateAutoRulesRequestSchema,
 } from '@cip/contracts';
 import type { Database } from '@cip/db';
 import { AuditService } from '../audit/audit.service.js';
 import { Access, type ApiRequest, clientIp, userAgent } from '../common/access.js';
 import { ZodPipe } from '../common/zod.pipe.js';
 import { CLOCK, type Clock, DB } from '../tokens.js';
+import { AutomaticService } from './automatic.service.js';
 import { PRACTICE_SETTINGS_KEY, PracticeRepository } from './practice.repository.js';
 import { PracticeService, type RequestMeta } from './practice.service.js';
 
@@ -112,6 +119,64 @@ export class PracticeController {
   @Get('positions')
   positions(@Req() req: ApiRequest): Promise<PracticePosition[]> {
     return this.repo.positions(req.user!.id);
+  }
+}
+
+/**
+ * Automatic practice trading (REQUIREMENTS §11 revision 5, ADR 022): the caller's own rules, switch,
+ * stop button and decision log. Every role has it for their own practice account only. It places
+ * practice orders only: nothing here reaches an exchange.
+ */
+@Controller('practice/automatic')
+@Access('practice.own')
+export class PracticeAutomaticController {
+  constructor(private readonly automatic: AutomaticService) {}
+
+  @Get()
+  get(@Req() req: ApiRequest): Promise<PracticeStrategy> {
+    return this.automatic.get(req.user!.id);
+  }
+
+  /** 200 with the saved rules; 409 when they changed since they were read. */
+  @Put()
+  update(
+    @Body(new ZodPipe(UpdateAutoRulesRequestSchema)) body: UpdateAutoRulesRequest,
+    @Req() req: ApiRequest,
+  ): Promise<PracticeStrategy> {
+    return this.automatic.update(req.user!, body, meta(req));
+  }
+
+  /** Switches it on, confirming the rules at `version`; 409 when they changed since. */
+  @Post('on')
+  @HttpCode(200)
+  on(
+    @Body(new ZodPipe(AutoSwitchOnRequestSchema)) body: z.infer<typeof AutoSwitchOnRequestSchema>,
+    @Req() req: ApiRequest,
+  ): Promise<PracticeStrategy> {
+    return this.automatic.switchOn(req.user!, body.version, meta(req));
+  }
+
+  @Post('off')
+  @HttpCode(200)
+  off(@Req() req: ApiRequest): Promise<PracticeStrategy> {
+    return this.automatic.switchOff(req.user!, meta(req));
+  }
+
+  /** 200 once its automatic orders are cancelled, or 202 while the broker has not applied it yet. */
+  @Post('stop')
+  @HttpCode(200)
+  async stop(@Req() req: ApiRequest, @Res({ passthrough: true }) res: Response): Promise<PracticeStrategy> {
+    const { strategy, settled } = await this.automatic.stop(req.user!, meta(req));
+    if (!settled) res.status(202);
+    return strategy;
+  }
+
+  @Get('decisions')
+  decisions(
+    @Query(new ZodPipe(AutoDecisionsQuerySchema)) q: z.infer<typeof AutoDecisionsQuerySchema>,
+    @Req() req: ApiRequest,
+  ): Promise<Page<AutoDecision>> {
+    return this.automatic.decisions(req.user!.id, q);
   }
 }
 

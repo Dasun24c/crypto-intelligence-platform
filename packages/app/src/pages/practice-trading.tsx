@@ -39,6 +39,7 @@ import {
 import { ApiError } from '../api/client.js';
 import { useInstruments } from '../api/queries.js';
 import { PracticeBanner } from '../components/practice-banner.js';
+import { AutomaticTradingCard } from './practice-automatic.js';
 import { formatDecimal, stepDecimals } from '../lib/decimal.js';
 import { formatInstant } from '../lib/format.js';
 import { VENUE_LABEL } from '../lib/market.js';
@@ -100,7 +101,8 @@ function describeOrder(o: PracticeOrder, i: Instrument | undefined): string {
 /**
  * Practice trading (Phase 14, REQUIREMENTS §11): buying and selling with practice balances. Orders are
  * simulated by the platform and fill from the venues' live trades and order books; nothing reaches an
- * exchange, and a person places every order (TRD-05).
+ * exchange. A person places every manual order (TRD-05); automatic practice trading (Phase 16, TRD-09)
+ * places orders only under the user's own rules, once they switch it on.
  */
 export function PracticeTradingPage() {
   const params: unknown = useSearch({ strict: false });
@@ -114,12 +116,34 @@ export function PracticeTradingPage() {
     [instruments.data],
   );
   const byId = useMemo(() => new Map((instruments.data ?? []).map((i) => [i.id, i])), [instruments.data]);
-  usePracticeChannel((fill, order) => {
-    const i = byId.get(fill.instrumentId);
-    setAnnouncement(
-      `Practice ${fill.side} ${order.status === 'filled' ? 'filled' : 'partly filled'}: ${formatDecimal(fill.quantity)} ${i?.base ?? ''} at ${formatDecimal(fill.price)}. Simulated.`,
-    );
-  });
+  const openOrders = useOpenPracticeOrders();
+  usePracticeChannel(
+    (fill, order) => {
+      const i = byId.get(fill.instrumentId);
+      setAnnouncement(
+        `Practice ${fill.side} ${order.status === 'filled' ? 'filled' : 'partly filled'}: ${formatDecimal(fill.quantity)} ${i?.base ?? ''} at ${formatDecimal(fill.price)}. Simulated.`,
+      );
+    },
+    (m) => {
+      if (m.event === 'decision' && m.decision.outcome === 'placed') {
+        const i = byId.get(m.decision.instrumentId);
+        setAnnouncement(
+          `Automatic practice buy placed on ${i ? `${i.base}/${i.quote}` : 'a pair'}. Simulated.`,
+        );
+      } else if (m.event === 'paused')
+        setAnnouncement(
+          'Automatic practice trading paused until 00:00 UTC: the daily loss limit was reached.',
+        );
+    },
+  );
+  const venues = useMemo(
+    () =>
+      VENUES.filter(
+        (v) =>
+          tradeable.some((i) => i.venue === v) && (account.data?.accounts ?? []).some((a) => a.venue === v),
+      ),
+    [tradeable, account.data],
+  );
 
   return (
     <div className="max-w-6xl space-y-6 border-t-4 border-practice pt-4" data-practice="">
@@ -155,6 +179,12 @@ export function PracticeTradingPage() {
               onAnnounce={setAnnouncement}
             />
           </div>
+          <AutomaticTradingCard
+            instruments={tradeable}
+            venues={venues}
+            openOrders={openOrders.data ?? []}
+            onAnnounce={setAnnouncement}
+          />
           <OpenOrdersCard byId={byId} onAnnounce={setAnnouncement} />
           <PositionsCard byId={byId} instruments={instruments.data ?? []} />
           <HistoryCard byId={byId} />
@@ -817,6 +847,11 @@ function OpenOrdersCard({
                     <Td>
                       {ORDER_TYPE_LABEL[o.type]}
                       {o.parentId ? <span className="text-fg-muted"> (attached)</span> : null}
+                      {o.source === 'auto' ? (
+                        <Badge tone="info" className="ml-1">
+                          Automatic
+                        </Badge>
+                      ) : null}
                     </Td>
                     <Td className="text-right font-mono">{formatDecimal(o.quantity)}</Td>
                     <Td className="text-right font-mono">{priceOf(o, i)}</Td>
@@ -1003,6 +1038,11 @@ function HistoryCard({ byId }: { byId: ReadonlyMap<string, Instrument> }) {
                       {o.side === 'buy' ? 'Buy' : 'Sell'} {formatDecimal(o.quantity)},{' '}
                       {ORDER_TYPE_LABEL[o.type].toLowerCase()}
                       {o.source === 'setup' ? <Badge className="ml-1">From a setup</Badge> : null}
+                      {o.source === 'auto' ? (
+                        <Badge tone="info" className="ml-1">
+                          Automatic
+                        </Badge>
+                      ) : null}
                     </Td>
                     <Td className="text-right font-mono">{formatDecimal(o.filledQuantity)}</Td>
                     <Td className="text-right font-mono">

@@ -56,6 +56,7 @@ No application code was written in this phase, as the requirements ask.
 | # | Proposal | Status |
 |---|---|---|
 | 001 | [Buying and selling](../proposals/001-trading.md): practice trading as a new Phase 14, then exchange test networks as Phase 15. Real money stays out of the initial release. | Approved 2026-11-13 with the recommended choice for each of T1–T7, and applied: REQUIREMENTS.md revision 4 and these documents. Phase 14 follows Phase 8; Phase 15 is decided after Phase 14. |
+| 002 | [Automatic practice trading](../proposals/002-automatic-practice-trading.md): a user's own rules place practice orders on confirmed bullish setups, within their limits, as a new Phase 16. Practice balances only; the AI never decides an order. | Approved 2026-11-15 with the recommended choice for each of A1–A9, and applied: REQUIREMENTS.md revision 5 and these documents. Phase 16 follows Phase 14, before Phase 9. |
 
 ## Next step
 

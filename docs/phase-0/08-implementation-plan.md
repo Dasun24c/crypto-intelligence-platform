@@ -2,7 +2,7 @@
 
 | | |
 |---|---|
-| Status | Approved 2026-11-10 (Phase 0 sign-off, recommended defaults). Amended 2026-11-13: Phase 14 added, and Phase 15 drafted for a later decision ([proposal 001](../proposals/001-trading.md)). |
+| Status | Approved 2026-11-10 (Phase 0 sign-off, recommended defaults). Amended 2026-11-13: Phase 14 added, and Phase 15 drafted for a later decision ([proposal 001](../proposals/001-trading.md)). Amended 2026-11-15: Phase 16 added ([proposal 002](../proposals/002-automatic-practice-trading.md)). |
 | Date | 2026-11-09 |
 | Rule | One phase at a time. A phase starts only after the previous phase's acceptance report is approved. |
 
@@ -33,6 +33,7 @@ Requirement IDs (MD-, GLD-, TA-, SMC-, AI-, VIZ-, UI-, WH-, AL-, WD-, SEC-, ENG-
 | 7 | Charts, Setup Scanner and calendar | L | Liquidity Map, Setup Scanner, economic calendar, blackout windows |
 | 8 | Alerts and notifications | M | Rules, inbox, web and desktop notifications |
 | 14 | Practice trading | L | Buying and selling with simulated orders filled from live market data; no real money and no exchange connection |
+| 16 | Automatic practice trading | M | A user's own rules place practice orders on confirmed setups, within their limits; practice balances only |
 | 9 | AI intelligence | M | Grok analysis with grounding validation and budget control |
 | 10 | 3D visualization | M | Brain driven by real system activity |
 | 11 | Whale Tracker | M | Exchange-flow view and on-chain monitoring |
@@ -42,7 +43,7 @@ Requirement IDs (MD-, GLD-, TA-, SMC-, AI-, VIZ-, UI-, WH-, AL-, WD-, SEC-, ENG-
 
 Sizes are relative (M ≈ 1×, L ≈ 1.5–2×, XL ≈ 2.5–3×). Calendar estimates come with the Phase 1 plan, once team size is known.
 
-**Order of work (amended 2026-11-13).** The rows above are in the order they are built: 0–8, then 14, then 9–12, then 15 if approved, then 13. Phase numbers are names: the new phases got new numbers so that nothing already written had to be renumbered. Phase 13 stays last so that its security review, load test and soak test cover trading.
+**Order of work (amended 2026-11-13 and 2026-11-15).** The rows above are in the order they are built: 0–8, then 14, then 16, then 9–12, then 15 if approved, then 13. Phase numbers are names: the new phases got new numbers so that nothing already written had to be renumbered. Phase 13 stays last so that its security review, load test and soak test cover trading.
 
 ---
 
@@ -227,6 +228,31 @@ Built after Phase 8 and before Phase 9 ([proposal 001](../proposals/001-trading.
 | 14.11 | NFR-16 is measured and met | NFR-16 |
 | 14.12 | axe finds no serious violations on the new page, and keyboard navigation works, including the confirmation step | NFR-10 |
 
+## Phase 16 — Automatic practice trading
+
+Built after Phase 14 is accepted and before Phase 9 ([proposal 002](../proposals/002-automatic-practice-trading.md), approved 2026-11-15). Practice balances only: no real money, no exchange connection, and the AI never decides an order.
+
+**Scope**
+
+- ADR 022: the auto-trader, its decisions and its journal.
+- An auto-trader inside the broker: setup transitions become a third input beside the commands and live trades, and every decision is journalled, so a replay gives the same decisions and fills.
+- A pure decider in `packages/paper-engine`: a confirmed bullish setup that matches the user's rules (pairs, patterns, minimum checklist score, minimum reward for the risk at target 1) and limits (open trades, one per pair, orders per day, daily loss) becomes a limit buy at the entry, sized by the position-size calculator, with a stop at the invalidation and a target at target 1. The buy is cancelled if the setup expires or is invalidated first.
+- Per-user rules (`trading.strategies`) and the decision log (`trading.auto_decisions`); automatic orders marked `source = 'auto'`; a database policy that lets the broker insert only such orders, for users whose automatic trading is on.
+- The "Automatic trading (simulated)" card: the switch with a confirmation, the rules, today's orders and result against the daily limit, the decision log, and a stop button.
+- Two alert kinds: automatic order placed, and automatic trading paused.
+
+| # | Criterion | Covers |
+|---|---|---|
+| 16.1 | With automatic trading on, a confirmed bullish setup that matches the rules becomes a practice limit buy with its stop and target, sized by the calculator; one that doesn't is logged as skipped with the reason (end to end, on live or replayed data) | TRD-09, TRD-10 |
+| 16.2 | The limits hold: open trades, one per pair, orders per day, and the daily loss pause (unit and property tests) | TRD-09 |
+| 16.3 | The stop button switches it off and cancels every open automatic order within 5 s | TRD-09 |
+| 16.4 | Nothing is placed for a user who hasn't switched it on, and nothing but the broker can place an automatic order (database policy and dependency rule) | TRD-05 |
+| 16.5 | A buy is cancelled when its setup expires or is invalidated before it fills | TRD-09 |
+| 16.6 | Replaying recorded setups and market data gives the same decisions and fills (digest) | TRD-11 |
+| 16.7 | Every automatic order is labelled "Automatic", audited with its setup and rules version, and raises an alert; rule changes are audited | TRD-10 |
+| 16.8 | NFR-17 is measured and met | NFR-17 |
+| 16.9 | The new card carries the practice banner, axe finds no serious violations, and it works from the keyboard, the switch's confirmation included | TRD-06, NFR-10 |
+
 ## Phase 9 — AI intelligence
 
 **Scope**
@@ -287,7 +313,7 @@ Built after Phase 8 and before Phase 9 ([proposal 001](../proposals/001-trading.
 
 ## Phase 15 — Exchange test networks (if approved)
 
-**Draft.** Built only if you approve it after Phase 14 is accepted (decision T5 in [proposal 001](../proposals/001-trading.md)). Its requirements (TRD-09 onwards) and final criteria are written then.
+**Draft.** Built only if you approve it after Phase 14 is accepted (decision T5 in [proposal 001](../proposals/001-trading.md)). Its requirements (TRD-12 onwards, since TRD-09 to TRD-11 went to Phase 16) and final criteria are written then.
 
 **Scope**
 
@@ -341,6 +367,7 @@ Built after Phase 8 and before Phase 9 ([proposal 001](../proposals/001-trading.
 | History of analyses, signals, setup states and outcomes | 6.2, 6.5, 9.6, 12.1 |
 | Configurable alerts | 8.1–8.6 |
 | Practice buying and selling with simulated orders, labelled, without any exchange connection | 14.1–14.7, 14.10 |
+| Automatic practice trading under a user's own rules and limits, logged, labelled and audited | 16.1–16.7 |
 | Web and desktop | 1.3, 1.8, 8.2, 13.5 |
 | Recovery from network interruptions | 2.4, 2.6, 8.4 |
 | Automated tests and deployment documentation | 1.2, 13.6 |

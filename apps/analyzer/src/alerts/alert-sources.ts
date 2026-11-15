@@ -4,6 +4,7 @@ import {
   type GapOpenedEvent,
   type IndicatorPoint,
   type LargeTrade,
+  PracticeAutomaticMessageSchema,
   PracticeOrderMessageSchema,
   type SetupTransitionMessage,
   type SmcEventMessage,
@@ -222,8 +223,9 @@ export function fromMarketEvent(
 /**
  * A `practice:events` entry (ADR 021) as an alert source for the order's owner: a buy or sell that
  * ended with fills (filled, or cancelled after filling in part), or a protective stop or target that
- * sold. Orders placed or still working, fills of orders still open, and balances raise nothing; the
- * rule's dedupe key keeps each order's outcome to one alert.
+ * sold; and from automatic practice trading (ADR 022), a buy it placed, or its daily loss limit's
+ * pause. Orders placed by hand or still working, fills of orders still open, skipped setups and
+ * balances raise nothing; the rule's dedupe key keeps each outcome to one alert.
  */
 export function fromPracticeEvent(
   type: string,
@@ -232,6 +234,7 @@ export function fromPracticeEvent(
   ref: (instrumentId: string) => InstrumentRef | null,
   processedAt: number,
 ): AlertSource | null {
+  if (type === 'practice.automatic' && userId) return fromAutomatic(userId, data, ref, processedAt);
   if (type !== 'practice.order' || !userId) return null;
   const parsed = PracticeOrderMessageSchema.safeParse(data);
   if (!parsed.success) return null;
@@ -257,6 +260,43 @@ export function fromPracticeEvent(
     side: o.side,
     quantity: o.filledQuantity,
     price: o.averagePrice,
+    processedAt,
+  };
+}
+
+function fromAutomatic(
+  userId: string,
+  data: unknown,
+  ref: (instrumentId: string) => InstrumentRef | null,
+  processedAt: number,
+): AlertSource | null {
+  const parsed = PracticeAutomaticMessageSchema.safeParse(data);
+  if (!parsed.success) return null;
+  const m = parsed.data;
+  if (m.event === 'paused')
+    return {
+      kind: 'practice_pause',
+      userId,
+      at: m.at,
+      until: m.until,
+      result: m.result,
+      asset: m.asset,
+      processedAt,
+    };
+  if (m.event !== 'decision' || m.decision.outcome !== 'placed') return null;
+  const { decision } = m;
+  const instrument = ref(decision.instrumentId);
+  if (!instrument || !decision.orderId || !decision.order) return null;
+  return {
+    kind: 'practice',
+    userId,
+    instrument,
+    at: decision.decidedAt,
+    event: 'auto_placed',
+    orderId: decision.orderId,
+    side: 'buy',
+    quantity: decision.order.quantity,
+    price: decision.order.limitPrice,
     processedAt,
   };
 }

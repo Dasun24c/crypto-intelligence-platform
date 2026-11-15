@@ -65,6 +65,15 @@ export class ApiClient {
   }
 
   async request<T>(method: Method, path: string, body?: unknown): Promise<T> {
+    return (await this.requestWithStatus<T>(method, path, body)).body;
+  }
+
+  /** As `request`, with the status too: some answers differ only by it (200 done, 202 still working). */
+  async requestWithStatus<T>(
+    method: Method,
+    path: string,
+    body?: unknown,
+  ): Promise<{ status: number; body: T }> {
     let res = await this.send(method, path, body);
     if (res.status === 401 && this.accessToken !== null) {
       if (await this.refresh()) {
@@ -75,7 +84,7 @@ export class ApiClient {
       }
     }
     if (!res.ok) return ApiClient.fail(res);
-    return (res.status === 204 ? undefined : await res.json()) as T;
+    return { status: res.status, body: (res.status === 204 ? undefined : await res.json()) as T };
   }
 
   /** Calls an auth endpoint without the retry logic (login, MFA, enrolment). */

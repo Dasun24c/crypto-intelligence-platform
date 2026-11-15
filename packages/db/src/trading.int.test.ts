@@ -11,7 +11,7 @@ import {
   practiceAccounts,
   reservedBalances,
 } from './trading.js';
-import type { Database, NewTradingOrder } from './types.js';
+import type { Database, NewTradingAutoDecision, NewTradingOrder } from './types.js';
 
 /** Practice trading in the database (migration 0012, data model §10, ADR 021). */
 const BTC = '019a6f00-0000-7000-8000-000000000001';
@@ -397,5 +397,296 @@ describe('who may write what (migration 0012)', () => {
         jobs.updateTable('market.instruments').set({ min_notional: '5' }).where('id', '=', BTC).execute(),
       ),
     ).toBeUndefined();
+  });
+});
+
+describe('automatic practice trading (migration 0013)', () => {
+  const strategyId = randomUUID();
+  const SETUP = '019a6f00-0000-7000-8000-0000000000aa';
+  const decision = (extra: Partial<NewTradingAutoDecision> = {}): NewTradingAutoDecision => ({
+    id: randomUUID(),
+    strategy_id: strategyId,
+    user_id: userId,
+    setup_id: SETUP,
+    run_id: '019a6f00-0000-7000-8000-0000000000bb',
+    instrument_id: BTC,
+    pattern: 'htf_order_block',
+    outcome: 'skipped',
+    reason: 'score',
+    order_id: null,
+    strategy_version: 0,
+    decided_at: new Date(Date.UTC(2026, 10, 15, 6, 0)),
+    ...extra,
+  });
+  const auto = (extra: Partial<NewTradingOrder> = {}) =>
+    newOrder({ source: 'auto', setup_id: SETUP, ...extra });
+
+  it('lets the api keep the rules and the switch, and the broker only the pause', async () => {
+    await api
+      .insertInto('trading.strategies')
+      .values({ id: strategyId, user_id: userId, rules: { venue: 'binance' }, updated_by: userId })
+      .execute();
+    // One strategy per user.
+    expect(
+      await sqlState(
+        api
+          .insertInto('trading.strategies')
+          .values({ id: randomUUID(), user_id: userId, rules: {} })
+          .execute(),
+      ),
+    ).toBe('23505');
+    await api
+      .updateTable('trading.strategies')
+      .set({ enabled: true, rules: { venue: 'binance', riskPct: 1 }, version: 1, updated_at: new Date() })
+      .where('id', '=', strategyId)
+      .execute();
+    expect(
+      await sqlState(
+        api
+          .updateTable('trading.strategies')
+          .set({ user_id: randomUUID() })
+          .where('id', '=', strategyId)
+          .execute(),
+      ),
+    ).toBe('42501');
+    expect(
+      await sqlState(
+        api.updateTable('trading.strategies').set({ version: -1 }).where('id', '=', strategyId).execute(),
+      ),
+    ).toBe('23514');
+
+    const until = new Date(Date.UTC(2026, 10, 16));
+    await broker
+      .updateTable('trading.strategies')
+      .set({ paused_until: until, updated_at: new Date() })
+      .where('id', '=', strategyId)
+      .execute();
+    for (const change of [{ enabled: false }, { rules: {} }, { version: 9 }])
+      expect(
+        await sqlState(
+          broker.updateTable('trading.strategies').set(change).where('id', '=', strategyId).execute(),
+        ),
+      ).toBe('42501');
+    expect(
+      await sqlState(
+        broker
+          .insertInto('trading.strategies')
+          .values({ id: randomUUID(), user_id: userId, rules: {} })
+          .execute(),
+      ),
+    ).toBe('42501');
+    const row = await api
+      .selectFrom('trading.strategies')
+      .selectAll()
+      .where('id', '=', strategyId)
+      .executeTakeFirstOrThrow();
+    expect(row).toMatchObject({ enabled: true, version: 1, paused_until: until, updated_by: userId });
+    expect(row.rules).toEqual({ venue: 'binance', riskPct: 1 });
+    // The pause is the daily loss limit's, the broker's alone.
+    expect(
+      await sqlState(
+        api
+          .updateTable('trading.strategies')
+          .set({ paused_until: null })
+          .where('id', '=', strategyId)
+          .execute(),
+      ),
+    ).toBe('42501');
+  });
+
+  it('lets only the broker store automatic orders, as submitted, for users with a strategy', async () => {
+    // The api places manual and setup orders, never automatic ones.
+    expect(await sqlState(api.insertInto('trading.orders').values(auto()).execute())).toBe('42501');
+    expect(
+      await sqlState(
+        api
+          .insertInto('trading.orders')
+          .values(newOrder({ source: 'setup', setup_id: SETUP }))
+          .execute(),
+      ),
+    ).toBeUndefined();
+
+    const parent = auto();
+    await broker.insertInto('trading.orders').values(parent).execute();
+    await broker
+      .insertInto('trading.orders')
+      .values(
+        auto({
+          type: 'stop',
+          side: 'sell',
+          limit_price: null,
+          stop_price: '90',
+          parent_id: parent.id,
+          oco_group: parent.id,
+        }),
+      )
+      .execute();
+    // Not filled, held or past "new"; and nothing but automatic orders.
+    for (const extra of [{ status: 'open' as const }, { filled_quantity: '0.1' }, { reserved: '1' }])
+      expect(await sqlState(broker.insertInto('trading.orders').values(auto(extra)).execute())).toBe('42501');
+    expect(
+      await sqlState(
+        broker
+          .insertInto('trading.orders')
+          .values(newOrder({ source: 'setup' }))
+          .execute(),
+      ),
+    ).toBe('42501');
+
+    // A user who never set up automatic trading gets no automatic orders.
+    const other = randomUUID();
+    const otherAccount = randomUUID();
+    await owner
+      .insertInto('app.users')
+      .values({
+        id: other,
+        email: `${other}@cip.test`,
+        display_name: 'Other',
+        role: 'viewer',
+        password_hash: 'x',
+      })
+      .execute();
+    await api
+      .insertInto('trading.accounts')
+      .values({ id: otherAccount, user_id: other, venue_id: 'binance', starting_balances: { USDT: '10000' } })
+      .execute();
+    expect(
+      await sqlState(
+        broker
+          .insertInto('trading.orders')
+          .values(auto({ account_id: otherAccount }))
+          .execute(),
+      ),
+    ).toBe('42501');
+
+    const stored = await owner
+      .selectFrom('trading.orders')
+      .select(['type', 'parent_id'])
+      .where('source', '=', 'auto')
+      .orderBy('type')
+      .execute();
+    expect(stored).toEqual([
+      { type: 'limit', parent_id: null },
+      { type: 'stop', parent_id: parent.id },
+    ]);
+  });
+
+  it('keeps every decision, with a reason for each one not placed', async () => {
+    const order = auto();
+    await broker.insertInto('trading.orders').values(order).execute();
+    await broker
+      .insertInto('trading.auto_decisions')
+      .values([
+        decision(),
+        decision({ outcome: 'placed', reason: null, order_id: order.id }),
+        decision({ outcome: 'cancelled', reason: 'expired', order_id: order.id }),
+        decision({ outcome: 'refused', reason: 'insufficient_balance' }),
+      ])
+      .execute();
+    for (const bad of [
+      decision({ reason: null }),
+      decision({ outcome: 'placed', reason: 'score' }),
+      decision({ outcome: 'maybe' as 'placed' }),
+    ])
+      expect(await sqlState(broker.insertInto('trading.auto_decisions').values(bad).execute())).toBe('23514');
+    // The broker writes the log and the api reads it; nobody changes it.
+    expect(await sqlState(api.insertInto('trading.auto_decisions').values(decision()).execute())).toBe(
+      '42501',
+    );
+    expect(await sqlState(broker.updateTable('trading.auto_decisions').set({ reason: 'x' }).execute())).toBe(
+      '42501',
+    );
+    const log = await api
+      .selectFrom('trading.auto_decisions')
+      .select(['outcome', 'reason'])
+      .where('user_id', '=', userId)
+      .orderBy('outcome')
+      .execute();
+    expect(log).toEqual([
+      { outcome: 'cancelled', reason: 'expired' },
+      { outcome: 'placed', reason: null },
+      { outcome: 'refused', reason: 'insufficient_balance' },
+      { outcome: 'skipped', reason: 'score' },
+    ]);
+  });
+
+  it('journals setup transitions and strategy changes, with the decisions, and keeps its place in an:events', async () => {
+    for (const kind of ['setup', 'strategy'] as const)
+      expect(
+        await sqlState(
+          broker
+            .insertInto('trading.journal')
+            .values({ kind, input: { kind }, decisions: ['decision|x|skipped|score|'] })
+            .execute(),
+        ),
+      ).toBeUndefined();
+    const lines = await owner
+      .selectFrom('trading.journal')
+      .select('decisions')
+      .where('kind', '=', 'setup')
+      .executeTakeFirstOrThrow();
+    expect(lines.decisions).toEqual(['decision|x|skipped|score|']);
+    await broker
+      .updateTable('trading.broker_state')
+      .set({ setups_cursor: '5-0' })
+      .where('id', '=', 1)
+      .execute();
+    const state = await broker
+      .selectFrom('trading.broker_state')
+      .select('setups_cursor')
+      .executeTakeFirstOrThrow();
+    expect(state.setups_cursor).toBe('5-0');
+    expect(
+      await sqlState(
+        broker
+          .insertInto('trading.journal')
+          .values({ kind: 'other' as 'setup', input: {} })
+          .execute(),
+      ),
+    ).toBe('23514');
+  });
+
+  it("keeps each account's day: written by the broker, read by the api", async () => {
+    await broker
+      .insertInto('trading.auto_days')
+      .values({ account_id: accountId, day: '2026-11-16', orders: 1, result: '0' })
+      .execute();
+    await broker
+      .insertInto('trading.auto_days')
+      .values({ account_id: accountId, day: '2026-11-16', orders: 2, result: '-107.896' })
+      .onConflict((oc) => oc.columns(['account_id', 'day']).doUpdateSet({ orders: 2, result: '-107.896' }))
+      .execute();
+    expect(
+      await api
+        .selectFrom('trading.auto_days')
+        .select(['day', 'orders', 'result'])
+        .where('account_id', '=', accountId)
+        .execute(),
+    ).toEqual([{ day: '2026-11-16', orders: 2, result: '-107.896' }]);
+    expect(
+      await sqlState(
+        api
+          .insertInto('trading.auto_days')
+          .values({ account_id: accountId, day: '2026-11-17', orders: 0, result: '0' })
+          .execute(),
+      ),
+    ).toBe('42501');
+    for (const bad of [{ day: '16/11/2026' }, { day: '2026-11-18', orders: -1 }])
+      expect(
+        await sqlState(
+          broker
+            .insertInto('trading.auto_days')
+            .values({ account_id: accountId, orders: 0, result: '0', ...bad })
+            .execute(),
+        ),
+      ).toBe('23514');
+  });
+
+  it('gives the analyzer and the jobs service no access to the rules or the log', async () => {
+    for (const db of [analyzer, jobs]) {
+      expect(await sqlState(db.selectFrom('trading.strategies').select('id').execute())).toBe('42501');
+      expect(await sqlState(db.selectFrom('trading.auto_decisions').select('id').execute())).toBe('42501');
+      expect(await sqlState(db.selectFrom('trading.auto_days').select('day').execute())).toBe('42501');
+    }
   });
 });

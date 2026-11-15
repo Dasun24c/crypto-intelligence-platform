@@ -1,6 +1,8 @@
 import { z } from 'zod';
 import { PageQuerySchema, TsSchema, UuidSchema } from './common.js';
 import { DecimalSchema, VenueSchema } from './market.js';
+import { PatternSchema } from './smc.js';
+import { PATTERN_NAMES } from './smc-params.js';
 
 /**
  * Practice trading (REQUIREMENTS §11, ADR 021): simulated spot orders on practice balances, filled
@@ -86,7 +88,13 @@ const PositiveDecimalSchema = DecimalSchema.refine((v) => Number(v) > 0, 'must b
  */
 export const PlacePracticeOrderRequestSchema = z
   .strictObject({
-    clientOrderId: z.string().trim().min(8).max(64),
+    /** Any key but one starting `auto:`, which automatic orders use (ADR 022). */
+    clientOrderId: z
+      .string()
+      .trim()
+      .min(8)
+      .max(64)
+      .refine((k) => !k.startsWith('auto:'), 'keys starting "auto:" are kept for automatic orders'),
     instrumentId: UuidSchema,
     side: OrderSideSchema,
     type: z.enum(['market', 'limit']),
@@ -125,7 +133,8 @@ export const PracticeOrderSchema = z.object({
   /** The buy a stop or target belongs to, and the pair's shared id. */
   parentId: UuidSchema.nullable(),
   ocoGroup: UuidSchema.nullable(),
-  source: z.enum(['manual', 'setup']),
+  /** `auto`: placed by the user's automatic practice trading (Phase 16, ADR 022). */
+  source: z.enum(['manual', 'setup', 'auto']),
   setupId: UuidSchema.nullable(),
   /** The gold market was closed when a PAXG order was placed. */
   underlyingClosed: z.boolean(),
@@ -246,3 +255,147 @@ export const PracticeSnapshotSchema = z.object({
   openOrders: z.array(PracticeOrderSchema),
 });
 export type PracticeSnapshot = z.infer<typeof PracticeSnapshotSchema>;
+
+// ---------------------------------------------------------------------------------------------
+// Automatic practice trading (Phase 16, REQUIREMENTS §11 revision 5, ADR 022)
+// ---------------------------------------------------------------------------------------------
+
+/**
+ * A user's rules for automatic practice trading. On a confirmed bullish setup that matches them it
+ * places a practice limit buy at the entry, with a stop at the invalidation and a target at target 1,
+ * sized at `riskPct` of the free quote balance. Practice balances only; the AI never decides.
+ */
+export const AutoRulesSchema = z.strictObject({
+  /** The practice account it trades. */
+  venue: VenueSchema,
+  /** The pairs it may trade; empty: every monitored pair on the venue. */
+  instrumentIds: z.array(UuidSchema).max(50),
+  patterns: z.array(PatternSchema).min(1),
+  /** The setup's checklist score, 0–100. */
+  minScore: z.number().min(0).max(100),
+  /** Target 1's distance over the stop's, at least. */
+  minReward: z.number().min(0.5).max(10),
+  /** Percent of the free quote balance put at risk per trade. */
+  riskPct: z.number().min(0.1).max(2),
+  maxOpenTrades: z.number().int().min(1).max(10),
+  maxOrdersPerDay: z.number().int().min(1).max(50),
+  /** Percent of the period's starting quote balance lost in a UTC day before it pauses until 00:00. */
+  dailyLossPct: z.number().min(1).max(10),
+});
+export type AutoRules = z.infer<typeof AutoRulesSchema>;
+
+/** Proposal 002's recommended defaults (decisions A4 and A5). */
+export const DEFAULT_AUTO_RULES: AutoRules = {
+  venue: 'binance',
+  instrumentIds: [],
+  patterns: [...PATTERN_NAMES],
+  minScore: 70,
+  minReward: 2,
+  riskPct: 1,
+  maxOpenTrades: 3,
+  maxOrdersPerDay: 10,
+  dailyLossPct: 3,
+};
+
+/** Why a confirmed setup was not traded (ADR 022, checked in this order). */
+export const AUTO_SKIP_REASONS = [
+  'paused',
+  'pair',
+  'pattern',
+  'not_live',
+  'data_gap',
+  'score',
+  'reward',
+  'open_limit',
+  'daily_orders',
+  'size',
+  'balance',
+] as const;
+export const AutoSkipReasonSchema = z.enum(AUTO_SKIP_REASONS);
+export type AutoSkipReason = z.infer<typeof AutoSkipReasonSchema>;
+
+export const AUTO_SKIP_TEXT: Readonly<Record<AutoSkipReason, string>> = {
+  paused: 'Paused for the day: the daily loss limit was reached.',
+  pair: 'Not one of the pairs in your rules.',
+  pattern: 'Not one of the patterns in your rules.',
+  not_live:
+    'Not a live decision: found while the analysis was warming up or catching up, or a mandatory checklist item failed.',
+  data_gap: 'The setup was decided over a gap in the market data.',
+  score: 'Its checklist score is below your minimum.',
+  reward: 'Its reward for the risk at target 1 is below your minimum, or its levels are incomplete.',
+  open_limit: 'Already at your limit of open automatic trades, or one is open on this pair.',
+  daily_orders: 'Already at your limit of automatic orders today.',
+  size: 'At your risk per trade, the quantity is too small for the pair.',
+  balance: 'Not enough free practice balance for the order and its fees.',
+};
+
+/**
+ * `placed`; `skipped` with an AUTO_SKIP_REASONS reason; `refused` by the order checks (a
+ * REFUSAL_REASONS reason); `cancelled`: the setup ended before the buy filled.
+ */
+export const AUTO_DECISION_OUTCOMES = ['placed', 'skipped', 'refused', 'cancelled'] as const;
+
+export const AutoDecisionSchema = z.object({
+  id: UuidSchema,
+  setupId: UuidSchema,
+  instrumentId: UuidSchema,
+  pattern: PatternSchema,
+  outcome: z.enum(AUTO_DECISION_OUTCOMES),
+  reason: z.string().nullable(),
+  orderId: UuidSchema.nullable(),
+  /** The buy it placed (or that was refused, or cancelled): its size and its three prices. */
+  order: z
+    .object({
+      quantity: DecimalSchema,
+      limitPrice: DecimalSchema,
+      stop: DecimalSchema.nullable(),
+      target: DecimalSchema.nullable(),
+    })
+    .nullable(),
+  /** The rules' version the decision used. */
+  strategyVersion: z.number().int().nonnegative(),
+  decidedAt: TsSchema,
+});
+export type AutoDecision = z.infer<typeof AutoDecisionSchema>;
+
+/** `GET /practice/automatic`. */
+export const PracticeStrategySchema = z.object({
+  enabled: z.boolean(),
+  rules: AutoRulesSchema,
+  /** Raised by every change; a change names the version it was based on. */
+  version: z.number().int().nonnegative(),
+  /** Set while the daily loss limit pauses it. */
+  pausedUntil: TsSchema.nullable(),
+  updatedAt: TsSchema.nullable(),
+  /** Since 00:00 UTC: automatic buys placed, and the result of the automatic trades closed. */
+  today: z.object({ orders: z.number().int().nonnegative(), result: DecimalSchema, asset: z.string() }),
+});
+export type PracticeStrategy = z.infer<typeof PracticeStrategySchema>;
+
+/** `PUT /practice/automatic`: the rules, against the version they were read at. */
+export const UpdateAutoRulesRequestSchema = z.strictObject({
+  version: z.number().int().nonnegative(),
+  rules: AutoRulesSchema,
+});
+export type UpdateAutoRulesRequest = z.infer<typeof UpdateAutoRulesRequestSchema>;
+
+/** `POST /practice/automatic/on`: switching on confirms the rules the user saw, at their version. */
+export const AutoSwitchOnRequestSchema = z.strictObject({ version: z.number().int().nonnegative() });
+export type AutoSwitchOnRequest = z.infer<typeof AutoSwitchOnRequestSchema>;
+
+export const AutoDecisionsQuerySchema = PageQuerySchema;
+
+/** `practice.automatic` on the `practice` channel: a decision, a pause, or a stop. */
+export const PracticeAutomaticMessageSchema = z.discriminatedUnion('event', [
+  z.object({ event: z.literal('decision'), decision: AutoDecisionSchema }),
+  /** `at`: when the trade that reached the daily loss limit closed. */
+  z.object({
+    event: z.literal('paused'),
+    at: TsSchema,
+    until: TsSchema,
+    result: DecimalSchema,
+    asset: z.string(),
+  }),
+  z.object({ event: z.literal('stopped'), cancelled: z.number().int().nonnegative() }),
+]);
+export type PracticeAutomaticMessage = z.infer<typeof PracticeAutomaticMessageSchema>;

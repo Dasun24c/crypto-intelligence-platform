@@ -226,7 +226,8 @@ test.describe('Phase 14', () => {
 
   test('14.7 and 14.12 the page is labelled as simulated, passes axe, and its ticket works from the keyboard, confirmation included', async () => {
     await openPractice();
-    await expect(page.getByRole('note').filter({ hasText: BANNER })).toBeVisible();
+    // The page's banner, in its header (Phase 16's automatic trading card carries one too).
+    await expect(page.getByRole('note').filter({ hasText: BANNER }).first()).toBeVisible();
     for (const title of ['Holdings and results (simulated)', 'Fills (simulated)'])
       await expect(page.getByRole('heading', { name: title })).toBeVisible();
     const scan = async () => {
@@ -247,7 +248,9 @@ test.describe('Phase 14', () => {
     await page.keyboard.press('Enter');
     const heading = page.getByRole('heading', { name: 'Confirm your practice order' });
     await expect(heading).toBeFocused();
-    await expect(page.getByText(BANNER).last()).toBeVisible();
+    await expect(
+      page.getByRole('region', { name: 'Confirm your practice order' }).getByText(BANNER),
+    ).toBeVisible();
     expect(await scan()).toEqual([]);
     await page.keyboard.press('Tab');
     await expect(ticket.place()).toBeFocused();

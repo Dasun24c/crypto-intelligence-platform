@@ -473,4 +473,50 @@ describe('alert evaluation in the analyzer (ADR 020)', () => {
       (await redis.xrevrange(PRACTICE_EVENTS_STREAM, '+', '-', 'COUNT', 1))[0]![0],
     );
   });
+
+  it('tells owners when their automatic practice trading places a buy, or pauses at the daily loss limit (16.7)', async () => {
+    const placedRule = await addRule({ kind: 'practice_auto_order' });
+    const pausedRule = await addRule({ kind: 'practice_auto_paused' });
+    await start();
+    const decision = (outcome: 'placed' | 'skipped') => ({
+      id: randomUUID(),
+      setupId: randomUUID(),
+      instrumentId: BTC,
+      pattern: 'htf_order_block',
+      outcome,
+      reason: outcome === 'placed' ? null : 'score',
+      orderId: outcome === 'placed' ? randomUUID() : null,
+      order: outcome === 'placed' ? { quantity: '0.5', limitPrice: '99', stop: '97', target: '105' } : null,
+      strategyVersion: 3,
+      decidedAt: clock,
+    });
+    const automatic = (user: string, m: unknown) =>
+      redis.xadd(
+        PRACTICE_EVENTS_STREAM,
+        '*',
+        'type',
+        'practice.automatic',
+        'user',
+        user,
+        'data',
+        JSON.stringify(m),
+      );
+    const placed = decision('placed');
+    await automatic(userId, { event: 'decision', decision: placed });
+    await automatic(userId, { event: 'decision', decision: placed }); // read again: one alert
+    await automatic(userId, { event: 'decision', decision: decision('skipped') }); // skips raise nothing
+    await automatic(randomUUID(), { event: 'decision', decision: decision('placed') }); // not this owner's
+    const until = Date.UTC(2026, 10, 17);
+    await automatic(userId, { event: 'paused', at: clock, until, result: '-310.5', asset: 'USDT' });
+    await automatic(userId, { event: 'stopped', cancelled: 3 }); // the user's own stop: nothing
+    await automatic(userId, { event: 'paused' }); // malformed: nothing
+    await tick();
+
+    expect((await fired(placedRule)).map((e) => [e.dedupe_key, e.title])).toEqual([
+      [`practice:${placed.orderId}:auto`, 'BTC · Binance BTC/USDT: automatic practice buy placed'],
+    ]);
+    expect((await fired(pausedRule)).map((e) => [e.dedupe_key, e.title])).toEqual([
+      [`practice-pause:${userId}:${until}`, 'Automatic practice trading paused'],
+    ]);
+  });
 });

@@ -1,30 +1,47 @@
 #!/usr/bin/env node
-// NFR-16 / criterion 14.11: how soon practice fills are published (ADR 021).
+// NFR-16 / criterion 14.11: how soon practice fills are published (ADR 021); and NFR-17 / criterion
+// 16.8: how soon automatic practice orders are placed (ADR 022).
 //
 //   - A market order's fill: from its `place` command on `practice:commands` (the api appends it
 //     once the order is stored) to the broker's `practice.fill` entry on `practice:events`.
 //   - A waiting order's fill (a resting limit, a target, a triggered stop): from the live trade that
 //     filled it (its `md:trades:{id}` entry, recorded in the fill's basis) to the `practice.fill` entry.
 //
-// Both ends are Redis stream ids, so one clock (the Redis server's) measures both. Target: p95 ≤ 1 s.
+//   - An automatic order (NFR-17): from its setup's confirmed transition on `an:events` to the buy's
+//     first `practice.order` entry on `practice:events`.
 //
-//   node scripts/practice-latency.mjs [minutes=30]                 measure fills published in the window
+// Both ends are Redis stream ids, so one clock (the Redis server's) measures both. Targets: p95 ≤ 1 s
+// for fills, p95 ≤ 2 s for automatic orders.
+//
+//   node scripts/practice-latency.mjs [minutes=30]                 measure what was published in the window
 //   node scripts/practice-latency.mjs --drive [orders=40] [minutes]  place practice orders first, then measure
+//   node scripts/practice-latency.mjs --auto [setups=30] [minutes]   drive automatic trading first, then measure
 //
 // --drive signs in as the development viewer (seed-dev) through the api at API_URL (default
 // http://localhost:8080) and places, on Binance BTC/USDT: market buys and sells of the smallest
 // quantity worth the venue minimum, and limit buys and sells one price step inside the best prices,
 // which fill when a trade goes through them. Practice orders only: nothing reaches an exchange.
 // The seed password comes from DEV_SEED_PASSWORD, or the development default in apps/api/src/cli.ts.
+//
+// --auto signs in as the development viewer, starts their Binance practice account again, sets their
+// automatic trading to Binance BTC/USDT and switches it on; then appends, one at a time, confirmed
+// bullish setup transitions to `an:events` in the analyzer's message shape (an entry at half the price,
+// so the buy rests), waits for the broker's decision, and ends each setup (invalidated) so its buy is
+// cancelled before the next. It switches automatic trading off at the end. Synthetic setups: the
+// analysis finds a few real ones a day. Practice orders only: nothing reaches an exchange.
 
+import { randomUUID } from 'node:crypto';
 import { readFileSync } from 'node:fs';
 import net from 'node:net';
 
 const args = process.argv.slice(2);
 const drive = args[0] === '--drive';
-const rest = drive ? args.slice(1) : args;
+const auto = args[0] === '--auto';
+const rest = drive || auto ? args.slice(1) : args;
 const orders = drive ? Number(rest[0] ?? 40) : 0;
-const minutes = Number((drive ? rest[1] : rest[0]) ?? 30);
+const setups = auto ? Number(rest[0] ?? 30) : 0;
+const minutes = Number((drive || auto ? rest[1] : rest[0]) ?? 30);
+const AUTO_TARGET_MS = 2000;
 const url = new URL(process.env.REDIS_URL ?? 'redis://localhost:16379');
 const API = process.env.API_URL ?? 'http://localhost:8080';
 const TARGET_MS = 1000;
@@ -144,13 +161,17 @@ async function call(token, method, path, body) {
   return { status: res.status, body: text ? JSON.parse(text) : undefined };
 }
 
-async function driveOrders(redis) {
+async function signInViewer() {
   const login = await call(null, 'POST', '/auth/login', {
     email: 'viewer@cip.test',
     password: seedPassword(),
   });
   if (login.status !== 200 || !login.body.accessToken) throw new Error(`sign-in failed (${login.status})`);
-  const token = login.body.accessToken;
+  return login.body.accessToken;
+}
+
+async function driveOrders(redis) {
+  const token = await signInViewer();
   const instruments = (await call(token, 'GET', '/instruments')).body;
   const btc = instruments.find((i) => i.venue === 'binance' && i.base === 'BTC' && i.quote === 'USDT');
   if (!btc) throw new Error('no Binance BTC/USDT instrument');
@@ -207,10 +228,145 @@ async function driveOrders(redis) {
   await sleep(60_000);
 }
 
+// ---------------------------------------------------------------- driving automatic trading
+
+/** The newest entry of a stream, to read only what comes after it. */
+async function lastEntry(redis, stream) {
+  const [entry] = await redis.command('XREVRANGE', stream, '+', '-', 'COUNT', 1);
+  return entry?.[0] ?? '0-0';
+}
+
+/** Waits for the broker's decision on a setup (a `practice.automatic` entry after `after`). */
+async function decisionFor(redis, after, setupId, outcomes, ms = 10_000) {
+  const end = Date.now() + ms;
+  while (Date.now() < end) {
+    for (const [, list] of await redis.command('XRANGE', 'practice:events', `(${after}`, '+')) {
+      const f = fieldsOf(list);
+      if (f.type !== 'practice.automatic') continue;
+      const m = JSON.parse(f.data);
+      if (m.event === 'decision' && m.decision.setupId === setupId && outcomes.includes(m.decision.outcome))
+        return m.decision;
+    }
+    await sleep(50);
+  }
+  return null;
+}
+
+async function driveAutomatic(redis) {
+  const token = await signInViewer();
+  const instruments = (await call(token, 'GET', '/instruments')).body;
+  const btc = instruments.find((i) => i.venue === 'binance' && i.base === 'BTC' && i.quote === 'USDT');
+  if (!btc) throw new Error('no Binance BTC/USDT instrument');
+  const t = JSON.parse((await redis.command('GET', `ticker:${btc.id}`)) ?? 'null');
+  if (!t) throw new Error('no live BTC/USDT ticker: is the ingestor streaming?');
+  const price = (v) => times(steps(v.toFixed(8), btc.priceTick, false), btc.priceTick);
+  const half = Number(t.ask) / 2;
+  const levels = { entry: price(half), invalidation: price(half * 0.98), target1: price(half * 1.1) };
+
+  // From the starting balances, its rules for BTC/USDT, switched on.
+  const current = (await call(token, 'GET', '/practice/automatic')).body;
+  if (current.enabled) await call(token, 'POST', '/practice/automatic/stop');
+  await call(token, 'POST', '/practice/account/reset', { venue: 'binance' });
+  const read = (await call(token, 'GET', '/practice/automatic')).body;
+  const saved = await call(token, 'PUT', '/practice/automatic', {
+    version: read.version,
+    rules: {
+      ...read.rules,
+      venue: 'binance',
+      instrumentIds: [btc.id],
+      minScore: 70,
+      minReward: 2,
+      riskPct: 1,
+      maxOpenTrades: 3,
+      maxOrdersPerDay: 50,
+    },
+  });
+  if (saved.status !== 200) throw new Error(`saving the rules failed (${saved.status})`);
+  const on = await call(token, 'POST', '/practice/automatic/on', { version: saved.body.version });
+  if (on.status !== 200) throw new Error(`switching on failed (${on.status})`);
+  console.log(
+    `driving ${setups} confirmed setups for the development viewer's automatic practice trading (simulated)`,
+  );
+
+  const runId = randomUUID();
+  const message = (id, to) => {
+    const now = Date.now();
+    return {
+      id,
+      instrumentId: btc.id,
+      runId,
+      pattern: 'htf_order_block',
+      variant: null,
+      direction: 'bullish',
+      contextTf: '1h',
+      setupTf: '15m',
+      state: to,
+      resolution: to === 'resolved' ? 'invalidated' : null,
+      displayLabel: to === 'resolved' ? 'Resolved' : 'Confirmed',
+      levels: { ...levels, target2: null, rr: 5 },
+      score: 85,
+      mandatoryPassed: true,
+      qualityFlags: [],
+      flags: [],
+      createdAt: now - 3_600_000,
+      updatedAt: now,
+      resolvedAt: to === 'resolved' ? now : null,
+      disclaimer: 'Educational analysis — not financial advice',
+      transition: {
+        from: to === 'resolved' ? 'confirmed' : 'triggered',
+        to,
+        reason: 'latency measurement',
+        candleTime: now - 900_000,
+        decidedAt: now - 500,
+        processedAt: now,
+        late: false,
+        evidence: {},
+      },
+    };
+  };
+  const outcomes = {};
+  try {
+    for (let k = 0; k < setups; k++) {
+      const id = randomUUID();
+      let after = await lastEntry(redis, 'practice:events');
+      await redis.command(
+        'XADD',
+        'an:events',
+        '*',
+        'type',
+        'setup',
+        'data',
+        JSON.stringify(message(id, 'confirmed')),
+      );
+      const d = await decisionFor(redis, after, id, ['placed', 'skipped', 'refused']);
+      const key = d ? `${d.outcome}${d.reason ? ` (${d.reason})` : ''}` : 'no decision in 10 s';
+      outcomes[key] = (outcomes[key] ?? 0) + 1;
+      if (d?.outcome !== 'placed') continue;
+      // End it, so the next setup on the pair is not held back by this one.
+      after = await lastEntry(redis, 'practice:events');
+      await redis.command(
+        'XADD',
+        'an:events',
+        '*',
+        'type',
+        'setup',
+        'data',
+        JSON.stringify(message(id, 'resolved')),
+      );
+      await decisionFor(redis, after, id, ['cancelled']);
+      await sleep(200);
+    }
+  } finally {
+    await call(token, 'POST', '/practice/automatic/stop');
+  }
+  console.log(`decisions: ${JSON.stringify(outcomes)}; automatic trading switched off`);
+}
+
 // ---------------------------------------------------------------- measurement
 
 const redis = connect();
 if (drive) await driveOrders(redis);
+if (auto) await driveAutomatic(redis);
 const [sec] = await redis.command('TIME');
 const from = (Number(sec) - minutes * 60) * 1000;
 
@@ -220,11 +376,38 @@ for (const [id, list] of await redis.command('XRANGE', 'practice:commands', Stri
   if (f.type === 'place' && f.orderId) commands.set(f.orderId, idMs(id));
 }
 
+// The confirmed setup transitions the automatic orders came from (NFR-17).
+const confirmedAt = new Map();
+for (const [id, list] of await redis.command('XRANGE', 'an:events', String(from - 60_000), '+')) {
+  const f = fieldsOf(list);
+  if (f.type !== 'setup') continue;
+  try {
+    const m = JSON.parse(f.data);
+    if (m.transition?.to === 'confirmed' && !confirmedAt.has(m.id)) confirmedAt.set(m.id, idMs(id));
+  } catch {
+    // not a setup message: not timed
+  }
+}
+
 const market = [];
 const waiting = [];
+const firstOrderEntry = new Map();
+const placedSetup = new Map();
 let unmatched = 0;
 for (const [id, list] of await redis.command('XRANGE', 'practice:events', String(from), '+')) {
   const f = fieldsOf(list);
+  if (f.type === 'practice.order') {
+    const { order } = JSON.parse(f.data);
+    if (order.source === 'auto' && order.parentId === null && !firstOrderEntry.has(order.id))
+      firstOrderEntry.set(order.id, idMs(id));
+    continue;
+  }
+  if (f.type === 'practice.automatic') {
+    const m = JSON.parse(f.data);
+    if (m.event === 'decision' && m.decision.outcome === 'placed')
+      placedSetup.set(m.decision.orderId, m.decision.setupId);
+    continue;
+  }
   if (f.type !== 'practice.fill') continue;
   const { fill } = JSON.parse(f.data);
   const published = idMs(id);
@@ -235,11 +418,21 @@ for (const [id, list] of await redis.command('XRANGE', 'practice:events', String
 }
 redis.close();
 
+const automatic = [];
+for (const [orderId, setupId] of placedSetup) {
+  const placedAt = firstOrderEntry.get(orderId);
+  const confirmed = confirmedAt.get(setupId);
+  if (placedAt !== undefined && confirmed !== undefined) automatic.push(placedAt - confirmed);
+}
+
 const m = stats(market);
 const w = stats(waiting);
-console.log(`practice fills published in the last ${minutes} min (Redis clock):`);
+const a = stats(automatic);
+console.log(`practice orders published in the last ${minutes} min (Redis clock):`);
 console.log(`  market orders, submitted → fill published:      ${m.text}`);
 console.log(`  waiting orders, filling trade → fill published: ${w.text}`);
+console.log(`  automatic orders, setup confirmed → order published: ${a.text}`);
 if (unmatched) console.log(`  ${unmatched} fill(s) without their command in the window, not timed`);
-const met = (s) => (s.p95 === null ? 'no samples' : s.p95 <= TARGET_MS ? 'met' : 'NOT met');
+const met = (s, target = TARGET_MS) => (s.p95 === null ? 'no samples' : s.p95 <= target ? 'met' : 'NOT met');
 console.log(`NFR-16 (p95 ≤ ${TARGET_MS} ms): market ${met(m)}, waiting ${met(w)}`);
+console.log(`NFR-17 (p95 ≤ ${AUTO_TARGET_MS} ms): automatic ${met(a, AUTO_TARGET_MS)}`);

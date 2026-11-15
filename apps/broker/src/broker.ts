@@ -3,10 +3,25 @@ import type { Histogram, Meter } from '@opentelemetry/api';
 import type { Redis } from 'ioredis';
 import type { Kysely } from 'kysely';
 import { PRACTICE_COMMANDS_STREAM } from '@cip/contracts/practice-commands';
-import { PRACTICE_EVENTS_STREAM, type PracticeSettings, type Venue } from '@cip/contracts';
+import {
+  ANALYSIS_EVENTS_STREAM,
+  type AutoDecision,
+  PRACTICE_EVENTS_STREAM,
+  type PracticeAutomaticMessage,
+  type PracticeSettings,
+  SetupTransitionMessageSchema,
+  type Venue,
+} from '@cip/contracts';
 import { type Database, fillFromRow, orderFromRow, practiceAccounts } from '@cip/db';
+import { dec } from '@cip/domain';
 import { FencedLease, type HeartbeatProbe, LEASE_RENEW_MS, type Logger } from '@cip/observability';
 import {
+  type AutoContext,
+  autoDigestLines,
+  type AutoResult,
+  type AutoSetup,
+  autoSetup,
+  AutoTrader,
   compareStreamIds,
   type EngineAccount,
   type EngineConfig,
@@ -16,7 +31,7 @@ import {
   type Trade,
 } from '@cip/paper-engine';
 import { MarketView } from './market.js';
-import { type AccountInfo, type AuditEntry, BrokerStore, LeaseLost } from './store.js';
+import { type AccountInfo, type AuditEntry, BrokerStore, type Cursors, LeaseLost } from './store.js';
 
 /** `practice:events` keeps about this many messages. */
 const EVENTS_MAXLEN = '100000';
@@ -24,17 +39,25 @@ const HEALTH_EVERY_MS = 1_000;
 const REFRESH_EVERY_MS = 30_000;
 const CURSORS_EVERY_MS = 5_000;
 
-/** A fill's id from its order's id and its number on that order: a UUID (name-based, SHA-1), so a replay gets the same one. */
-export function fillId(orderId: string, n: number): string {
-  const h = createHash('sha1').update(`practice-fill:${orderId}:${n}`).digest();
+/** A name-based UUID (SHA-1, version 5 layout): the same name always gives the same id, so a replay does too. */
+export function nameId(name: string): string {
+  const h = createHash('sha1').update(name).digest();
   h[6] = (h[6]! & 0x0f) | 0x50;
   h[8] = (h[8]! & 0x3f) | 0x80;
   const x = h.subarray(0, 16).toString('hex');
   return `${x.slice(0, 8)}-${x.slice(8, 12)}-${x.slice(12, 16)}-${x.slice(16, 20)}-${x.slice(20)}`;
 }
 
+/** A fill's id from its order's id and its number on that order. */
+export function fillId(orderId: string, n: number): string {
+  return nameId(`practice-fill:${orderId}:${n}`);
+}
+
 const isEmpty = (o: Outputs) => !o.orders.length && !o.fills.length && !o.ledger.length;
 const streamMs = (id: string) => Number(id.split('-')[0]);
+/** On a tie of stream ids: commands, then setups, then trades. */
+const rank = (stream: string) =>
+  stream === PRACTICE_COMMANDS_STREAM ? 0 : stream === ANALYSIS_EVENTS_STREAM ? 1 : 2;
 
 export interface BrokerOptions {
   db: Kysely<Database>;
@@ -54,21 +77,25 @@ export interface BrokerOptions {
 
 /**
  * The broker service (ADR 021): the only writer of practice fills and balances. One active instance
- * holds `lease:broker`; it reads `practice:commands` and the `md:trades:{id}` streams in order,
- * feeds them to the paper engine, and stores each input's outcome in one fenced transaction before
- * telling the owner on `practice:events`. It has no venue client: nothing here reaches an exchange.
+ * holds `lease:broker`; it reads `practice:commands`, the setups on `an:events` (automatic practice
+ * trading, ADR 022) and the `md:trades:{id}` streams in order, feeds them to the paper engine and
+ * the auto-trader, and stores each input's outcome in one fenced transaction before telling the
+ * owner on `practice:events`. It has no venue client: nothing here reaches an exchange.
  */
 export class Broker {
   readonly store: BrokerStore;
   readonly market: MarketView;
   private readonly lease: FencedLease;
   private engine: PaperEngine | null = null;
+  private trader: AutoTrader | null = null;
   private settings: PracticeSettings | null = null;
   /** The configuration this engine run journalled last (JSON), and one waiting for its commit. */
   private journalled: string | null = null;
   private pendingConfig: string | null = null;
   private accounts = new Map<string, AccountInfo>();
   private commandsCursor = '0-0';
+  private setupsCursor = '0-0';
+  private dirtySetups: string | null = null;
   private tradeCursors = new Map<string, string>();
   private dirtyTrades = new Map<string, string>();
   private timers: NodeJS.Timeout[] = [];
@@ -76,6 +103,7 @@ export class Broker {
   private stopping = false;
   private lastError: string | null = null;
   private readonly latency: Histogram | undefined;
+  private readonly autoLatency: Histogram | undefined;
   private readonly now: () => number;
 
   constructor(private readonly o: BrokerOptions) {
@@ -85,6 +113,10 @@ export class Broker {
     this.now = o.now ?? Date.now;
     this.latency = o.meter?.createHistogram('cip_practice_order_latency_ms', {
       description: 'Practice order submitted (command appended) to its outcome published (NFR-16)',
+      unit: 'ms',
+    });
+    this.autoLatency = o.meter?.createHistogram('cip_practice_auto_latency_ms', {
+      description: 'Setup transition on an:events to the automatic practice order published (NFR-17)',
       unit: 'ms',
     });
   }
@@ -112,6 +144,7 @@ export class Broker {
     await this.flushCursors();
     await this.lease.release();
     this.engine = null;
+    this.trader = null;
   }
 
   probe(): HeartbeatProbe {
@@ -137,7 +170,7 @@ export class Broker {
     }
   }
 
-  /** Loads the accounts and live orders, journals them, and starts reading. */
+  /** Loads the accounts, live orders and automatic trading, journals them, and starts reading. */
   private async takeOver(): Promise<void> {
     const state = await this.store.state();
     if ((this.lease.epoch ?? 0) <= state.leaseEpoch) await this.lease.bump(state.leaseEpoch);
@@ -145,6 +178,28 @@ export class Broker {
     await this.store.claim(epoch);
     await this.refreshReference();
     await this.refreshHealth();
+    await this.loadState(epoch);
+    this.commandsCursor = state.commandsCursor;
+    // The first time it reads setups it starts at the end: earlier ones are history, not decisions.
+    this.setupsCursor = state.setupsCursor;
+    if (this.setupsCursor === '0-0') {
+      this.setupsCursor = await this.streamEnd(ANALYSIS_EVENTS_STREAM);
+      await this.store.saveCursors(epoch, { setups: this.setupsCursor });
+    }
+    this.tradeCursors = new Map(Object.entries(state.tradeCursors));
+    for (const id of this.market.tradeInstruments())
+      if (!this.tradeCursors.has(id))
+        this.tradeCursors.set(id, await this.streamEnd(this.market.streamOf(id)));
+    this.lastError = null;
+    this.o.log.info(
+      { epoch, accounts: this.accounts.size, orders: this.engine?.liveOrders().length ?? 0 },
+      'broker active',
+    );
+    this.loop = this.run(epoch);
+  }
+
+  /** A fresh engine and auto-trader from what is stored, journalled as a `load` entry. */
+  private async loadState(epoch: number): Promise<void> {
     const engine = new PaperEngine({
       rules: (id) => this.market.rules(id),
       fees: (venue) => this.settings!.fees[venue as Venue] ?? { maker: '0', taker: '0' },
@@ -153,25 +208,23 @@ export class Broker {
     const { engine: accounts, info } = await this.store.accounts();
     const orders = await this.store.liveOrders();
     engine.load(accounts, orders);
-    this.accounts = info;
+    const trader = new AutoTrader(engine, { nameId });
+    const auto = await this.store.autoSnapshot(info, this.now());
+    trader.load(auto);
     const config = this.config();
-    await this.store.journalLoad(epoch, { kind: 'load', accounts, orders, config });
+    await this.store.journalLoad(epoch, { kind: 'load', accounts, orders, auto, config });
     this.journalled = JSON.stringify(config);
-    this.commandsCursor = state.commandsCursor;
-    this.tradeCursors = new Map(Object.entries(state.tradeCursors));
-    for (const id of this.market.tradeInstruments())
-      if (!this.tradeCursors.has(id))
-        this.tradeCursors.set(id, await this.streamEnd(this.market.streamOf(id)));
+    this.pendingConfig = null;
+    this.accounts = info;
     this.engine = engine;
-    this.lastError = null;
-    this.o.log.info({ epoch, accounts: accounts.length, orders: orders.length }, 'broker active');
-    this.loop = this.run(epoch);
+    this.trader = trader;
   }
 
   private drop(reason: string): void {
     if (!this.engine) return;
     this.o.log.warn({ reason }, 'broker stands down');
     this.engine = null;
+    this.trader = null;
   }
 
   private async streamEnd(stream: string): Promise<string> {
@@ -197,14 +250,18 @@ export class Broker {
   }
 
   private async flushCursors(): Promise<void> {
-    if (!this.active || !this.dirtyTrades.size || this.lease.epoch === null) return;
-    const trades = Object.fromEntries(this.dirtyTrades);
+    if (!this.active || (!this.dirtyTrades.size && !this.dirtySetups) || this.lease.epoch === null) return;
+    const cursors: Cursors = {
+      ...(this.dirtyTrades.size ? { trades: Object.fromEntries(this.dirtyTrades) } : {}),
+      ...(this.dirtySetups ? { setups: this.dirtySetups } : {}),
+    };
     this.dirtyTrades.clear();
+    this.dirtySetups = null;
     try {
-      await this.store.saveCursors(this.lease.epoch, { trades });
+      await this.store.saveCursors(this.lease.epoch, cursors);
     } catch (err) {
       if (err instanceof LeaseLost) this.drop('a newer broker holds the lease');
-      else this.o.log.warn({ err }, 'saving trade positions failed');
+      else this.o.log.warn({ err }, 'saving stream positions failed');
     }
   }
 
@@ -216,8 +273,16 @@ export class Broker {
       for (const id of instruments)
         if (!this.tradeCursors.has(id))
           this.tradeCursors.set(id, await this.streamEnd(this.market.streamOf(id)));
-      const streams = [PRACTICE_COMMANDS_STREAM, ...instruments.map((id) => this.market.streamOf(id))];
-      const ids = [this.commandsCursor, ...instruments.map((id) => this.tradeCursors.get(id)!)];
+      const streams = [
+        PRACTICE_COMMANDS_STREAM,
+        ANALYSIS_EVENTS_STREAM,
+        ...instruments.map((id) => this.market.streamOf(id)),
+      ];
+      const ids = [
+        this.commandsCursor,
+        this.setupsCursor,
+        ...instruments.map((id) => this.tradeCursors.get(id)!),
+      ];
       let res: [string, [string, string[]][]][] | null;
       try {
         res = await this.o.reader.xread(
@@ -235,10 +300,10 @@ export class Broker {
         continue;
       }
       if (!res) continue;
-      // One order across streams: Valkey's stream ids share one clock. Commands first on a tie.
+      // One order across streams: Valkey's stream ids share one clock.
       const entries = res
         .flatMap(([stream, list]) => list.map(([id, fields]) => ({ stream, id, fields: toFields(fields) })))
-        .sort((a, b) => compareStreamIds(a.id, b.id) || (a.stream === PRACTICE_COMMANDS_STREAM ? -1 : 1));
+        .sort((a, b) => compareStreamIds(a.id, b.id) || rank(a.stream) - rank(b.stream));
       for (const e of entries) {
         if (!this.engine || this.stopping) break;
         try {
@@ -262,21 +327,10 @@ export class Broker {
   private async reload(epoch: number): Promise<void> {
     if (!this.engine) return;
     const state = await this.store.state();
-    const { engine: accounts, info } = await this.store.accounts();
-    const orders = await this.store.liveOrders();
-    const engine = new PaperEngine({
-      rules: (id) => this.market.rules(id),
-      fees: (venue) => this.settings!.fees[venue as Venue] ?? { maker: '0', taker: '0' },
-      fillId,
-    });
-    engine.load(accounts, orders);
-    const config = this.config();
-    await this.store.journalLoad(epoch, { kind: 'load', accounts, orders, config });
-    this.journalled = JSON.stringify(config);
-    this.pendingConfig = null;
-    this.engine = engine;
-    this.accounts = info;
+    await this.loadState(epoch);
     this.commandsCursor = state.commandsCursor;
+    this.setupsCursor = state.setupsCursor;
+    this.dirtySetups = null;
     this.tradeCursors = new Map(Object.entries(state.tradeCursors));
     this.dirtyTrades.clear();
     await sleep(500);
@@ -286,6 +340,10 @@ export class Broker {
     const engine = this.engine!;
     if (stream === PRACTICE_COMMANDS_STREAM) {
       await this.command(epoch, engine, id, f);
+      return;
+    }
+    if (stream === ANALYSIS_EVENTS_STREAM) {
+      await this.analysisEvent(epoch, id, f);
       return;
     }
     const instrumentId = stream.slice('md:trades:'.length);
@@ -313,14 +371,64 @@ export class Broker {
       return;
     }
     this.dirtyTrades.delete(instrumentId);
+    const auto = this.trader!.observe(outputs, trade.ts);
     await this.commit(
       epoch,
       this.withConfig({ kind: 'trade', trade, ctx }, config),
       outputs,
       { trades: { [instrumentId]: id } },
       [],
-      null,
+      { submittedAt: null, auto },
     );
+  }
+
+  /**
+   * One `an:events` entry. Only setup transitions the auto-trader can act on are journalled: a
+   * confirmed bullish setup while a strategy is on, or the end of a setup with an unfilled buy.
+   */
+  private async analysisEvent(epoch: number, id: string, f: Record<string, string>): Promise<void> {
+    this.setupsCursor = id;
+    const trader = this.trader!;
+    const setup = f['type'] === 'setup' ? this.parseSetup(f['data'], id) : null;
+    if (!setup || !trader.wants(setup)) {
+      this.dirtySetups = id;
+      return;
+    }
+    const placing = setup.to === 'confirmed';
+    const ctx: AutoContext = {
+      now: this.now(),
+      health: this.market.healthOf(setup.instrumentId),
+      book: placing ? await this.market.book(setup.instrumentId) : null,
+      lastTrade: this.tradeCursors.get(setup.instrumentId) ?? '0-0',
+      underlyingClosed: placing ? await this.underlyingClosed(setup.instrumentId) : false,
+    };
+    const config = this.config();
+    const auto = trader.setup(setup, ctx);
+    this.dirtySetups = null;
+    await this.commit(
+      epoch,
+      this.withConfig({ kind: 'setup', setup, ctx }, config),
+      auto.outputs,
+      { setups: id },
+      [],
+      { submittedAt: null, auto, setupAt: auto.orders.length ? streamMs(id) : null },
+    );
+  }
+
+  private parseSetup(data: string | undefined, id: string): AutoSetup | null {
+    try {
+      const parsed = SetupTransitionMessageSchema.safeParse(JSON.parse(data ?? ''));
+      if (parsed.success) return autoSetup(parsed.data);
+      this.o.log.warn({ id, issues: parsed.error.issues.slice(0, 3) }, 'unreadable setup transition skipped');
+    } catch {
+      this.o.log.warn({ id }, 'unreadable setup transition skipped');
+    }
+    return null;
+  }
+
+  private async underlyingClosed(instrumentId: string): Promise<boolean> {
+    const calendar = this.market.info(instrumentId)?.underlyingCalendarId;
+    return calendar ? this.store.underlyingClosed(calendar, this.now()) : false;
   }
 
   private async command(
@@ -330,9 +438,11 @@ export class Broker {
     f: Record<string, string>,
   ): Promise<void> {
     const type = f['type'];
+    const trader = this.trader!;
     let input: JournalInput | null = null;
     let outputs: Outputs | null = null;
     let config: EngineConfig | null = null;
+    let auto: AutoResult | null = null;
     const resets: { accountId: string; epoch: number; starting: Record<string, string> }[] = [];
     if (type === 'place' && f['orderId']) {
       const order = await this.store.newOrder(f['orderId']);
@@ -346,25 +456,43 @@ export class Broker {
         };
         config = this.config();
         outputs = engine.place(order, ctx);
+        auto = trader.observe(outputs, ctx.now);
         input = { kind: 'place', order, ctx, ...(loaded ? { accounts: [loaded] } : {}) };
       }
     } else if (type === 'cancel' && f['orderId']) {
+      const at = this.now();
       config = this.config();
       outputs = engine.cancel(f['orderId']);
-      input = { kind: 'cancel', orderId: f['orderId'] };
+      auto = trader.observe(outputs, at);
+      input = { kind: 'cancel', orderId: f['orderId'], at };
     } else if (type === 'reset' && f['accountId']) {
       const accountId = f['accountId'];
       const loaded = await this.ensureAccount(engine, accountId);
       const venue = this.accounts.get(accountId)?.venue;
       if (venue) {
+        const at = this.now();
         const starting = { ...(this.settings!.startingBalances[venue as Venue] ?? {}) };
         config = this.config();
         outputs = engine.reset(accountId, starting);
+        auto = trader.observe(outputs, at);
         resets.push({ accountId, epoch: engine.account(accountId).epoch, starting });
-        input = { kind: 'reset', accountId, starting, ...(loaded ? { accounts: [loaded] } : {}) };
+        input = { kind: 'reset', accountId, starting, at, ...(loaded ? { accounts: [loaded] } : {}) };
+      }
+    } else if ((type === 'strategy' || type === 'stop_auto') && f['user']) {
+      // A user's automatic trading changed (ADR 022): read it again, in order with everything else.
+      const strategy = await this.store.strategyFor(f['user']);
+      if (strategy) {
+        const loaded = strategy.accountId ? await this.ensureAccount(engine, strategy.accountId) : null;
+        const at = this.now();
+        const stop = type === 'stop_auto';
+        config = this.config();
+        auto = trader.setStrategy(strategy, stop, at);
+        outputs = auto.outputs;
+        input = { kind: 'strategy', strategy, stop, at, ...(loaded ? { accounts: [loaded] } : {}) };
       }
     }
-    if (!input || !outputs || (isEmpty(outputs) && !resets.length)) {
+    // A strategy change is journalled even when it changed no order: the auto-trader's state did.
+    if (!input || !outputs || (isEmpty(outputs) && !resets.length && input.kind !== 'strategy')) {
       // Nothing to do (already taken up, unknown, or a cancel of a finished order): move on.
       this.commandsCursor = id;
       await this.store.saveCursors(epoch, { commands: id });
@@ -377,7 +505,7 @@ export class Broker {
       outputs,
       { commands: id },
       resets,
-      streamMs(id),
+      { submittedAt: input.kind === 'strategy' ? null : streamMs(id), auto },
     );
     this.commandsCursor = id;
   }
@@ -416,12 +544,48 @@ export class Broker {
     epoch: number,
     input: JournalInput,
     outputs: Outputs,
-    cursors: { commands?: string; trades?: Record<string, string> },
+    cursors: Cursors,
     resets: { accountId: string; epoch: number; starting: Record<string, string> }[],
-    submittedAt: number | null,
+    o: {
+      /** When the command was appended (NFR-16). */
+      submittedAt: number | null;
+      auto: AutoResult | null;
+      /** When the setup transition was appended, for an input that placed automatic orders (NFR-17). */
+      setupAt?: number | null;
+    },
   ): Promise<void> {
     const engine = this.engine!;
+    const auto = o.auto;
+    const placedBy = new Map(
+      (auto?.decisions ?? []).filter((d) => d.outcome === 'placed').map((d) => [d.orderId, d]),
+    );
     const audit: AuditEntry[] = [
+      // Every automatic order is audited as placed, by the user's automatic trading (TRD-10).
+      ...(auto?.orders ?? [])
+        .filter((r) => placedBy.has(r.id))
+        .map((r) => {
+          const d = placedBy.get(r.id)!;
+          const legs = auto!.orders.filter((l) => l.parentId === r.id);
+          return {
+            action: 'practice_order.placed',
+            targetId: r.id,
+            details: {
+              source: 'auto',
+              userId: d.userId,
+              strategyId: d.strategyId,
+              strategyVersion: d.strategyVersion,
+              setupId: d.setupId,
+              runId: d.runId,
+              instrumentId: r.instrumentId,
+              side: r.side,
+              type: r.type,
+              quantity: r.quantity,
+              limitPrice: r.limitPrice,
+              stop: legs.find((l) => l.type === 'stop')?.stopPrice ?? null,
+              target: legs.find((l) => l.type === 'target')?.limitPrice ?? null,
+            },
+          };
+        }),
       ...outputs.fills.map((f) => ({
         action: 'practice_order.filled',
         targetId: f.orderId,
@@ -442,7 +606,7 @@ export class Broker {
           details: { reason: o.refusalReason, by: 'broker' },
         })),
       // `cause`: the user's cancel, a reset, a trade (the other half of a stop and target filled),
-      // or the placing itself (what a market order's book could not fill).
+      // the placing itself (what a market order's book could not fill), a setup that ended, or a stop.
       ...outputs.orders
         .filter((o) => o.status === 'cancelled')
         .map((o) => ({
@@ -456,6 +620,12 @@ export class Broker {
         targetId: r.accountId,
         details: { resetEpoch: r.epoch, startingBalances: r.starting },
       })),
+      ...(auto?.pauses ?? []).map((p) => ({
+        action: 'practice_auto.paused',
+        targetType: 'practice_strategy' as const,
+        targetId: p.strategyId,
+        details: { userId: p.userId, until: p.until, result: p.result, asset: p.asset },
+      })),
     ];
     await this.store.apply({
       epoch,
@@ -465,6 +635,15 @@ export class Broker {
       resets,
       cursors,
       audit,
+      auto: auto
+        ? {
+            orders: auto.orders,
+            decisions: auto.decisions,
+            days: auto.days,
+            pauses: auto.pauses,
+            lines: autoDigestLines(auto),
+          }
+        : null,
       now: this.now(),
     });
     if (this.pendingConfig !== null) {
@@ -474,12 +653,15 @@ export class Broker {
     await this.publish(
       outputs,
       resets.map((r) => r.accountId),
+      auto,
     );
-    if (submittedAt !== null) this.latency?.record(Math.max(0, this.now() - submittedAt));
+    if (o.submittedAt !== null) this.latency?.record(Math.max(0, this.now() - o.submittedAt));
+    const setupAt = o.setupAt ?? null;
+    if (setupAt !== null) this.autoLatency?.record(Math.max(0, this.now() - setupAt));
   }
 
-  /** Tells each owner what changed: orders, fills and balances, on `practice:events`. */
-  private async publish(outputs: Outputs, resetAccounts: string[]): Promise<void> {
+  /** Tells each owner what changed: orders, fills, balances and automatic trading, on `practice:events`. */
+  private async publish(outputs: Outputs, resetAccounts: string[], auto: AutoResult | null): Promise<void> {
     const orderIds = [
       ...new Set([...outputs.orders.map((o) => o.id), ...outputs.fills.map((f) => f.orderId)]),
     ];
@@ -541,8 +723,56 @@ export class Broker {
       for (const account of await practiceAccounts(this.o.db, accountRows))
         add(userOf(account.id), 'practice.account', { account });
     }
+    const automatic = (user: string, m: PracticeAutomaticMessage) => add(user, 'practice.automatic', m);
+    const decisions = auto?.decisions ?? [];
+    const trees = await this.store.withLegs(
+      decisions.map((d) => d.orderId).filter((id): id is string => id !== null),
+    );
+    for (const d of decisions) {
+      const decision: AutoDecision = {
+        id: d.id,
+        setupId: d.setupId,
+        instrumentId: d.instrumentId,
+        pattern: d.pattern,
+        outcome: d.outcome,
+        reason: d.reason,
+        orderId: d.orderId,
+        order: d.orderId ? autoOrderOf(d.orderId, trees) : null,
+        strategyVersion: d.strategyVersion,
+        decidedAt: d.decidedAt,
+      };
+      automatic(d.userId, { event: 'decision', decision });
+    }
+    for (const p of auto?.pauses ?? [])
+      automatic(p.userId, { event: 'paused', at: p.at, until: p.until, result: p.result, asset: p.asset });
+    if (auto?.stopped)
+      automatic(auto.stopped.userId, { event: 'stopped', cancelled: auto.stopped.cancelled });
     await pipe.exec();
   }
+}
+
+/** A buy's size and its three prices, from it and its legs. */
+export function autoOrderOf(
+  buyId: string,
+  rows: readonly {
+    id: string;
+    parent_id: string | null;
+    type: string;
+    quantity: string;
+    limit_price: string | null;
+    stop_price: string | null;
+  }[],
+): AutoDecision['order'] {
+  const buy = rows.find((r) => r.id === buyId);
+  if (!buy?.limit_price) return null;
+  const leg = (type: string) => rows.find((r) => r.parent_id === buyId && r.type === type);
+  const n = (v: string | null | undefined) => (v === null || v === undefined ? null : dec(v).toString());
+  return {
+    quantity: dec(buy.quantity).toString(),
+    limitPrice: dec(buy.limit_price).toString(),
+    stop: n(leg('stop')?.stop_price),
+    target: n(leg('target')?.limit_price),
+  };
 }
 
 function toFields(list: string[]): Record<string, string> {

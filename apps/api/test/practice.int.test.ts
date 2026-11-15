@@ -3,6 +3,7 @@ import { Redis } from 'ioredis';
 import { io, type Socket } from 'socket.io-client';
 import { afterAll, beforeAll, beforeEach, describe, expect, inject, it } from 'vitest';
 import {
+  DEFAULT_AUTO_RULES,
   DEFAULT_PRACTICE_SETTINGS,
   type Envelope,
   PRACTICE_EVENTS_STREAM,
@@ -675,6 +676,316 @@ describe('practice settings (admin)', () => {
   });
 });
 
+describe('automatic practice trading (ADR 022, Phase 16)', () => {
+  const ETH = '019a6f00-0000-7000-8000-000000000002';
+  const strategyOf = (userId: string) =>
+    owner.selectFrom('trading.strategies').selectAll().where('user_id', '=', userId).executeTakeFirst();
+
+  it('starts switched off with the recommended rules, and saves the user’s own against the version read, audited (16.7)', async () => {
+    const carol = await createUser(h, 'viewer');
+    const token = await tokenFor(h, carol);
+    const first = await api('GET', '/practice/automatic', token);
+    expect(first.status).toBe(200);
+    expect(first.body).toEqual({
+      enabled: false,
+      rules: DEFAULT_AUTO_RULES,
+      version: 0,
+      pausedUntil: null,
+      updatedAt: null,
+      today: { orders: 0, result: '0', asset: 'USDT' },
+    });
+    expect(await strategyOf(carol.id)).toBeUndefined();
+
+    const rules = { ...DEFAULT_AUTO_RULES, instrumentIds: [BTC, ETH], minScore: 80, riskPct: 0.5 };
+    const saved = await api('PUT', '/practice/automatic', token, { version: 0, rules });
+    expect(saved.status).toBe(200);
+    expect(saved.body).toMatchObject({ enabled: false, rules, version: 1 });
+    expect(await lastCommand()).toMatchObject({ type: 'strategy', user: carol.id });
+    // Read before that change: refused, so a second tab cannot overwrite it unseen.
+    const stale = await api('PUT', '/practice/automatic', token, { version: 0, rules: DEFAULT_AUTO_RULES });
+    expect(stale.status).toBe(409);
+    // Pairs must be practice pairs on the rules' venue; risk at most 2 % a trade; nothing unknown.
+    for (const bad of [
+      { ...rules, instrumentIds: [BTC_CB] },
+      { ...rules, instrumentIds: [USDT_USD] },
+      { ...rules, riskPct: 3 },
+      { ...rules, leverage: 2 },
+    ]) {
+      const r = await api('PUT', '/practice/automatic', token, { version: 1, rules: bad });
+      expect(r.status, JSON.stringify(bad)).toBe(400);
+    }
+    const row = await strategyOf(carol.id);
+    expect(row).toMatchObject({ enabled: false, version: 1, rules, updated_by: carol.id });
+    expect((await audit(row!.id)).map((a) => [a.action, a.actor_user_id, a.target_type])).toEqual([
+      ['practice_auto.rules_changed', carol.id, 'practice_strategy'],
+    ]);
+  });
+
+  it('switches on only with the rules the user confirmed, and off again; the stop button tells the broker to cancel (16.3)', async () => {
+    const dave = await createUser(h, 'analyst');
+    const token = await tokenFor(h, dave);
+    // Switching on before saving anything confirms the recommended rules, and opens the accounts.
+    expect((await api('POST', '/practice/automatic/on', token, { version: 1 })).status).toBe(409);
+    const on = await api('POST', '/practice/automatic/on', token, { version: 0 });
+    expect(on.status).toBe(200);
+    expect(on.body).toMatchObject({ enabled: true, version: 1, rules: DEFAULT_AUTO_RULES });
+    expect(await lastCommand()).toMatchObject({ type: 'strategy', user: dave.id });
+    const accounts = await owner
+      .selectFrom('trading.accounts')
+      .select('venue_id')
+      .where('user_id', '=', dave.id)
+      .execute();
+    expect(accounts.map((a) => a.venue_id).sort()).toEqual(['binance', 'coinbase', 'replay']);
+
+    const off = await api('POST', '/practice/automatic/off', token);
+    expect(off.body).toMatchObject({ enabled: false, version: 2 });
+    // Already off: nothing changes, and the broker is not told again.
+    const before = await redis.xlen(PRACTICE_COMMANDS_STREAM);
+    expect((await api('POST', '/practice/automatic/off', token)).body).toMatchObject({ version: 2 });
+    expect(await redis.xlen(PRACTICE_COMMANDS_STREAM)).toBe(before);
+
+    // A working automatic buy: the stop asks the broker to cancel it, and answers 202 until it has.
+    const account = await owner
+      .selectFrom('trading.accounts')
+      .select(['id', 'reset_epoch'])
+      .where('user_id', '=', dave.id)
+      .where('venue_id', '=', 'binance')
+      .executeTakeFirstOrThrow();
+    const buy = randomUUID();
+    await owner
+      .insertInto('trading.orders')
+      .values({
+        id: buy,
+        account_id: account.id,
+        instrument_id: BTC,
+        client_order_id: `auto:${randomUUID()}`,
+        side: 'buy',
+        type: 'limit',
+        quantity: '0.5',
+        limit_price: '99',
+        stop_price: null,
+        status: 'open',
+        refusal_reason: null,
+        parent_id: null,
+        oco_group: null,
+        source: 'auto',
+        setup_id: randomUUID(),
+        reset_epoch: account.reset_epoch,
+      })
+      .execute();
+    const pending = await api('POST', '/practice/automatic/stop', token);
+    expect(pending.status).toBe(202);
+    expect(pending.body).toMatchObject({ enabled: false, version: 3 });
+    expect(await lastCommand()).toMatchObject({ type: 'stop_auto', user: dave.id });
+    await owner.updateTable('trading.orders').set({ status: 'cancelled' }).where('id', '=', buy).execute();
+    expect((await api('POST', '/practice/automatic/stop', token)).status).toBe(200);
+    const row = await strategyOf(dave.id);
+    expect((await audit(row!.id)).map((a) => [a.action, a.details])).toEqual([
+      ['practice_auto.switched_on', { version: 1, rules: DEFAULT_AUTO_RULES }],
+      ['practice_auto.switched_off', { version: 2 }],
+      ['practice_auto.stopped', { version: 3, liveOrders: 1 }],
+      ['practice_auto.stopped', { version: 4, liveOrders: 0 }],
+    ]);
+  });
+
+  it('shows the decision log newest first, with each order, and only the user’s own (16.1)', async () => {
+    const erin = await createUser(h, 'viewer');
+    const token = await tokenFor(h, erin);
+    await api('PUT', '/practice/automatic', token, { version: 0, rules: DEFAULT_AUTO_RULES });
+    const row = (await strategyOf(erin.id))!;
+    const account =
+      (await owner
+        .selectFrom('trading.accounts')
+        .select(['id', 'reset_epoch'])
+        .where('user_id', '=', erin.id)
+        .where('venue_id', '=', 'binance')
+        .executeTakeFirst()) ?? null;
+    // The api opens accounts on first use; the strategy alone did not.
+    expect(account).toBeNull();
+    await api('GET', '/practice/account', token);
+    const binance = await owner
+      .selectFrom('trading.accounts')
+      .select(['id', 'reset_epoch'])
+      .where('user_id', '=', erin.id)
+      .where('venue_id', '=', 'binance')
+      .executeTakeFirstOrThrow();
+    const setupId = randomUUID();
+    const buy = randomUUID();
+    const base = {
+      account_id: binance.id,
+      instrument_id: BTC,
+      quantity: '0.5',
+      status: 'open' as const,
+      refusal_reason: null,
+      source: 'auto' as const,
+      setup_id: setupId,
+      reset_epoch: binance.reset_epoch,
+    };
+    await owner
+      .insertInto('trading.orders')
+      .values([
+        {
+          ...base,
+          id: buy,
+          client_order_id: `auto:${setupId}`,
+          side: 'buy',
+          type: 'limit',
+          limit_price: '99',
+          stop_price: null,
+          parent_id: null,
+          oco_group: null,
+        },
+        {
+          ...base,
+          id: randomUUID(),
+          client_order_id: `auto:${setupId}:stop`,
+          side: 'sell',
+          type: 'stop',
+          limit_price: null,
+          stop_price: '97',
+          parent_id: buy,
+          oco_group: buy,
+          status: 'pending',
+        },
+        {
+          ...base,
+          id: randomUUID(),
+          client_order_id: `auto:${setupId}:target`,
+          side: 'sell',
+          type: 'target',
+          limit_price: '105',
+          stop_price: null,
+          parent_id: buy,
+          oco_group: buy,
+          status: 'pending',
+        },
+      ])
+      .execute();
+    const decision = (n: number, extra: Record<string, unknown>) => ({
+      id: randomUUID(),
+      strategy_id: row.id,
+      user_id: erin.id,
+      setup_id: randomUUID(),
+      run_id: randomUUID(),
+      instrument_id: BTC,
+      pattern: 'htf_order_block',
+      outcome: 'skipped' as const,
+      reason: 'score',
+      order_id: null,
+      strategy_version: 1,
+      decided_at: new Date(Date.UTC(2026, 10, 16, 10, n)),
+      ...extra,
+    });
+    await owner
+      .insertInto('trading.auto_decisions')
+      .values([
+        decision(1, {}),
+        decision(2, { setup_id: setupId, outcome: 'placed', reason: null, order_id: buy }),
+        decision(3, { reason: 'open_limit' }),
+      ])
+      .execute();
+    const page1 = await api('GET', '/practice/automatic/decisions?limit=2', token);
+    expect(page1.status).toBe(200);
+    const body1 = page1.body as { items: Record<string, unknown>[]; nextCursor: string | null };
+    expect(body1.items.map((d) => [d['outcome'], d['reason']])).toEqual([
+      ['skipped', 'open_limit'],
+      ['placed', null],
+    ]);
+    expect(body1.items[1]).toMatchObject({
+      setupId,
+      orderId: buy,
+      pattern: 'htf_order_block',
+      order: { quantity: '0.5', limitPrice: '99', stop: '97', target: '105' },
+      strategyVersion: 1,
+      decidedAt: Date.UTC(2026, 10, 16, 10, 2),
+    });
+    const page2 = await api('GET', `/practice/automatic/decisions?limit=2&cursor=${body1.nextCursor}`, token);
+    expect(
+      (page2.body as { items: { reason: string }[]; nextCursor: null }).items.map((d) => d.reason),
+    ).toEqual(['score']);
+    // Nobody else's.
+    expect((await api('GET', '/practice/automatic/decisions', bobToken)).body).toEqual({
+      items: [],
+      nextCursor: null,
+    });
+
+    // Today's figures for the account its rules trade on.
+    await owner
+      .insertInto('trading.auto_days')
+      .values({
+        account_id: binance.id,
+        day: new Date(h.clock.now).toISOString().slice(0, 10),
+        orders: 2,
+        result: '-12.5',
+      })
+      .execute();
+    const until = h.clock.now + 3_600_000;
+    await owner
+      .updateTable('trading.strategies')
+      .set({ paused_until: new Date(until) })
+      .where('id', '=', row.id)
+      .execute();
+    expect((await api('GET', '/practice/automatic', token)).body).toMatchObject({
+      today: { orders: 2, result: '-12.5', asset: 'USDT' },
+      pausedUntil: until,
+    });
+  });
+
+  it('keeps the "auto:" order keys for automatic orders', async () => {
+    const clientOrderId = `auto:${randomUUID()}`;
+    const r = await api(
+      'POST',
+      '/practice/orders',
+      aliceToken,
+      order({ clientOrderId, side: 'buy', type: 'market', quantity: '0.01' }),
+    );
+    expect(r.status).toBe(400);
+    expect(await storedOrders(clientOrderId)).toEqual([]);
+  });
+
+  it('delivers its decisions, pauses and stops on the owner’s practice channel', async () => {
+    const socket = io(h.base + WS_NAMESPACE, {
+      path: WS_PATH,
+      transports: ['websocket'],
+      auth: { token: aliceToken },
+      reconnection: false,
+    });
+    sockets.push(socket);
+    await new Promise<void>((resolve, reject) => {
+      socket.once('connect', () => resolve());
+      socket.once('connect_error', reject);
+    });
+    const got: Envelope[] = [];
+    socket.on('message', (m: Envelope) => got.push(m));
+    await socket.emitWithAck('subscribe', { channels: ['practice'] });
+    await redis.xadd(
+      PRACTICE_EVENTS_STREAM,
+      '*',
+      'type',
+      'practice.automatic',
+      'user',
+      alice.id,
+      'data',
+      JSON.stringify({ event: 'stopped', cancelled: 2 }),
+    );
+    await redis.xadd(
+      PRACTICE_EVENTS_STREAM,
+      '*',
+      'type',
+      'practice.automatic',
+      'user',
+      bob.id,
+      'data',
+      JSON.stringify({ event: 'stopped', cancelled: 1 }),
+    );
+    for (let i = 0; i < 100 && got.length < 1; i++) await new Promise((r) => setTimeout(r, 50));
+    await new Promise((r) => setTimeout(r, 200));
+    expect(got.map((m) => [m.ch, m.type, m.data])).toEqual([
+      ['practice', 'practice.automatic', { event: 'stopped', cancelled: 2 }],
+    ]);
+  });
+});
+
 describe('the audit trail (criterion 14.8)', () => {
   it('records every practice action, and the hash chain verifies', async () => {
     const actions = await owner
@@ -685,6 +996,10 @@ describe('the audit trail (criterion 14.8)', () => {
       .execute();
     expect(actions.map((a) => a.action).sort()).toEqual([
       'practice_account.reset_requested',
+      'practice_auto.rules_changed',
+      'practice_auto.stopped',
+      'practice_auto.switched_off',
+      'practice_auto.switched_on',
       'practice_order.cancel_requested',
       'practice_order.placed',
       'practice_order.refused',

@@ -420,6 +420,7 @@ export type MarketMessageType =
   | 'practice.order'
   | 'practice.fill'
   | 'practice.account'
+  | 'practice.automatic'
   | 'health.update';
 
 /** A stored or live candle in its wire form (structural, so this package stays dependency-free). */

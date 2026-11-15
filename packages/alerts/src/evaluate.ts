@@ -103,8 +103,9 @@ export class AlertEvaluator {
     const out: { rule: EvaluableRule; match: AlertMatch }[] = [];
     for (const rule of rules) {
       if (SOURCE_OF[rule.condition.kind] !== source.kind || !inScope(rule, source)) continue;
-      // A practice order concerns its owner alone.
-      if (source.kind === 'practice' && rule.ownerId !== source.userId) continue;
+      // A practice order, or automatic practice trading, concerns its owner alone.
+      if ((source.kind === 'practice' || source.kind === 'practice_pause') && rule.ownerId !== source.userId)
+        continue;
       const found = this.find(rule, source);
       if (!found) continue;
       const { title, body } = describe(rule, source, found);
@@ -320,14 +321,28 @@ export class AlertEvaluator {
         if (!leg || !c.on.includes(leg)) return null;
         return practiceFound(source, leg);
       }
+      case 'practice_auto_order': {
+        if (source.kind !== 'practice' || source.event !== 'auto_placed') return null;
+        return practiceFound(source, 'auto');
+      }
+      case 'practice_auto_paused': {
+        if (source.kind !== 'practice_pause') return null;
+        // Once per pause: the day and the user it paused.
+        return {
+          dedupeKey: `practice-pause:${source.userId}:${source.until}`,
+          subject: source.userId,
+          refs: { until: source.until },
+          facts: { result: source.result, asset: source.asset },
+        };
+      }
     }
   }
 }
 
-/** Once per order and outcome: the order's end, or its stop's or target's first sale. */
+/** Once per order and outcome: the order's end, its stop's or target's first sale, or its automatic placing. */
 function practiceFound(
   source: Extract<AlertSource, { kind: 'practice' }>,
-  what: 'done' | 'stop' | 'target',
+  what: 'done' | 'stop' | 'target' | 'auto',
 ): Found {
   return {
     dedupeKey: `practice:${source.orderId}:${what}`,

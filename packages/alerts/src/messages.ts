@@ -179,6 +179,11 @@ export function describe(
         body: source.detail,
       };
     case 'practice': {
+      if (source.event === 'auto_placed')
+        return {
+          title: `${source.instrument.name}: automatic practice buy placed`,
+          body: `Your automatic practice trading placed a limit buy of ${source.quantity} at ${source.price}, with its stop and target, on a setup that matched your rules. Practice trading: simulated, no real money.`,
+        };
       const what =
         source.event === 'order_done'
           ? `practice ${source.side} filled`
@@ -190,6 +195,11 @@ export function describe(
         body: `${source.side === 'buy' ? 'Bought' : 'Sold'} ${source.quantity} at ${source.price} on average. Practice trading: simulated, no real money.`,
       };
     }
+    case 'practice_pause':
+      return {
+        title: 'Automatic practice trading paused',
+        body: `Today's closed automatic trades come to ${source.result} ${source.asset}, which reaches your daily loss limit. It places nothing more until ${utc(source.until)}. Practice trading: simulated, no real money.`,
+      };
   }
   return { title: rule.name, body: '' };
 }

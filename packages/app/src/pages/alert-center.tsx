@@ -889,6 +889,20 @@ function ConditionFields({
           onChange={(v) => onChange({ ...c, on: v ?? [] })}
         />
       );
+    case 'practice_auto_order':
+      return (
+        <p className="text-sm text-fg-muted">
+          When your automatic practice trading places a buy, with its stop and target, on a setup that matched
+          your rules. Practice trading is simulated: no real money, and no order reaches an exchange.
+        </p>
+      );
+    case 'practice_auto_paused':
+      return (
+        <p className="text-sm text-fg-muted">
+          When your automatic practice trading reaches your daily loss limit and pauses until 00:00 UTC.
+          Simulated: no real money.
+        </p>
+      );
   }
 }
 

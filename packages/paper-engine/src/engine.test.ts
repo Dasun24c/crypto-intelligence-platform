@@ -437,7 +437,13 @@ describe('accounts', () => {
       orderId: null,
       fillId: null,
     });
-    expect(e.account('acc')).toEqual({ id: 'acc', venue: 'binance', epoch: 1, available: { USDT: '10000' } });
+    expect(e.account('acc')).toEqual({
+      id: 'acc',
+      venue: 'binance',
+      epoch: 1,
+      available: { USDT: '10000' },
+      starting: { USDT: '10000' },
+    });
     expect(e.liveOrders()).toEqual([]);
   });
 

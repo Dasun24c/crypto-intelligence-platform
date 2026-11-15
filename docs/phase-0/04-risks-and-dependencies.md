@@ -66,11 +66,21 @@ Likelihood (L) and impact (I) are rated High, Medium or Low.
 |---|---|---|---|---|---|
 | R31 | Practice results are taken as proof that a setup or a strategy works | M | H | Banners; "simulated" on every result; no leaderboards or performance claims; setup statistics stay "historical observations" (Phase 12) | 14 |
 | R32 | Simulated fills are better than real fills would be: no market impact, no queue, thin PAXG books | H | M | Limits fill only on trades through the price; partial fills capped by the traded quantity; slippage from the book; a "thin book" flag; the limits stated in the app | 14 |
-| R33 | Order screens next to the analysis turn the platform into a signal service | M | H | A person places every order; nothing trades automatically; the AI kept out of orders; a dependency rule (14.6) | 14 onward |
+| R33 | Order screens next to the analysis turn the platform into a signal service | M | H | A person places every manual order; automatic trading only under a user's own rules, on practice balances (revision 5); the AI kept out of orders; a dependency rule (14.6) | 14 onward |
 | R34 | A test-network key leaks, or some code path reaches a production exchange | L | H | Keys created and kept on the server, encrypted; host allow-list; the narrowed CI check; one isolated broker service | 15 |
 | R35 | The platform's order state drifts from the venue's (lost acknowledgements, reconnects) | M | M | Idempotent client order ids; user-data stream plus REST reconciliation; chaos tests | 15 |
 | R36 | Test-network resets, about monthly and without notice, wipe orders and balances | H | L | Detect resets, mark the affected orders, tell the user | 15 |
 | R37 | Real money: financial loss from a bug, and regulatory exposure | — | H | Not in the initial release; the entry conditions in proposal 001 §6 | After the initial release |
+
+### Automatic practice trading (proposal 002, 2026-11-15)
+
+| ID | Risk | L | I | Mitigation | Phase |
+|---|---|---|---|---|---|
+| R38 | Automatic practice results are taken as proof that the rules work | H | H | "Simulated" on every result; the number of trades and the period shown with every figure; no performance claims; proposal 002 §3's caution in the app | 16 |
+| R39 | Rules trade too often, or lose quickly | M | M | Off by default; limits on open trades, orders per day and daily loss; the stop button | 16 |
+| R40 | Pressure to point the automatic trader at real money | M | H | Real money stays out; it would need its own proposal and proposal 001's stage C conditions | 16 onward |
+| R41 | A decision bug: the wrong pair, size or level | L | M | A pure, deterministic decider; property tests; replays; the decision log and audit | 16 |
+| R42 | A new analysis ruleset changes which setups qualify | M | L | The ruleset and rules versions recorded with every decision | 16 |
 
 ## 2. Third-party dependency register
 
