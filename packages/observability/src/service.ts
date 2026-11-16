@@ -1,6 +1,12 @@
 import type { Meter } from '@opentelemetry/api';
 import { Redis } from 'ioredis';
-import type { ServiceName } from '@cip/contracts';
+import {
+  ACTIVITY_SERVICES,
+  type ActivityCounters,
+  type ActivityService,
+  type ServiceName,
+} from '@cip/contracts';
+import { ActivityPublisher } from './activity.js';
 import { HeartbeatPublisher, type HeartbeatProbe } from './heartbeat.js';
 import { INSTANCE_ID, PROCESS_STARTED_AT } from './instance.js';
 import { createLogger, type Logger } from './logger.js';
@@ -27,6 +33,8 @@ export interface ServiceContext {
 
 export interface RunningService {
   probe(): HeartbeatProbe | Promise<HeartbeatProbe>;
+  /** What it did during the last second, for the 3D brain (ADR 024); called once a second. */
+  activity?(): ActivityCounters | Promise<ActivityCounters>;
   readiness(): Promise<Readiness>;
   stop(): Promise<void>;
 }
@@ -70,6 +78,16 @@ export async function runService(
     log,
   );
   heartbeat.start();
+  const activity =
+    running.activity && (ACTIVITY_SERVICES as readonly string[]).includes(service)
+      ? new ActivityPublisher(
+          redis,
+          { service: service as ActivityService, instance: INSTANCE_ID },
+          () => running.activity!(),
+          log,
+        )
+      : null;
+  activity?.start();
   log.info({ opsPort: config.OPS_PORT, tracing: tracing.enabled }, `${service} started`);
 
   let stopping = false;
@@ -80,6 +98,7 @@ export async function runService(
     process.off('SIGINT', onSigint);
     log.info({ reason }, `${service} stopping`);
     try {
+      activity?.stop();
       await heartbeat.stop();
       await running.stop();
       ops.close();

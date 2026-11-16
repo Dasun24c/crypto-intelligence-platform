@@ -1,7 +1,7 @@
 import { Redis } from 'ioredis';
 import { afterAll, describe, expect, inject, it } from 'vitest';
-import { HEARTBEAT_STALE_MS } from '@cip/contracts';
-import { HeartbeatPublisher, type Logger, readHeartbeats, runService } from '../src/index.ts';
+import { ACTIVITY_STREAM, type ActivityReport, HEARTBEAT_STALE_MS } from '@cip/contracts';
+import { HeartbeatPublisher, INSTANCE_ID, type Logger, readHeartbeats, runService } from '../src/index.ts';
 
 const redis = new Redis(inject('redisUrl'));
 afterAll(() => {
@@ -59,7 +59,7 @@ describe('heartbeats in Redis', () => {
 });
 
 describe('runService', () => {
-  it('starts the ops endpoint and heartbeat, then shuts down in order', async () => {
+  it('starts the ops endpoint, the heartbeat and the activity reports, then shuts down in order', async () => {
     let stopped = false;
     const handle = await runService(
       'ingestor',
@@ -73,6 +73,9 @@ describe('runService', () => {
       () =>
         Promise.resolve({
           probe: () => ({ status: 'ok' as const, detail: 'runService test' }),
+          activity: () => ({
+            ingest: { msgsPerSec: { binance: 12.5 }, venues: { binance: 'open' as const } },
+          }),
           readiness: () => Promise.resolve({ status: 'ok' as const, detail: 'ready' }),
           stop: () => {
             stopped = true;
@@ -80,14 +83,30 @@ describe('runService', () => {
           },
         }),
     );
-    await new Promise((r) => setTimeout(r, 200));
+    // The first activity report comes a second after the start.
+    await new Promise((r) => setTimeout(r, 1_300));
     const beats = await readHeartbeats(redis);
     const mine = beats.find((h) => h.detail === 'runService test');
     expect(mine).toBeDefined();
     expect(Date.now() - mine!.sentAt).toBeLessThan(HEARTBEAT_STALE_MS);
+    // Each second, what the service did (ADR 024), on sys:activity for the api.
+    const reports = async () =>
+      (await redis.xrange(ACTIVITY_STREAM, '-', '+'))
+        .map(([, f]) => JSON.parse(f[3]!) as ActivityReport)
+        .filter((r) => r.instance === INSTANCE_ID);
+    const mineReported = await reports();
+    expect(mineReported.length).toBeGreaterThanOrEqual(1);
+    expect(mineReported.at(-1)).toMatchObject({
+      service: 'ingestor',
+      ingest: { msgsPerSec: { binance: 12.5 }, venues: { binance: 'open' } },
+    });
 
     await handle.stop('test');
     expect(stopped).toBe(true);
+    // Stopped, it reports no more.
+    const count = (await reports()).length;
+    await new Promise((r) => setTimeout(r, 1_200));
+    expect((await reports()).length).toBe(count);
     expect((await readHeartbeats(redis)).some((h) => h.detail === 'runService test')).toBe(false);
   });
 });

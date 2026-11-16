@@ -479,6 +479,12 @@ interface ActivitySnapshot {
 interface ActivityPulse { ts: Ts; kind: 'pattern' | 'sweep' | 'mss' | 'ai_completed' | 'alert'; refId: string; instrumentId?: string; }
 ```
 
+> **As implemented in Phase 10** ([ADR 024](../adr/024-activity-feed-and-3d-brain.md)). `system:activity` is a global, non-durable channel for every role (all have `dashboards.view`):
+>
+> - **Source**: each ingestor, analyzer and jobs instance appends a report a second to the Redis stream `sys:activity` (`type` `activity`, `data` an `ActivityReport`: `{ service, instance, at, ingest?, analysis?, ai? }`, what it did during that second). The api keeps each instance's latest report for 5 s and adds what it reads on its other streams: alerts fired in the last minute (`alerts:events`), the AI's last result (`ai:events`, and the database at start) and the errors (System Health, every 5 s while anyone watches).
+> - **`activity.snapshot`**: every 500 ms while anyone is subscribed; a subscribe answers with the current one. `analysis.activeJobs` is the instruments that analysed candles during the reporting second (a routine wake-up that finds nothing due does not count), and `ai.inflight` the most AI calls at once during it. `ingest.state` is `ok` when every venue is held by an instance and open, `degraded` when one is not, `down` when no ingestor reports. Each error may carry a `detail` (what System Health says): `critical` for the database or Redis down, or a service with no live instance; `warning` for a degraded service.
+> - **`activity.pulse`**: at once, at most 20 a second per api instance: `pattern` (a setup transition; `refId` the setup), `sweep` and `mss` (SMC detections), `ai_completed` (`ai.completed`; `refId` the analysis), `alert` (`alert.fired`; `refId` the stream entry, with no user or instrument: alerts are private).
+
 > **As implemented in Phase 3.** The `indicators:{instrumentId}:{tf}` channel works as follows:
 >
 > - **Source**: it is read from the `an:events` stream, which the analyzer writes. Its `seq` is that stream's entry id, so it is compared only with other `indicators:` seqs.

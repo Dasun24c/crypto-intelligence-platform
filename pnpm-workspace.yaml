@@ -84,6 +84,10 @@ catalog:
   '@fontsource-variable/inter': 5.3.0
   # Charts (Phase 7; feasibility §7.3): Apache-2.0, needs the NOTICE text and the tradingview.com link
   lightweight-charts: 5.2.1
+  # 3D (Phase 10; feasibility §7.2, ADR 024): MIT. R3F 9.8 supports React >= 19 < 19.4
+  three: 0.187.0
+  '@types/three': 0.187.0
+  '@react-three/fiber': 9.8.2
   jsdom: 31.0.0
   '@testing-library/react': 16.3.3
   '@testing-library/user-event': 14.6.8

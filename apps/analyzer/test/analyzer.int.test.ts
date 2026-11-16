@@ -204,6 +204,11 @@ describe('analyzer runs (Phase 3)', () => {
     }
     // Warm-up points are history: none of them is published.
     expect(await events()).toEqual([]);
+    // The brain's counters (ADR 024): the warm-up analysed SOL's candles; ETH on Coinbase is held back.
+    expect(a.activity().analysis).toMatchObject({ activeJobs: 1, backlog: 0, paused: 1 });
+    // Nothing analysed since: nothing to report, however often the actors are woken.
+    await a.tick();
+    expect(a.activity().analysis).toMatchObject({ candlesPerSec: 0, activeJobs: 0 });
     expect(await status(SOL)).toMatchObject({ runId: run.id, status: 'running', paused: false, lagSec: 0 });
     // An instrument without any history waits for it, and says so.
     const waiting = await status(ETH_CB);
