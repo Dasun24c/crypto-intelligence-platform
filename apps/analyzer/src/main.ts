@@ -50,6 +50,7 @@ async function main(): Promise<void> {
     replays.start();
     return {
       probe: () => analyzer.probe(),
+      activity: () => analyzer.activity(),
       readiness: () => status.readiness(),
       stop: async () => {
         await replays.stop();

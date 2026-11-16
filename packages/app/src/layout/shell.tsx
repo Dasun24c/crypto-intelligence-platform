@@ -2,6 +2,7 @@ import { Link, Outlet } from '@tanstack/react-router';
 import {
   Activity,
   Bell,
+  Brain,
   BrainCircuit,
   CalendarDays,
   ChartCandlestick,
@@ -44,6 +45,7 @@ const NAV: NavItem[] = [
   { to: '/setups', label: 'Setup Scanner', icon: ScanSearch, capability: 'dashboards.view' },
   { to: '/calendar', label: 'Economic Calendar', icon: CalendarDays, capability: 'dashboards.view' },
   { to: '/ai', label: 'AI Intelligence', icon: BrainCircuit, capability: 'dashboards.view' },
+  { to: '/brain', label: 'System Brain', icon: Brain, capability: 'dashboards.view' },
   { to: '/alerts', label: 'Alert Center', icon: Bell, capability: 'alerts.own' },
   { to: '/practice', label: 'Practice Trading', icon: FlaskConical, capability: 'practice.own' },
   { to: '/system', label: 'System Health', icon: Activity },

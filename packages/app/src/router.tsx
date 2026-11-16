@@ -120,6 +120,13 @@ const routeTree = rootRoute.addChildren([
     validateSearch: readAiSearch,
     component: lazyRouteComponent(() => import('./pages/ai-center.js'), 'AiCenterPage'),
   }),
+  // Phase 10: the 3D brain, driven by the services' activity (every role).
+  createRoute({
+    getParentRoute: () => rootRoute,
+    path: '/brain',
+    beforeLoad: requireCapability('dashboards.view'),
+    component: lazyRouteComponent(() => import('./pages/system-brain.js'), 'SystemBrainPage'),
+  }),
   // Phase 14: practice trading on the user's own practice account (every role).
   createRoute({
     getParentRoute: () => rootRoute,

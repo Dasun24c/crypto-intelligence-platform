@@ -2,7 +2,7 @@
 
 | | |
 |---|---|
-| Status | **Built; waiting for your Grok key for criterion 9.1, then your acceptance.** Five of the six criteria are met; 9.1 needs a real call, with your key. Committed on 2026-11-15 at your request, on the branch `phase-9/ai-intelligence`, pushed, and open as pull request #4 into `phase-16/automatic-practice-trading` |
+| Status | **Accepted 2026-11-16** (you asked to start Phase 10), with criterion 9.1 accepted in part and carried forward: a real Grok call needs your key in `.secrets-jobs/grok-api-key` on the computer that runs the stack. Five of the six criteria are met. Committed on 2026-11-15 at your request, on the branch `phase-9/ai-intelligence`, pushed, and open as pull request #4 into `phase-16/automatic-practice-trading`; its checks pass since `efc3bbb` |
 | Date | 2026-11-15 |
 | Scope | [Implementation plan, Phase 9](../phase-0/08-implementation-plan.md#phase-9--ai-intelligence), REQUIREMENTS §4 and §10 (AI-01–AI-05, SEC-01, SEC-03, NFR-08), [architecture §8](../phase-0/03-architecture.md#8-ai-pipeline), [ADR 011](../adr/011-ai-grounded-citations.md), [ADR 023](../adr/023-ai-pipeline.md) |
 | Evidence | This machine (Windows 11, Docker Desktop, Node.js 26.13.0); the local Compose stack streaming live public data from Binance and Coinbase, redeployed with Phase 9 at 15:13 UTC on 2026-11-15, without a Grok key |
@@ -23,7 +23,7 @@ Grok now explains what the platform's own analysis found. **Every answer is chec
 
 | # | Criterion | Result | Evidence |
 |---|---|---|---|
-| 9.1 | In staging, a real Grok call on real context produces an accepted, stored analysis | **Waiting for your key.** Everything up to the call runs on the live stack; the call, the checks and the storage are tested against a fake xAI API | [9.1](#91-a-real-call) |
+| 9.1 | In staging, a real Grok call on real context produces an accepted, stored analysis | **Met in part, accepted by you on 2026-11-16; the real call is carried forward until your key is in place.** Everything up to the call runs on the live stack; the call, the checks and the storage are tested against a fake xAI API | [9.1](#91-a-real-call) |
 | 9.2 | 50+ crafted bad responses are all rejected (invented levels, unknown ids, guarantee language, "XAUUSD", a missing gold note while closed); valid responses are accepted | **Met**: 54 crafted answers, each rejected by the rule it breaks; valid ones accepted; a repair and a second rejection end to end in the jobs service | [9.2](#92-the-checks) |
 | 9.3 | With a test cap, calls stop exactly at the cap, the UI shows "AI budget reached", and calls resume the next day | **Met**: the jobs service against a fake API, the api, the app, and live on the stack | [9.3](#93-the-budget) |
 | 9.4 | A burst of 20 related events produces one call; an identical context within 30 min is served from cache | **Met**: the trigger follower on Valkey, the worker on the database | [9.4](#94-one-call-per-burst-and-the-cache) |
@@ -142,7 +142,7 @@ The other packages (alerts, domain, exchange-adapters, indicators, market-data, 
 
 ## Not covered, and limits
 
-- **9.1 needs your key** (above). Until the first real calls, the prompt and the checks are tuned on crafted answers: real answers may be rejected more often at first. Every rejection is kept with its reasons, so they can be read and the thresholds tuned.
+- **9.1 needs your key** (above; carried forward at the acceptance on 2026-11-16). The key file is still empty on this computer: save the key, alone on one line, in `.secrets-jobs/grok-api-key` (never in the chat); the jobs service reads it at every call, and I then make the first real call and re-check 9.1. Until the first real calls, the prompt and the checks are tuned on crafted answers: real answers may be rejected more often at first. Every rejection is kept with its reasons, so they can be read and the thresholds tuned.
 - **The default models and prices** (`grok-4.3`, the fallback `grok-4.20-0309-non-reasoning`, and their prices) come from the feasibility study; check them against your xAI console. The startup check falls back automatically if the account does not offer the model, and System Health says so.
 - **Stored analyses on the stack**: without a key, the stack's history is empty; the history and the analysis pages are tested with stored analyses in the app's unit tests and the api's integration tests.
 - **End to end in CI**: the replay stack has no live venues, so CI skips the Phase 7, 8, 14 and 16 specs; they run against the live stack, as each phase's report describes. Making them work on recorded data is work for later (Phase 13's hardening, for example).

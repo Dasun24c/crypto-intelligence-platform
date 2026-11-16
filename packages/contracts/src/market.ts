@@ -301,11 +301,13 @@ export const channels = {
   /** AI analyses (Phase 9): queued, started, completed, rejected, failed, and the budget. */
   ai: 'ai',
   systemHealth: 'system:health',
+  /** System activity for the 3D brain (Phase 10, ADR 024): `activity.snapshot` and `activity.pulse`. */
+  systemActivity: 'system:activity',
 } as const;
 
 const UUID = '[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}';
 export const CHANNEL_PATTERN = new RegExp(
-  `^(?:(?:ticker|book|trades|market|smc):${UUID}|(?:candles|indicators):${UUID}:(?:1m|5m|15m|1h|4h|1d)|setups(?::${UUID})?|calendar|alerts|practice|ai|system:health)$`,
+  `^(?:(?:ticker|book|trades|market|smc):${UUID}|(?:candles|indicators):${UUID}:(?:1m|5m|15m|1h|4h|1d)|setups(?::${UUID})?|calendar|alerts|practice|ai|system:health|system:activity)$`,
 );
 
 /**
