@@ -1,12 +1,16 @@
-import { useQueryClient } from '@tanstack/react-query';
+import { useQuery, useQueryClient } from '@tanstack/react-query';
+import { Link } from '@tanstack/react-router';
 import { type FormEvent, useId, useState } from 'react';
 import {
+  type AlertRule,
   AUTO_SKIP_REASONS,
   AUTO_SKIP_TEXT,
   type AutoDecision,
   type AutoRules,
   AutoRulesSchema,
+  type AutoSizing,
   type AutoSkipReason,
+  DEFAULT_AUTO_RULES,
   type Instrument,
   type Pattern,
   type PracticeOrder,
@@ -36,6 +40,7 @@ import {
 } from '@cip/ui';
 import { ApiError } from '../api/client.js';
 import { PracticeBanner } from '../components/practice-banner.js';
+import { ALERT_RULES_KEY, AUTO_TRADE_ALERTS, missingAutoTradeAlerts } from '../lib/alert-rules.js';
 import { formatDecimal } from '../lib/decimal.js';
 import { formatInstant } from '../lib/format.js';
 import { VENUE_LABEL } from '../lib/market.js';
@@ -47,11 +52,15 @@ import { useDisplayTimeZone, useSession } from '../session.js';
 /**
  * Automatic practice trading (Phase 16, REQUIREMENTS §11 revision 5, ADR 022): the user's own rules,
  * the switch, today's figures, the stop button and the decision log. The broker places the orders;
- * this card only changes what the user asked for. Practice balances only.
+ * this card only changes what the user asked for. Practice balances only. Since 2026-11-16 it also
+ * offers notifications of each automatic trade: alert rules of the user's own (ADR 022).
  */
 
 type NumberField =
-  'minScore' | 'minReward' | 'riskPct' | 'maxOpenTrades' | 'maxOrdersPerDay' | 'dailyLossPct';
+  'minScore' | 'minReward' | 'amount' | 'riskPct' | 'maxOpenTrades' | 'maxOrdersPerDay' | 'dailyLossPct';
+
+/** What a fixed amount is counted in: the quote currency of the account's pairs. */
+const QUOTE_OF: Record<Venue, string> = { binance: 'USDT', coinbase: 'USD', replay: 'USDT or USD' };
 
 const NUMBER_FIELDS: Readonly<
   Record<
@@ -66,6 +75,13 @@ const NUMBER_FIELDS: Readonly<
     max: 10,
     step: '0.1',
     hint: 'Target 1’s distance over the stop’s: 2 means it could win twice what it risks.',
+  },
+  amount: {
+    label: 'Amount per buy',
+    min: 1,
+    max: 100_000,
+    step: '1',
+    hint: 'Each buy spends about this much, rounded down to the pair’s quantity step and capped at the free balance.',
   },
   riskPct: {
     label: 'Risk per trade (% of the free balance)',
@@ -84,19 +100,21 @@ const NUMBER_FIELDS: Readonly<
     hint: 'When the day’s closed automatic trades lose this much, it pauses until 00:00 UTC.',
   },
 };
+/** The fields in the grid; the amount and the risk per trade sit with the size choice. */
 const NUMBER_ORDER: readonly NumberField[] = [
   'minScore',
   'minReward',
-  'riskPct',
   'maxOpenTrades',
   'maxOrdersPerDay',
   'dailyLossPct',
 ];
+const ALL_NUMBER_FIELDS = Object.keys(NUMBER_FIELDS) as NumberField[];
 
 interface RulesDraft extends Record<NumberField, string> {
   venue: Venue;
   instrumentIds: string[];
   patterns: Pattern[];
+  sizing: AutoSizing;
 }
 
 const toDraft = (r: AutoRules): RulesDraft => ({
@@ -105,6 +123,8 @@ const toDraft = (r: AutoRules): RulesDraft => ({
   patterns: [...r.patterns],
   minScore: String(r.minScore),
   minReward: String(r.minReward),
+  sizing: r.sizing,
+  amount: String(r.amount),
   riskPct: String(r.riskPct),
   maxOpenTrades: String(r.maxOpenTrades),
   maxOrdersPerDay: String(r.maxOrdersPerDay),
@@ -113,13 +133,24 @@ const toDraft = (r: AutoRules): RulesDraft => ({
 
 const num = (v: string) => (v.trim() === '' ? Number.NaN : Number(v));
 
-/** The rules from the form, or a message per field that is out of bounds. */
+/**
+ * The rules from the form, or a message per field that is out of bounds. The size setting not in use
+ * is hidden, so a value of it the form cannot show falls back to its default instead of blocking a save.
+ */
 function fromDraft(d: RulesDraft): { rules: AutoRules } | { errors: Partial<Record<string, string>> } {
+  const unused: NumberField = d.sizing === 'fixed' ? 'riskPct' : 'amount';
+  const inBounds = (f: NumberField) => {
+    const v = num(d[f]);
+    return Number.isFinite(v) && v >= NUMBER_FIELDS[f].min && v <= NUMBER_FIELDS[f].max;
+  };
   const parsed = AutoRulesSchema.safeParse({
     venue: d.venue,
     instrumentIds: d.instrumentIds,
     patterns: d.patterns,
-    ...Object.fromEntries(NUMBER_ORDER.map((f) => [f, num(d[f])])),
+    sizing: d.sizing,
+    ...Object.fromEntries(
+      ALL_NUMBER_FIELDS.map((f) => [f, f === unused && !inBounds(f) ? DEFAULT_AUTO_RULES[f] : num(d[f])]),
+    ),
   });
   if (parsed.success) return { rules: parsed.data };
   const errors: Partial<Record<string, string>> = {};
@@ -127,7 +158,8 @@ function fromDraft(d: RulesDraft): { rules: AutoRules } | { errors: Partial<Reco
     const field = String(issue.path[0] ?? '');
     if (field in NUMBER_FIELDS) {
       const f = NUMBER_FIELDS[field as NumberField];
-      errors[field] = `From ${f.min} to ${f.max}${f.whole ? ', a whole number' : ''}.`;
+      errors[field] =
+        `From ${f.min.toLocaleString('en-GB')} to ${f.max.toLocaleString('en-GB')}${f.whole ? ', a whole number' : ''}.`;
     } else if (field === 'patterns') errors[field] = 'Choose at least one pattern.';
     else errors[field] ??= issue.message;
   }
@@ -135,6 +167,54 @@ function fromDraft(d: RulesDraft): { rules: AutoRules } | { errors: Partial<Reco
 }
 
 const sameRules = (a: RulesDraft, b: RulesDraft) => JSON.stringify(a) === JSON.stringify(b);
+
+/** One number rule: its label, the input, its hint and its error. */
+function RuleNumber({
+  field,
+  id,
+  label,
+  draft,
+  error,
+  onChange,
+}: {
+  field: NumberField;
+  id: string;
+  label?: string;
+  draft: RulesDraft;
+  error: string | undefined;
+  onChange: (d: RulesDraft) => void;
+}) {
+  const f = NUMBER_FIELDS[field];
+  return (
+    <div className="space-y-1">
+      <Label htmlFor={id}>{label ?? f.label}</Label>
+      <Input
+        id={id}
+        type="number"
+        min={f.min}
+        max={f.max}
+        step={f.step}
+        inputMode="decimal"
+        value={draft[field]}
+        aria-invalid={error ? true : undefined}
+        aria-describedby={
+          [error ? `${id}-error` : null, f.hint ? `${id}-hint` : null].filter(Boolean).join(' ') || undefined
+        }
+        onChange={(e) => onChange({ ...draft, [field]: e.target.value })}
+      />
+      {f.hint ? (
+        <p id={`${id}-hint`} className="text-xs text-fg-muted">
+          {f.hint}
+        </p>
+      ) : null}
+      {error ? (
+        <p id={`${id}-error`} className="text-xs text-crit">
+          {error}
+        </p>
+      ) : null}
+    </div>
+  );
+}
 
 const CANCEL_TEXT: Record<string, string> = {
   invalidated: 'The setup was invalidated before the buy filled.',
@@ -179,6 +259,34 @@ function errorText(err: unknown, fallback: string): string {
   return err instanceof Error ? err.message : fallback;
 }
 
+/**
+ * The user's alert rules, and the notifications of automatic trades they do not give yet (changed
+ * 2026-11-16; ADR 022). `create` makes the missing rules through the Alert Center's own endpoint, so
+ * they are the user's to change or delete there; `ask` asks for desktop or browser notifications, and
+ * must be called from the click, as browsers ignore a request made without one.
+ */
+function useAutoTradeAlerts() {
+  const { client, platform } = useSession();
+  const queryClient = useQueryClient();
+  const rules = useQuery({
+    queryKey: ALERT_RULES_KEY,
+    queryFn: () => client.request<AlertRule[]>('GET', '/api/v1/alerts/rules'),
+  });
+  const missing = rules.data ? missingAutoTradeAlerts(rules.data) : null;
+  const ask = () => {
+    void platform.requestNotificationPermission?.().catch(() => undefined);
+  };
+  const create = async () => {
+    try {
+      for (const rule of missing ?? []) await client.request<AlertRule>('POST', '/api/v1/alerts/rules', rule);
+    } finally {
+      await queryClient.invalidateQueries({ queryKey: ALERT_RULES_KEY });
+    }
+  };
+  return { rules, missing, ask, create };
+}
+type AutoTradeAlerts = ReturnType<typeof useAutoTradeAlerts>;
+
 export function AutomaticTradingCard({
   instruments,
   venues,
@@ -205,9 +313,10 @@ export function AutomaticTradingCard({
         <p className="text-sm text-fg-muted">
           When it is on, the platform places practice orders for you: on each confirmed bullish setup that
           matches your rules, a limit buy at the setup&apos;s entry, with a stop at its invalidation and a
-          target at its first target, sized by the position-size calculator. Practice balances only: no real
-          money, and nothing reaches an exchange. The AI never decides an order. Simulated results are not a
-          guide to what real trading would return.
+          target at its first target. Each buy spends a fixed amount (10 USDT unless you change it), or the
+          position-size calculator&apos;s size for your risk per trade. Practice balances only: no real money,
+          and nothing reaches an exchange. The AI never decides an order. Simulated results are not a guide to
+          what real trading would return.
         </p>
         {strategy.isPending ? (
           <Spinner label="Loading your automatic trading" />
@@ -265,6 +374,9 @@ function AutomaticBody({
   const [errors, setErrors] = useState<Partial<Record<string, string>>>({});
   const [confirming, setConfirming] = useState<'on' | 'stop' | null>(null);
   const [busy, setBusy] = useState<'save' | 'on' | 'off' | 'stop' | null>(null);
+  const alerts = useAutoTradeAlerts();
+  const offerAlerts = (alerts.missing?.length ?? 0) > 0;
+  const [notify, setNotify] = useState(true);
   const ids = useId();
   const dirty = !sameRules(draft, saved);
   const venuePairs = instruments.filter((i) => i.venue === draft.venue);
@@ -315,19 +427,41 @@ function AutomaticBody({
   const switchOn = async () => {
     setResult(null);
     setBusy('on');
+    const withAlerts = notify && offerAlerts;
+    if (withAlerts) alerts.ask();
+    let next: PracticeStrategy;
     try {
-      settle(
-        await client.request<PracticeStrategy>('POST', '/api/v1/practice/automatic/on', {
-          version: s.version,
-        }),
-      );
-      onAnnounce('Automatic practice trading is on.');
+      next = await client.request<PracticeStrategy>('POST', '/api/v1/practice/automatic/on', {
+        version: s.version,
+      });
     } catch (err) {
       setConfirming(null);
       failed(err, 'Automatic trading could not be switched on');
-    } finally {
       setBusy(null);
+      return;
     }
+    // The notifications before the card shows it on: showing it re-creates this form.
+    let alertsError: unknown = null;
+    if (withAlerts) {
+      try {
+        await alerts.create();
+      } catch (err) {
+        alertsError = err;
+      }
+    }
+    settle(next);
+    setBusy(null);
+    onAnnounce(
+      withAlerts && !alertsError
+        ? 'Automatic practice trading is on. You will be notified of each automatic buy and sale.'
+        : 'Automatic practice trading is on.',
+    );
+    if (alertsError)
+      setResult({
+        tone: 'warn',
+        title: 'Automatic trading is on, but its notifications could not be set up',
+        body: `${errorText(alertsError, 'Please try again.')} Use “Notify me of automatic trades” to try again.`,
+      });
   };
 
   const switchOff = async () => {
@@ -416,11 +550,21 @@ function AutomaticBody({
               ? 'every pattern'
               : s.rules.patterns.map((p) => PATTERN_TITLE[p]).join(', ')}
             ; score {s.rules.minScore} or more; reward at least {s.rules.minReward} times the risk), it places
-            practice limit buys on your {VENUE_LABEL[s.rules.venue]} practice account, each risking{' '}
-            {s.rules.riskPct} % of the free balance, with a stop and a target. At most {s.rules.maxOpenTrades}{' '}
-            open at once and {s.rules.maxOrdersPerDay} a day; it pauses until 00:00 UTC once the day&apos;s
-            closed trades lose {s.rules.dailyLossPct} % of the starting balance. You can stop it at any time.
+            practice limit buys on your {VENUE_LABEL[s.rules.venue]} practice account,{' '}
+            {s.rules.sizing === 'fixed'
+              ? `each spending about ${s.rules.amount} ${QUOTE_OF[s.rules.venue]}`
+              : `each risking ${s.rules.riskPct} % of the free balance`}
+            , with a stop and a target. At most {s.rules.maxOpenTrades} open at once and{' '}
+            {s.rules.maxOrdersPerDay} a day; it pauses until 00:00 UTC once the day&apos;s closed trades lose{' '}
+            {s.rules.dailyLossPct} % of the starting balance. You can stop it at any time.
           </p>
+          {offerAlerts ? (
+            <label className="flex items-start gap-2 text-sm">
+              <Checkbox className="mt-0.5" checked={notify} onChange={(e) => setNotify(e.target.checked)} />
+              Notify me of each automatic buy and sale: in my inbox, and on my desktop or in my browser while
+              the app is open
+            </label>
+          ) : null}
           <div className="flex gap-2">
             <Button size="sm" busy={busy === 'on'} onClick={() => void switchOn()}>
               Switch on
@@ -477,6 +621,7 @@ function AutomaticBody({
         </span>{' '}
         (simulated).
       </p>
+      <AutoNotifications alerts={alerts} onAnnounce={onAnnounce} onResult={setResult} />
 
       <form
         onSubmit={(e) => void save(e)}
@@ -551,42 +696,60 @@ function AutomaticBody({
             </p>
           ) : null}
         </fieldset>
-        <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
-          {NUMBER_ORDER.map((field) => {
-            const f = NUMBER_FIELDS[field];
-            const id = `${ids}-${field}`;
-            const error = errors[field];
-            return (
-              <div key={field} className="space-y-1">
-                <Label htmlFor={id}>{f.label}</Label>
-                <Input
-                  id={id}
-                  type="number"
-                  min={f.min}
-                  max={f.max}
-                  step={f.step}
-                  inputMode="decimal"
-                  value={draft[field]}
-                  aria-invalid={error ? true : undefined}
-                  aria-describedby={
-                    [error ? `${id}-error` : null, f.hint ? `${id}-hint` : null].filter(Boolean).join(' ') ||
-                    undefined
-                  }
-                  onChange={(e) => setDraft({ ...draft, [field]: e.target.value })}
+        <fieldset className="space-y-2">
+          <legend className="text-sm font-medium">Size of each buy</legend>
+          <div className="flex flex-wrap gap-x-6 gap-y-1">
+            {(
+              [
+                ['fixed', 'A fixed amount'],
+                ['risk', 'A share of the balance at risk'],
+              ] as const
+            ).map(([value, label]) => (
+              <label key={value} className="flex items-center gap-1.5 text-sm">
+                <input
+                  type="radio"
+                  name={`${ids}-sizing`}
+                  value={value}
+                  className="size-4 shrink-0 accent-accent"
+                  checked={draft.sizing === value}
+                  onChange={() => setDraft({ ...draft, sizing: value })}
                 />
-                {f.hint ? (
-                  <p id={`${id}-hint`} className="text-xs text-fg-muted">
-                    {f.hint}
-                  </p>
-                ) : null}
-                {error ? (
-                  <p id={`${id}-error`} className="text-xs text-crit">
-                    {error}
-                  </p>
-                ) : null}
-              </div>
-            );
-          })}
+                {label}
+              </label>
+            ))}
+          </div>
+          <div className="max-w-sm">
+            {draft.sizing === 'fixed' ? (
+              <RuleNumber
+                field="amount"
+                id={`${ids}-amount`}
+                label={`${NUMBER_FIELDS.amount.label} (${QUOTE_OF[draft.venue]})`}
+                draft={draft}
+                error={errors['amount']}
+                onChange={setDraft}
+              />
+            ) : (
+              <RuleNumber
+                field="riskPct"
+                id={`${ids}-riskPct`}
+                draft={draft}
+                error={errors['riskPct']}
+                onChange={setDraft}
+              />
+            )}
+          </div>
+        </fieldset>
+        <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
+          {NUMBER_ORDER.map((field) => (
+            <RuleNumber
+              key={field}
+              field={field}
+              id={`${ids}-${field}`}
+              draft={draft}
+              error={errors[field]}
+              onChange={setDraft}
+            />
+          ))}
         </div>
         <div className="flex gap-2">
           <Button
@@ -614,6 +777,66 @@ function AutomaticBody({
           <p className="text-xs text-fg-muted">Saved rules apply to the next setups it decides on.</p>
         ) : null}
       </form>
+    </div>
+  );
+}
+
+/** Whether the user is notified of automatic trades, and one click to be (changed 2026-11-16). */
+function AutoNotifications({
+  alerts,
+  onAnnounce,
+  onResult,
+}: {
+  alerts: AutoTradeAlerts;
+  onAnnounce: (t: string) => void;
+  onResult: (r: Result | null) => void;
+}) {
+  const [busy, setBusy] = useState(false);
+  const { rules, missing } = alerts;
+  if (rules.isPending) return <p className="text-sm text-fg-muted">Checking your notifications…</p>;
+  if (rules.isError)
+    return (
+      <p className="text-sm text-fg-muted">Your notifications could not be checked: {rules.error.message}</p>
+    );
+  if (!missing?.length)
+    return (
+      <p className="text-sm" data-auto-notify="on">
+        Notifications are on for each automatic buy placed, each practice order filled, each stop or target
+        sold and a pause: in your inbox, and on your desktop or in your browser while the app is open, as your
+        alert rules say. Change them in the{' '}
+        <Link to="/alerts" className="text-accent underline">
+          Alert Center
+        </Link>
+        .
+      </p>
+    );
+  const notifyMe = async () => {
+    onResult(null);
+    alerts.ask();
+    setBusy(true);
+    try {
+      await alerts.create();
+      onAnnounce('You will be notified of each automatic buy and sale.');
+    } catch (err) {
+      onResult({
+        tone: 'crit',
+        title: 'The notifications could not be set up',
+        body: errorText(err, 'Please try again.'),
+      });
+    } finally {
+      setBusy(false);
+    }
+  };
+  return (
+    <div className="flex flex-wrap items-center gap-3" data-auto-notify="off">
+      <p className="text-sm">
+        {missing.length === AUTO_TRADE_ALERTS.length
+          ? 'You are not notified of automatic trades.'
+          : 'You are not notified of every automatic trade.'}
+      </p>
+      <Button size="sm" variant="secondary" busy={busy} onClick={() => void notifyMe()}>
+        Notify me of automatic trades
+      </Button>
     </div>
   );
 }

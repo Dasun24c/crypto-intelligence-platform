@@ -228,7 +228,8 @@ const ROUND_HALF_UP = 1;
  * Automatic practice trading (ADR 022): a deterministic decider beside the paper engine. On a
  * confirmed bullish setup it decides, for every user whose automatic trading is on, whether their
  * rules and limits allow a practice limit buy at the entry with a stop at the invalidation and a
- * target at target 1, sized by the position-size calculator; it places it through the engine like
+ * target at target 1, sized as the rules say (a fixed amount of the quote currency, or the
+ * position-size calculator's size at the risk per trade); it places it through the engine like
  * any order, and cancels the buy if the setup ends before it fills. It also follows its trades'
  * fills for the day's result and the daily loss limit. Pure: the broker feeds it, stores what it
  * returns, and a replay of the same inputs makes the same decisions. Practice balances only.
@@ -391,20 +392,24 @@ export class AutoTrader {
     const day = this.day(accountId, ctx.now);
     if (day.orders >= rules.maxOrdersPerDay) return skip('daily_orders');
 
-    // The calculator's size at the risk per trade of the free quote balance, capped at what that
-    // balance buys with the higher fee: spot, nothing borrowed.
+    // The size the rules ask for: a fixed amount of the quote currency at the entry price, or the
+    // calculator's size at the risk per trade of the free quote balance. Either is rounded down to the
+    // quantity step and capped at what the free balance buys with the higher fee: spot, nothing borrowed.
     const free = dec(this.engine.account(accountId).available[pair.quote] ?? '0');
     if (free.lte(0)) return skip('balance');
     const step = dec(pair.qtyStep);
-    const wanted = dec(
-      positionSize({
-        accountSize: free.toString(),
-        riskPct: String(rules.riskPct),
-        entry: levels.entry,
-        invalidation: levels.stop,
-        ...(step.gt(0) ? { qtyStep: pair.qtyStep } : {}),
-      }).quantity,
-    );
+    const wanted =
+      rules.sizing === 'fixed'
+        ? floorTo(dec(String(rules.amount)).div(levels.entry), step)
+        : dec(
+            positionSize({
+              accountSize: free.toString(),
+              riskPct: String(rules.riskPct),
+              entry: levels.entry,
+              invalidation: levels.stop,
+              ...(step.gt(0) ? { qtyStep: pair.qtyStep } : {}),
+            }).quantity,
+          );
     const minimum = dec(pair.minNotional);
     const worth = (q: Decimal) => q.gt(0) && (minimum.lte(0) || q.times(levels.entry).gte(minimum));
     if (!worth(wanted)) return skip('size');

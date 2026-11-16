@@ -7,6 +7,10 @@
 | Scope | [Implementation plan, Phase 16](../phase-0/08-implementation-plan.md#phase-16--automatic-practice-trading), [proposal 002](../proposals/002-automatic-practice-trading.md) (approved 2026-11-15), [ADR 022](../adr/022-automatic-practice-trading.md), REQUIREMENTS §11 revision 5 |
 | Evidence | This machine (Windows 11, Docker Desktop, Node.js 26.13.0); the local Compose stack streaming live public data from Binance and Coinbase, redeployed with Phase 16 at 11:42 UTC on 2026-11-15; checks to 13:24 UTC |
 
+> **Changed after acceptance, 2026-11-16:** At your request on 2026-11-16, each automatic practice buy spends a fixed amount by default: 10 USDT on Binance (10 USD on Coinbase), rounded down to the pair’s quantity step and capped at the free balance. Sizing by the position-size calculator at a risk per trade stays as the other choice, and rules saved before the change keep it. See [ADR 022](../adr/022-automatic-practice-trading.md#changed-2026-11-16-a-fixed-amount-per-buy). The evidence below is for the sizing as accepted (the calculator's), which stays as a choice.
+>
+> Also at your request on 2026-11-16, the automatic trading card offers notifications of each automatic trade: switching it on (a box, ticked) or one button ("Notify me of automatic trades") makes the alert rules still missing, so that each automatic buy placed, each practice order filled, each stop or target sold and a pause reach the inbox, and as desktop or browser notifications while the app is open. See [ADR 022](../adr/022-automatic-practice-trading.md#changed-2026-11-16-notifications-of-each-automatic-trade).
+
 ## Summary
 
 A user can switch on **automatic practice trading** for their own practice account. On each confirmed bullish setup that matches their rules, the platform places a practice limit buy for them, with a protective stop and a target, within their limits. **Practice balances only: no real money, nothing reaches an exchange, and the AI never decides an order.** Nothing is placed for anyone who has not switched it on.

@@ -721,6 +721,39 @@ describe('automatic practice trading (ADR 022, Phase 16)', () => {
     ]);
   });
 
+  it('reads rules saved before the fixed amount as they were saved, and checks a fixed amount (2026-11-16)', async () => {
+    const erin = await createUser(h, 'viewer');
+    const token = await tokenFor(h, erin);
+    const { sizing: _sizing, amount: _amount, ...saved } = DEFAULT_AUTO_RULES;
+    await owner
+      .insertInto('trading.strategies')
+      .values({
+        id: randomUUID(),
+        user_id: erin.id,
+        enabled: false,
+        rules: saved,
+        version: 1,
+        updated_by: erin.id,
+      })
+      .execute();
+    // Saved with risk sizing (all there was): they keep it.
+    const read = await api('GET', '/practice/automatic', token);
+    expect(read.body.rules).toMatchObject({ sizing: 'risk', riskPct: 1 });
+    const fixed = await api('PUT', '/practice/automatic', token, {
+      version: 1,
+      rules: { ...DEFAULT_AUTO_RULES, amount: 25 },
+    });
+    expect(fixed.status).toBe(200);
+    expect(fixed.body.rules).toMatchObject({ sizing: 'fixed', amount: 25 });
+    for (const amount of [0, 100_001]) {
+      const r = await api('PUT', '/practice/automatic', token, {
+        version: 2,
+        rules: { ...DEFAULT_AUTO_RULES, amount },
+      });
+      expect(r.status, String(amount)).toBe(400);
+    }
+  });
+
   it('switches on only with the rules the user confirmed, and off again; the stop button tells the broker to cancel (16.3)', async () => {
     const dave = await createUser(h, 'analyst');
     const token = await tokenFor(h, dave);

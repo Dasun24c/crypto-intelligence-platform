@@ -35,6 +35,21 @@ interface Strategy {
   version: number;
   rules: Record<string, unknown>;
 }
+interface Rule {
+  id: string;
+  enabled: boolean;
+  scope: { instrumentIds?: string[]; venues?: string[] };
+  condition: { kind: string; on?: string[] };
+  cooldownSec: number;
+  channels: string[];
+}
+/** The notifications of automatic trades the card offers (changed 2026-11-16, ADR 022). */
+const AUTO_TRADE_KINDS = [
+  'practice_auto_order',
+  'practice_order_filled',
+  'practice_exit',
+  'practice_auto_paused',
+];
 
 /** A price rounded down to the pair's price step, without floats drifting. */
 function onTick(value: number, tick: string): string {
@@ -55,6 +70,10 @@ test.describe('Phase 16', () => {
   let btc: Instrument;
   let levels: { entry: string; invalidation: string; target1: string };
   let ruleId: string | undefined;
+  /** The analyst's alert rules before the spec: only the others are removed after it. */
+  let rulesBefore = new Set<string>();
+  /** Whether the analyst lacked some notification of automatic trades, so the card offers them. */
+  let offered = false;
   const runId = randomUUID();
 
   /** A setup transition as the analyzer appends it to an:events (`SetupTransitionMessage`). */
@@ -101,6 +120,17 @@ test.describe('Phase 16', () => {
     expect(res.ok(), await res.text()).toBe(true);
     return (await res.json()) as Strategy;
   }
+
+  async function rules(): Promise<Rule[]> {
+    const res = await api.get('/api/v1/alerts/rules', { headers });
+    expect(res.ok(), await res.text()).toBe(true);
+    return (await res.json()) as Rule[];
+  }
+  /** The kinds the analyst is notified of: rules that are on and watch every pair. */
+  const notifiedKinds = (list: Rule[]) =>
+    new Set(
+      list.filter((r) => r.enabled && !r.scope.instrumentIds && !r.scope.venues).map((r) => r.condition.kind),
+    );
 
   const card = () => page.getByRole('region', { name: 'Automatic trading (simulated)' });
   const decisions = () => page.getByRole('table', { name: 'Automatic trading decisions, newest first' });
@@ -164,6 +194,11 @@ test.describe('Phase 16', () => {
     });
     expect(created.status(), await created.text()).toBe(201);
     ruleId = ((await created.json()) as { id: string }).id;
+    const listed = await rules();
+    rulesBefore = new Set(listed.map((r) => r.id));
+    const kinds = notifiedKinds(listed);
+    // A stop-only or target-only rule still leaves the other leg to offer; this spec's analyst has neither.
+    offered = AUTO_TRADE_KINDS.some((k) => !kinds.has(k));
     ctx = await browser.newContext({ baseURL });
     page = await ctx.newPage();
     await signIn(page, ANALYST);
@@ -172,7 +207,10 @@ test.describe('Phase 16', () => {
   test.afterAll(async () => {
     if (api) {
       await api.post('/api/v1/practice/automatic/stop', { headers }).catch(() => undefined);
-      if (ruleId) await api.delete(`/api/v1/alerts/rules/${ruleId}`, { headers }).catch(() => undefined);
+      // The spec's own rules: its rule, and the notifications switching on made.
+      const made = (await rules().catch(() => [])).filter((r) => !rulesBefore.has(r.id)).map((r) => r.id);
+      for (const id of [...(ruleId ? [ruleId] : []), ...made])
+        await api.delete(`/api/v1/alerts/rules/${id}`, { headers }).catch(() => undefined);
       await api.dispose();
     }
     redis?.disconnect();
@@ -201,11 +239,34 @@ test.describe('Phase 16', () => {
     await expect(confirm).toContainText('each risking 1 % of the free balance');
     expect((await strategy()).enabled).toBe(false);
     expect(await scan()).toEqual([]);
+    // Changed 2026-11-16: the confirmation offers notifications of each automatic trade, ticked, unless
+    // the analyst already has them.
+    const notify = confirm.getByRole('checkbox', { name: /Notify me of each automatic buy and sale/ });
+    if (offered) {
+      await page.keyboard.press('Tab');
+      await expect(notify).toBeFocused();
+      await expect(notify).toBeChecked();
+    } else await expect(notify).toHaveCount(0);
     await page.keyboard.press('Tab');
     await expect(confirm.getByRole('button', { name: 'Switch on' })).toBeFocused();
     await page.keyboard.press('Enter');
     await expect(card().getByText('On', { exact: true })).toBeVisible();
     expect((await strategy()).enabled).toBe(true);
+  });
+
+  test('notifications (changed 2026-11-16): switched on with the box ticked, the analyst is notified of each automatic buy, fill, stop or target sale and pause', async () => {
+    await expect(card().getByText(/Notifications are on for each automatic buy placed/)).toBeVisible();
+    const after = await rules();
+    const kinds = notifiedKinds(after);
+    for (const k of AUTO_TRADE_KINDS) expect(kinds.has(k), k).toBe(true);
+    // What switching on made: the missing ones, with no cooldown, to the inbox, the desktop and the browser.
+    const made = after.filter((r) => !rulesBefore.has(r.id));
+    if (offered) expect(made.length).toBeGreaterThan(0);
+    for (const r of made) {
+      expect(AUTO_TRADE_KINDS).toContain(r.condition.kind);
+      expect(r.cooldownSec).toBe(0);
+      expect(r.channels).toEqual(['in_app', 'desktop', 'web']);
+    }
   });
 
   test('16.1 and 16.7 a confirmed setup that matches becomes a labelled practice buy with its stop and target, alerted; one that does not is logged as skipped', async () => {
@@ -272,5 +333,40 @@ test.describe('Phase 16', () => {
     await expect(decisions().getByRole('row').filter({ hasText: 'Cancelled' }).first()).toContainText(
       'You stopped automatic trading.',
     );
+  });
+
+  test('a fixed amount (changed 2026-11-16): with 10 USDT a buy, the automatic buy spends about 10 USDT', async () => {
+    const current = await strategy();
+    const saved = await api.put('/api/v1/practice/automatic', {
+      headers,
+      data: { version: current.version, rules: { ...current.rules, sizing: 'fixed', amount: 10 } },
+    });
+    expect(saved.status(), await saved.text()).toBe(200);
+    const { version } = (await saved.json()) as Strategy;
+    const on = await api.post('/api/v1/practice/automatic/on', { headers, data: { version } });
+    expect(on.status(), await on.text()).toBe(200);
+    // The card shows the choice and says what each buy spends.
+    await page.reload();
+    await expect(card().getByLabel('A fixed amount')).toBeChecked();
+    await expect(card().getByLabel('Amount per buy (USDT)')).toHaveValue('10');
+
+    const setupId = randomUUID();
+    await transition(setupId);
+    await expect(autoBuys().first()).toBeVisible({ timeout: 15_000 });
+    const orders = (await (await api.get('/api/v1/practice/orders?status=open', { headers })).json()) as {
+      items: { setupId: string | null; side: string; quantity: string; limitPrice: string | null }[];
+    };
+    const buy = orders.items.find((o) => o.setupId === setupId && o.side === 'buy');
+    expect(buy, 'the automatic buy').toBeTruthy();
+    // 10 ÷ the entry, rounded down to the quantity step: never more than 10 USDT, and within one step of it.
+    const spent = Number(buy!.quantity) * Number(buy!.limitPrice);
+    expect(spent).toBeLessThanOrEqual(10);
+    expect(spent).toBeGreaterThan(10 - 0.00001 * Number(buy!.limitPrice) - 1e-9);
+
+    const stopped = await api.post('/api/v1/practice/automatic/stop', { headers });
+    expect([200, 202]).toContain(stopped.status());
+    await expect(openOrders().getByRole('row').filter({ hasText: 'Automatic' })).toHaveCount(0, {
+      timeout: 5_000,
+    });
   });
 });
