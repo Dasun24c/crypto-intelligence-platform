@@ -2,7 +2,8 @@ import { defineConfig, devices } from '@playwright/test';
 
 /**
  * Smoke tests against a running stack (CI: `docker compose up --build --wait`, then `pnpm e2e`).
- * They use the development seed users, which exist only when the stack's migrate step runs with
+ * They sign in as the tests' own development seed users (`e2e-*@cip.test`, e2e/support/users.ts),
+ * never the ones people use; those exist only when the stack's migrate step runs with
  * NODE_ENV=development (compose.dev.yaml).
  */
 export default defineConfig({

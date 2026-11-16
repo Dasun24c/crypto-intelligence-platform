@@ -38,7 +38,8 @@ function problems(instruments, feeds, tickers, candles, now) {
   return out;
 }
 
-const login = await call('/auth/login', null, { email: 'viewer@cip.test', password });
+// The tests' own viewer (seed-dev), never the one people use.
+const login = await call('/auth/login', null, { email: 'e2e-viewer@cip.test', password });
 if (login.status !== 200) {
   console.error(`sign-in failed: ${login.status} ${JSON.stringify(login.body)}`);
   process.exit(1);

@@ -4,8 +4,8 @@ import { submitSignIn } from '../support/session.ts';
 import { freshTotp } from '../support/totp.ts';
 import { ADMIN, DEV_PASSWORD } from '../support/users.ts';
 
-// The seeded admin's TOTP secret, kept between local runs (gitignored). A fresh stack enrols again.
-const SECRET_FILE = new URL('../.auth/admin-totp.txt', import.meta.url);
+// The test admin's TOTP secret, kept between local runs (gitignored). A fresh stack enrols again.
+const SECRET_FILE = new URL('../.auth/e2e-admin-totp.txt', import.meta.url);
 
 test('an admin must use TOTP, then manages users and verifies the audit chain', async ({ page }) => {
   await page.goto('/');

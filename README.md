@@ -12,13 +12,15 @@ You need Docker with Compose v2.20 or later (Docker Desktop on Windows and macOS
 docker compose up --build --wait
 ```
 
-This builds the images, generates local secrets into `.secrets/` on first start, creates the database, runs the migrations, seeds three development users and waits until every service reports healthy. Then open <http://localhost:8080>.
+This builds the images, generates local secrets into `.secrets/` on first start, creates the database, runs the migrations, seeds the development users and waits until every service reports healthy. Then open <http://localhost:8080>.
 
 | Development user | Role | Password |
 |---|---|---|
 | `viewer@cip.test` | viewer | `local-dev-password` |
 | `analyst@cip.test` | analyst | `local-dev-password` |
 | `admin@cip.test` | admin | `local-dev-password` (sets up an authenticator app at first sign-in) |
+
+These three are yours. The end-to-end tests and the test scripts sign in as their own accounts, never as yours: `e2e-viewer@cip.test`, `e2e-analyst@cip.test` and `e2e-admin@cip.test`, with the same password. The tests reset those accounts' practice balances, switch their automatic trading on and off, make and delete their alert rules, and use up their sign-in attempts. The confirmed setups a test appends to `an:events` would reach every account's automatic trading, so `e2e/tests/phase16.spec.ts` skips itself, and `practice-latency.mjs --auto` refuses to run, while automatic trading is on for any other account. The test admin's authenticator secret stays in `e2e/.auth/e2e-admin-totp.txt` (gitignored). A stack started before the test accounts existed gets them from `docker compose up --build --wait` (or, without restarting anything, `docker compose build secrets` and then `docker compose run --rm --no-deps migrate`).
 
 The economic calendar syncs from BEA without a key. For CPI and the Employment Situation it needs a free [FRED API key](https://fred.stlouisfed.org/docs/api/api_key.html): put it, alone on one line, in `.secrets/fred-api-key` (created empty on first start; never commit it). The next sync picks it up; until then checklist item 8 fails safe as "calendar unavailable". This product uses the FRED® API but is not endorsed or certified by the Federal Reserve Bank of St. Louis.
 
@@ -58,8 +60,8 @@ COMPOSE_FILE=compose.yaml:infra/docker/compose.replay.yaml docker compose -p cip
 | Practice trading command | Effect |
 |---|---|
 | `node scripts/practice-latency.mjs [minutes]` | Submitted → published latency of practice fills (NFR-16: p95 ≤ 1 s), market orders and waiting orders, on the Redis clock |
-| `node scripts/practice-latency.mjs --drive [orders] [minutes]` | Places practice orders as the development viewer first (simulated; practice balances only), then measures |
-| `node scripts/practice-latency.mjs --auto [setups] [minutes]` | Switches on the development viewer's automatic practice trading for BTC/USDT, appends synthetic confirmed setups to `an:events`, switches it off, then measures NFR-17: setup confirmed → automatic order published, p95 ≤ 2 s |
+| `node scripts/practice-latency.mjs --drive [orders] [minutes]` | Places practice orders as the tests' viewer first (simulated; practice balances only), then measures |
+| `node scripts/practice-latency.mjs --auto [setups] [minutes]` | Switches on the tests' viewer's automatic practice trading for BTC/USDT, appends synthetic confirmed setups to `an:events`, switches it off, then measures NFR-17: setup confirmed → automatic order published, p95 ≤ 2 s. It reads the audit log as the tests' admin (run the admin end-to-end spec once first) and refuses while automatic trading is on for another account |
 | `docker compose exec broker node apps/broker/dist/cli.js replay [--since <seq>]` | Replays the practice journal and compares every fill and every automatic decision with what was stored (criteria 14.3 and 16.6); read-only |
 
 ### HTTPS for the desktop app (optional)

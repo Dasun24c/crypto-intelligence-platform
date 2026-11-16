@@ -11,7 +11,7 @@ import { UsersRepository } from './users/users.repository.js';
 /**
  * Operator commands, run with the api image:
  *   cli create-admin --email <e-mail> --name <name>   password from CIP_ADMIN_PASSWORD(_FILE)
- *   cli seed-dev                                      development only: one user per role
+ *   cli seed-dev                                      development only: users for you and for the tests
  * New admins enrol TOTP at their first sign-in.
  */
 const EnvSchema = z.object({
@@ -21,10 +21,18 @@ const EnvSchema = z.object({
   DEV_SEED_PASSWORD: z.string().default('local-dev-password'),
 });
 
+/**
+ * One user per role for you, and one per role for the end-to-end tests and test scripts (`e2e-*`):
+ * the tests reset practice balances, switch automatic trading, make alert rules and use up sign-in
+ * attempts, so they never sign in as yours.
+ */
 const DEV_USERS: { email: string; name: string; role: Role }[] = [
   { email: 'admin@cip.test', name: 'Dev Admin', role: 'admin' },
   { email: 'analyst@cip.test', name: 'Dev Analyst', role: 'analyst' },
   { email: 'viewer@cip.test', name: 'Dev Viewer', role: 'viewer' },
+  { email: 'e2e-admin@cip.test', name: 'Test Admin', role: 'admin' },
+  { email: 'e2e-analyst@cip.test', name: 'Test Analyst', role: 'analyst' },
+  { email: 'e2e-viewer@cip.test', name: 'Test Viewer', role: 'viewer' },
 ];
 
 async function main(): Promise<number> {

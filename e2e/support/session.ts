@@ -1,5 +1,12 @@
-import { mkdirSync, readFileSync, writeFileSync } from 'node:fs';
-import { type APIRequestContext, type APIResponse, expect, type Page, type Response } from '@playwright/test';
+import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
+import {
+  type APIRequestContext,
+  type APIResponse,
+  type Browser,
+  expect,
+  type Page,
+  type Response,
+} from '@playwright/test';
 import { freshTotp } from './totp.ts';
 import { ADMIN, DEV_PASSWORD } from './users.ts';
 
@@ -62,8 +69,8 @@ export async function signIn(page: Page, email: string): Promise<void> {
   await expect(page.getByRole('heading', { name: 'Command Center' })).toBeVisible();
 }
 
-// The seeded admin's TOTP secret, kept between local runs (gitignored); a fresh stack enrols again.
-const SECRET_FILE = new URL('../.auth/admin-totp.txt', import.meta.url);
+// The test admin's TOTP secret, kept between local runs (gitignored); a fresh stack enrols again.
+const SECRET_FILE = new URL('../.auth/e2e-admin-totp.txt', import.meta.url);
 
 /**
  * Signs the seeded admin in with TOTP, enrolling on a fresh stack. A code is refused if the same
@@ -130,6 +137,60 @@ export async function adminAccessToken(request: APIRequestContext): Promise<Reco
     attempt++;
   }
   throw new Error('the admin could not complete the second factor');
+}
+
+/** Enrols the test admin's authenticator through the sign-in page, unless a run has already. */
+export async function ensureTestAdmin(browser: Browser, baseURL: string | undefined): Promise<void> {
+  if (existsSync(SECRET_FILE)) return;
+  const ctx = await browser.newContext(baseURL ? { baseURL } : {});
+  try {
+    await signInAdmin(await ctx.newPage());
+  } finally {
+    await ctx.close();
+  }
+}
+
+/** The signed-in user's id. */
+export async function userIdOf(request: APIRequestContext, headers: Record<string, string>): Promise<string> {
+  const res = await request.get('/api/v1/me', { headers });
+  expect(res.status(), await res.text()).toBe(200);
+  return ((await res.json()) as { id: string }).id;
+}
+
+const SWITCHES = new Set([
+  'practice_auto.switched_on',
+  'practice_auto.switched_off',
+  'practice_auto.stopped',
+]);
+
+/**
+ * Accounts other than `ownUserId` whose automatic practice trading is on, read from the audit log as
+ * an admin: each account's latest switch (newest first). A confirmed setup a spec appends to
+ * `an:events` would make any of them trade too (ADR 022), so such a spec does not run then.
+ */
+export async function othersTradingAutomatically(
+  request: APIRequestContext,
+  admin: Record<string, string>,
+  ownUserId: string,
+): Promise<string[]> {
+  const latest = new Map<string, string>();
+  let cursor: string | null = null;
+  do {
+    const query: string = `action=practice_auto.&limit=1000${cursor ? `&cursor=${encodeURIComponent(cursor)}` : ''}`;
+    const res = await request.get(`/api/v1/admin/audit?${query}`, { headers: admin });
+    expect(res.status(), await res.text()).toBe(200);
+    const page = (await res.json()) as {
+      items: { actorUserId: string | null; action: string }[];
+      nextCursor: string | null;
+    };
+    for (const e of page.items)
+      if (e.actorUserId && SWITCHES.has(e.action) && !latest.has(e.actorUserId))
+        latest.set(e.actorUserId, e.action);
+    cursor = page.nextCursor;
+  } while (cursor);
+  return [...latest]
+    .filter(([id, action]) => id !== ownUserId && action === 'practice_auto.switched_on')
+    .map(([id]) => id);
 }
 
 /** An access token from the login endpoint, for reading the API alongside the page. */
