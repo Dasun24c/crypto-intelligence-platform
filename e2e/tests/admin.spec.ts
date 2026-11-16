@@ -1,5 +1,6 @@
 import { mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { expect, test } from '@playwright/test';
+import { submitSignIn } from '../support/session.ts';
 import { freshTotp } from '../support/totp.ts';
 import { ADMIN, DEV_PASSWORD } from '../support/users.ts';
 
@@ -10,7 +11,7 @@ test('an admin must use TOTP, then manages users and verifies the audit chain', 
   await page.goto('/');
   await page.getByLabel('E-mail').fill(ADMIN);
   await page.getByLabel('Password').fill(DEV_PASSWORD);
-  await page.getByRole('button', { name: 'Sign in' }).click();
+  await submitSignIn(page);
 
   let secret: string;
   const setUp = page.getByRole('button', { name: 'Set up authenticator' });
