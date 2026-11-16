@@ -3,7 +3,7 @@
   "version": "0.0.0",
   "private": true,
   "type": "module",
-  "description": "BullMQ processors: maintenance now; AI, notifications, backfill, calendar and replays in later phases.",
+  "description": "BullMQ processors: maintenance, backfill, calendar, notifications and the AI analyses.",
   "scripts": {
     "build": "swc src -d dist --strip-leading-paths --config-file ../../.swcrc --ignore \"**/*.test.ts\"",
     "typecheck": "tsc -p tsconfig.json",
@@ -15,6 +15,7 @@
     "cli:dev": "node --env-file-if-exists=.env --conditions=@cip/source --import @swc-node/register/esm-register src/cli.ts"
   },
   "dependencies": {
+    "@cip/ai": "workspace:*",
     "@cip/alerts": "workspace:*",
     "@cip/contracts": "workspace:*",
     "@cip/db": "workspace:*",

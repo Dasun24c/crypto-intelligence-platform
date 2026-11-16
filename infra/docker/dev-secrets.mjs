@@ -8,6 +8,9 @@ import { join } from 'node:path';
 
 const dir = process.argv[2] ?? '/secrets';
 mkdirSync(dir, { recursive: true });
+// Secrets for the jobs service alone (the Grok key, ADR 023): a folder no other container mounts.
+const jobsDir = process.argv[3];
+if (jobsDir) mkdirSync(jobsDir, { recursive: true });
 
 function ensure(name, create) {
   const path = join(dir, name);
@@ -24,6 +27,11 @@ ensure('mfa-key', () => randomBytes(32).toString('base64'));
 // fred-api-key: the economic calendar's FRED key (fred.stlouisfed.org); empty skips FRED.
 for (const name of ['fred-api-key']) {
   const path = join(dir, name);
+  if (!existsSync(path)) writeFileSync(path, '', { mode: 0o644 });
+}
+// grok-api-key: the AI analyses' xAI key (console.x.ai); empty means no AI calls.
+if (jobsDir) {
+  const path = join(jobsDir, 'grok-api-key');
   if (!existsSync(path)) writeFileSync(path, '', { mode: 0o644 });
 }
 

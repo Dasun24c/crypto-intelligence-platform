@@ -2,7 +2,8 @@
 # Start everything with `docker compose up --build --wait` from the repository root.
 # Ports are bound to 127.0.0.1 only; the database and Valkey use non-standard host ports (15432, 16379)
 # so they do not clash with a local PostgreSQL or Redis. Override with CIP_DB_PORT, CIP_VALKEY_PORT,
-# CIP_API_PORT and CIP_WEB_PORT. Secrets are generated into ./.secrets on first start.
+# CIP_API_PORT and CIP_WEB_PORT. Secrets are generated into ./.secrets on first start; the Grok key
+# goes in ./.secrets-jobs/grok-api-key, a folder only the jobs container mounts (ADR 023).
 
 x-server:
   &server # Built once by the `secrets` service (several services building one tag in parallel collide).
@@ -31,9 +32,10 @@ services:
       dockerfile: infra/docker/Dockerfile
       target: server
     user: root
-    command: ['node', 'infra/dev-secrets.mjs', '/secrets']
+    command: ['node', 'infra/dev-secrets.mjs', '/secrets', '/secrets-jobs']
     volumes:
       - ../../.secrets:/secrets
+      - ../../.secrets-jobs:/secrets-jobs
     restart: 'no'
 
   db:
@@ -155,6 +157,13 @@ services:
       DATABASE_URL_FILE: /secrets/db-url-svc_jobs
       # The economic calendar's FRED key: put it in .secrets/fred-api-key (empty: FRED is skipped).
       FRED_API_KEY_FILE: /secrets/fred-api-key
+      # The AI analyses' Grok key (Phase 9, ADR 023): put it in .secrets-jobs/grok-api-key (empty: no
+      # analyses are queued; requested ones fail as no_key). Read at every call: no restart needed.
+      GROK_API_KEY_FILE: /secrets-jobs/grok-api-key
+    volumes:
+      - ../../.secrets:/secrets:ro
+      # Only this service mounts the folder with the Grok key.
+      - ../../.secrets-jobs:/secrets-jobs:ro
     healthcheck:
       test: ['CMD', 'node', 'infra/healthcheck.mjs', 'http://127.0.0.1:9467/readyz']
       interval: 5s

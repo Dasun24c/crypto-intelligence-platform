@@ -171,6 +171,14 @@ Roles: **V** viewer, **A** analyst, **Ad** admin. Every endpoint needs authentic
 
 > **As implemented in Phase 7.** The economic calendar (feasibility §6.1, ADR 019). Schemas in `packages/contracts/src/calendar.ts`.
 
+> **As implemented in Phase 9** (ADR 023; schemas in `packages/contracts/src/ai.ts`).
+>
+> - **`GET /ai/analyses`** filters by `instrumentId`, `status` (comma-separated) and `from`/`to` (epoch ms, `to` exclusive), newest first, with the usual cursor. A rejected analysis's summary has no headline, stance or confidence: it is never shown as an analysis.
+> - **`GET /ai/analyses/{id}`** answers `AiAnalysisDetail`: the summary with `triggerRefs`, `setupId`, `requestedBy`, `context` (null when it could not be built), `contextHash`, `promptVersion`, `modelRequested`, `response`, `validation` (`errors`, `warnings`, `firstAttemptErrors`), `repairAttempted` and `usage` (tokens, cost, latency).
+> - **`POST /ai/analyses`** (`ai.request`) takes `{ instrumentId, reason, setupId? }` (`setupId` exactly for `setup_review`, and on that pair) and answers `202 { analysisId }`. It refuses, in order: an unknown pair (404) or one without an analysis profile (400); a setup on another pair (400); analyses switched off (`409 CONFLICT`); no Grok key, as the jobs service reports it (`503 UNAVAILABLE`); the budget exhausted (`409 BUDGET_EXHAUSTED`, "AI budget reached"); more than 10 requests in an hour (`429` with `Retry-After`). Audited as `ai.requested`.
+> - **`GET /ai/usage?from&to`** (default: the last 30 days; at most 400) answers `{ days, budget }`: per UTC day the calls, each outcome's count, the tokens and the cost; and `AiBudgetStatus` now (`ok`, `throttled` at 80 % of a cap, `exhausted` when a typical call no longer fits).
+> - **`GET` and `PUT /admin/settings/ai`** (`settings.manage`): `AiSettings` (`enabled`, `model`, `fallbackModel`, `reasoningEffort`, `maxCompletionTokens`, `reasoningAllowanceTokens`, `dailyCapUsd`, `monthlyCapUsd`, `prices` per model); both models need prices. Audited as `settings.updated`.
+
 > **As implemented in Phase 8** (ADR 020; schemas in `packages/contracts/src/alerts.ts`). The alert routes need `alerts.own`, which every role has.
 >
 > - **Rules are personal.** Another user's rule answers 404; admins may list a user's rules with `?ownerId=`.
@@ -501,6 +509,8 @@ interface ActivityPulse { ts: Ts; kind: 'pattern' | 'sweep' | 'mss' | 'ai_comple
 > - **Durable.** `seq` is the `alerts:events` entry. A resubscribe replays only the user's own messages; when they are no longer in the stream, the snapshot is `{ unread, latest }` (the 20 latest inbox items).
 > - **`alert.fired`** carries `{ notification, channels, quiet }`. `channels` are the native notifications the rule asked for; `quiet` means inbox only.
 > - **`notification.read`** carries `{ ids }` or `{ all: true, before }`.
+
+> **As implemented in Phase 9.** `ai` is one durable channel for every role with `dashboards.view`, from the `ai:events` stream. `ai.queued` and `ai.started` carry `{ analysisId, instrumentId, trigger }` (`ai.queued` adds `reason` and `queuedAt`); `ai.completed` (accepted or from cache), `ai.rejected` and `ai.failed` (failed or not called for the budget) carry `{ analysis }`, an `AiAnalysisSummary`; `ai.budget` carries `{ budget }` when the budget's state changes or a call was skipped for it. The snapshot is `{ budget, latest }` (the 20 latest analyses). `SystemHealth` gains `ai`, the jobs service's report (`status`, `detail`, `keyConfigured`, `model`, `budget`, `checkedAt`), absent when it has not reported in the last 120 s; it does not change the overall status.
 
 > **As implemented in Phase 7.** The `calendar` channel is not durable: `calendar.updated` (`{ at, reason: 'sync' | 'manual', changed }`) tells clients to reload the calendar from REST, and a subscribe answers with the latest change as its snapshot. A change comes from the jobs service's sync or an admin's entry, over Redis `config:calendar`. `SystemHealth` gains `calendar: { status, available, detail }`, shown on its own: it does not change the overall status.
 

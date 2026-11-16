@@ -7,6 +7,10 @@
 | Changed | [REQUIREMENTS.md](../../REQUIREMENTS.md) (revision 5), the [requirements analysis](../phase-0/01-requirements-analysis.md), the [implementation plan](../phase-0/08-implementation-plan.md), the [architecture](../phase-0/03-architecture.md), the [risk register](../phase-0/04-risks-and-dependencies.md), the [data model](../phase-0/05-data-model.md), the [API contracts](../phase-0/06-api-contracts.md) and [proposal 001](001-trading.md)'s rules 1 and 2 |
 | Decisions | A1–A9, in [§9](#9-decisions-for-you) |
 
+> **Changed 2026-11-16:** At your request on 2026-11-16, each automatic practice buy spends a fixed amount by default: 10 USDT on Binance (10 USD on Coinbase), rounded down to the pair’s quantity step and capped at the free balance. Sizing by the position-size calculator at a risk per trade stays as the other choice, and rules saved before the change keep it. See [ADR 022](../adr/022-automatic-practice-trading.md#changed-2026-11-16-a-fixed-amount-per-buy).
+>
+> Also at your request on 2026-11-16, the automatic trading card offers notifications of each automatic trade: switching it on (a box, ticked) or one button ("Notify me of automatic trades") makes the alert rules still missing, so that each automatic buy placed, each practice order filled, each stop or target sold and a pause reach the inbox, and as desktop or browser notifications while the app is open. See [ADR 022](../adr/022-automatic-practice-trading.md#changed-2026-11-16-notifications-of-each-automatic-trade).
+
 ## 1. What you asked for
 
 On 2026-11-15 you asked for buying and selling to happen automatically, without you: the platform reads the patterns it detects, and buys and sells by itself.

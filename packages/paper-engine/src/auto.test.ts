@@ -68,12 +68,15 @@ function desk(available = '10000') {
   return { engine, trader };
 }
 
+/** Phase 16's sizing: the calculator's size at the risk per trade (the default before 2026-11-16). */
+const RISK_RULES = { ...DEFAULT_AUTO_RULES, sizing: 'risk' as const };
+
 const strategy = (over: Partial<AutoStrategy> = {}): AutoStrategy => ({
   id: 'st1',
   userId: 'u1',
   accountId: 'acc',
   enabled: true,
-  rules: { ...DEFAULT_AUTO_RULES },
+  rules: { ...RISK_RULES },
   version: 1,
   pausedUntil: null,
   ...over,
@@ -185,9 +188,9 @@ describe('automatic practice trading: placing (ADR 022)', () => {
     const cases: [Partial<AutoStrategy>, Partial<AutoSetup>, Partial<AutoContext>, string][] = [
       [{ pausedUntil: T0 + HOUR }, { instrumentId: 'cb' }, {}, 'paused'],
       [{}, { instrumentId: 'cb' }, {}, 'pair'],
-      [{ rules: { ...DEFAULT_AUTO_RULES, instrumentIds: ['eth'] } }, {}, {}, 'pair'],
+      [{ rules: { ...RISK_RULES, instrumentIds: ['eth'] } }, {}, {}, 'pair'],
       [{}, { instrumentId: 'unknown' }, {}, 'pair'],
-      [{ rules: { ...DEFAULT_AUTO_RULES, patterns: ['eq_near_poi'] } }, { score: 0 }, {}, 'pattern'],
+      [{ rules: { ...RISK_RULES, patterns: ['eq_near_poi'] } }, { score: 0 }, {}, 'pattern'],
       [{}, { mandatoryPassed: false, score: 0 }, {}, 'not_live'],
       [{}, { flags: ['warmup'] }, {}, 'not_live'],
       [{}, { flags: ['late_detection'] }, {}, 'not_live'],
@@ -215,7 +218,7 @@ describe('automatic practice trading: placing (ADR 022)', () => {
   it('keeps to one trade per pair, the open trades limit and the daily orders limit', () => {
     const { trader } = desk('1000000');
     trader.setStrategy(
-      strategy({ rules: { ...DEFAULT_AUTO_RULES, maxOpenTrades: 2, maxOrdersPerDay: 3 } }),
+      strategy({ rules: { ...RISK_RULES, maxOpenTrades: 2, maxOrdersPerDay: 3 } }),
       false,
       T0,
     );
@@ -228,7 +231,7 @@ describe('automatic practice trading: placing (ADR 022)', () => {
       reasons(trader.setup(setup({ id: 'd', instrumentId: 'sol' }), ctx({ book: book('sol') }))),
     ).toEqual(['open_limit']);
     // The day's third order is refused by the engine (no market), and still counts.
-    trader.setStrategy(strategy({ rules: { ...DEFAULT_AUTO_RULES, maxOrdersPerDay: 3 } }), false, T0);
+    trader.setStrategy(strategy({ rules: { ...RISK_RULES, maxOrdersPerDay: 3 } }), false, T0);
     const refused = trader.setup(setup({ id: 'e', instrumentId: 'sol' }), ctx({ health: 'data_delayed' }));
     expect(refused.decisions.map((d) => [d.outcome, d.reason])).toEqual([['refused', 'data_delayed']]);
     expect(refused.outputs.orders.map((o) => o.status)).toEqual(['refused', 'refused', 'refused']);
@@ -323,6 +326,61 @@ describe('automatic practice trading: placing (ADR 022)', () => {
         processedAt: T0 + 400,
       }),
     );
+  });
+});
+
+describe('automatic practice trading: a fixed amount per buy (the default since 2026-11-16)', () => {
+  const fixed = (amount: number) => ({ ...DEFAULT_AUTO_RULES, amount });
+
+  it('spends the default 10 of the quote currency at the entry, rounded down to the quantity step', () => {
+    expect(DEFAULT_AUTO_RULES).toMatchObject({ sizing: 'fixed', amount: 10 });
+    const { trader } = desk();
+    trader.setStrategy(strategy({ rules: { ...DEFAULT_AUTO_RULES } }), false, T0);
+    const r = trader.setup(setup({ entry: '100.00', invalidation: '95.00', target1: '115.00' }), ctx());
+    expect(reasons(r)).toEqual(['placed']);
+    // 10 ÷ 100 = 0.1, the same for the buy, its stop and its target; the risk does not change it.
+    expect(r.orders.map((o) => [o.side, o.type, o.quantity])).toEqual([
+      ['buy', 'limit', '0.1'],
+      ['sell', 'stop', '0.1'],
+      ['sell', 'target', '0.1'],
+    ]);
+    const { trader: other } = desk();
+    other.setStrategy(strategy({ rules: fixed(10) }), false, T0);
+    const wide = other.setup(setup({ entry: '100.00', invalidation: '60.00', target1: '200.00' }), ctx());
+    expect(wide.orders[0]!.quantity).toBe('0.1');
+  });
+
+  it('rounds down, so a buy never spends more than the amount', () => {
+    const { trader } = desk();
+    trader.setStrategy(strategy({ rules: fixed(10) }), false, T0);
+    // 10 ÷ 65432.10 = 0.000152828…, down to the step 0.00001: 0.00015, worth 9.81.
+    const r = trader.setup(
+      setup({ entry: '65432.10', invalidation: '64000.00', target1: '70000.00' }),
+      ctx(),
+    );
+    expect(r.orders[0]!.quantity).toBe('0.00015');
+    expect(dec(r.orders[0]!.quantity).times('65432.10').lte(10)).toBe(true);
+  });
+
+  it('is capped at what the free balance buys, and skipped below the pair’s minimum', () => {
+    // 8 USDT free: 8 ÷ (100 × 1.001), down to the step: 0.07992, worth 7.99.
+    const capped = desk('8');
+    capped.trader.setStrategy(strategy({ rules: fixed(10) }), false, T0);
+    expect(capped.trader.setup(setup(), ctx()).orders[0]!.quantity).toBe('0.07992');
+    // 4 USDT free: what it buys is below the 5 USDT minimum.
+    const poor = desk('4');
+    poor.trader.setStrategy(strategy({ rules: fixed(10) }), false, T0);
+    expect(reasons(poor.trader.setup(setup(), ctx()))).toEqual(['balance']);
+    // A pair whose minimum order is 5,000: 10 is too small for it.
+    const big = desk();
+    big.trader.setStrategy(strategy({ rules: fixed(10) }), false, T0);
+    expect(reasons(big.trader.setup(setup({ id: 'set-big', instrumentId: 'big' }), ctx()))).toEqual(['size']);
+    // Raise the amount and it trades.
+    const bigger = desk();
+    bigger.trader.setStrategy(strategy({ rules: fixed(6000) }), false, T0);
+    expect(reasons(bigger.trader.setup(setup({ id: 'set-big2', instrumentId: 'big' }), ctx()))).toEqual([
+      'placed',
+    ]);
   });
 });
 
@@ -574,6 +632,43 @@ describe('automatic practice trading: journal and replay (criterion 16.6)', () =
 describe('automatic practice trading: properties', () => {
   const price = (cents: number) => (cents / 100).toFixed(2);
 
+  it('with a fixed amount, never spends more than it, nor more than the free balance', () => {
+    fc.assert(
+      fc.property(
+        fc.record({
+          entry: fc.integer({ min: 1_000, max: 10_000_000 }),
+          amount: fc.integer({ min: 1, max: 100_000 }),
+          free: fc.integer({ min: 0, max: 5_000_000 }),
+        }),
+        (g) => {
+          const { trader } = desk(price(g.free));
+          trader.setStrategy(strategy({ rules: { ...DEFAULT_AUTO_RULES, amount: g.amount } }), false, T0);
+          const entry = price(g.entry);
+          const s = setup({
+            entry,
+            invalidation: price(Math.floor(g.entry * 0.95)),
+            target1: price(Math.ceil(g.entry * 1.15)),
+          });
+          const r = trader.setup(s, ctx({ book: { ...book(), asks: [[price(g.entry * 2), '1000000']] } }));
+          const d = r.decisions[0]!;
+          if (d.outcome !== 'placed') {
+            expect(['size', 'balance']).toContain(d.reason);
+            return;
+          }
+          const q = dec(r.orders[0]!.quantity);
+          const spent = q.times(entry);
+          expect(q.mod(BTC.qtyStep).eq(0) && spent.gte(BTC.minNotional)).toBe(true);
+          expect(spent.lte(g.amount)).toBe(true);
+          expect(spent.times('1.001').lte(price(g.free))).toBe(true);
+          // Less than one quantity step short of the amount, unless the balance capped it.
+          if (spent.times('1.001').plus(entry).lte(price(g.free)))
+            expect(spent.plus(dec(BTC.qtyStep).times(entry)).gt(g.amount)).toBe(true);
+        },
+      ),
+      { numRuns: 300 },
+    );
+  });
+
   it('only ever places orders inside the rules and the balance', () => {
     fc.assert(
       fc.property(
@@ -588,7 +683,7 @@ describe('automatic practice trading: properties', () => {
         }),
         (g) => {
           const { trader, engine } = desk(price(g.free));
-          const rules = { ...DEFAULT_AUTO_RULES, riskPct: g.riskPct / 10, minReward: g.minReward / 10 };
+          const rules = { ...RISK_RULES, riskPct: g.riskPct / 10, minReward: g.minReward / 10 };
           trader.setStrategy(strategy({ rules }), false, T0);
           const stop = Math.max(1, Math.floor((g.entry * (1000 - g.stopPct)) / 1000));
           const target = g.entry + Math.ceil(((g.entry - stop) * g.rewardX) / 100);
@@ -640,7 +735,7 @@ describe('automatic practice trading: properties', () => {
         (steps, maxOpenTrades) => {
           const run = () => {
             const { trader, engine } = desk('100000');
-            trader.setStrategy(strategy({ rules: { ...DEFAULT_AUTO_RULES, maxOpenTrades } }), false, T0);
+            trader.setStrategy(strategy({ rules: { ...RISK_RULES, maxOpenTrades } }), false, T0);
             const out: string[] = [];
             let n = 100;
             for (const [i, st] of steps.entries()) {

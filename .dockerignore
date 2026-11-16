@@ -4,6 +4,7 @@
 **/.turbo
 .git
 .secrets
+.secrets-jobs
 .env
 .env.*
 apps/desktop/src-tauri/target

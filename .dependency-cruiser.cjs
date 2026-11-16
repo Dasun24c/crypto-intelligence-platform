@@ -90,6 +90,24 @@ module.exports = {
       },
     },
     {
+      name: 'ai-stays-pure',
+      severity: 'error',
+      comment:
+        'ai (ADR 023) depends only on contracts and domain, and on node:crypto for the context hash; its provider uses the global fetch.',
+      from: { path: '^packages/ai/src/', pathNot: '[.]test[.]ts$' },
+      to: {
+        pathNot: ['^packages/(ai|contracts|domain)/', 'node_modules/(zod|big[.]js)/', '^(node:)?crypto$'],
+      },
+    },
+    {
+      name: 'only-the-jobs-service-calls-the-model',
+      severity: 'error',
+      comment:
+        'SEC-01, criterion 9.5: only the jobs service holds the Grok key and calls xAI (ADR 023); the api and the frontends never import the provider.',
+      from: { pathNot: ['^apps/jobs/', '^packages/ai/'] },
+      to: { path: '^packages/ai/src/provider[.]ts$' },
+    },
+    {
       name: 'pure-packages-no-node-io',
       severity: 'error',
       from: {

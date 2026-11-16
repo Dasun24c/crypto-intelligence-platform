@@ -1,0 +1,37 @@
+{
+  "name": "@cip/ai",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "description": "AI analysis (ADR 011, ADR 023): the response schema and its JSON Schema, grounding validation (V1–V6), the prompt, trigger scoring and aggregation, the context's trimming and hash, cost and the budget, and the Grok provider (its own entry point, for the jobs service only). Pure except the provider's fetch.",
+  "exports": {
+    ".": {
+      "@cip/source": "./src/index.ts",
+      "default": "./dist/index.js"
+    },
+    "./provider": {
+      "@cip/source": "./src/provider.ts",
+      "default": "./dist/provider.js"
+    }
+  },
+  "scripts": {
+    "build": "swc src -d dist --strip-leading-paths --config-file ../../.swcrc --ignore \"**/*.test.ts\"",
+    "typecheck": "tsc -p tsconfig.json",
+    "test": "vitest run"
+  },
+  "dependencies": {
+    "@cip/contracts": "workspace:*",
+    "@cip/domain": "workspace:*",
+    "zod": "catalog:"
+  },
+  "devDependencies": {
+    "@cip/config": "workspace:*",
+    "@swc/cli": "catalog:",
+    "@swc/core": "catalog:",
+    "@types/node": "catalog:",
+    "@typescript/native": "catalog:",
+    "@vitest/coverage-v8": "catalog:",
+    "fast-check": "catalog:",
+    "vitest": "catalog:"
+  }
+}

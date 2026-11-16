@@ -50,7 +50,7 @@ It reads only its arguments: the transition, each strategy (rules, limits, versi
 | Entry, invalidation and target 1 are set, invalidation < entry < target 1, and (target 1 − entry) / (entry − invalidation) is at least the rule's minimum reward | `reward` |
 | No automatic trade is open on this pair, and fewer than the limit are open in all | `open_limit` |
 | Fewer automatic orders than the daily limit were placed since 00:00 UTC | `daily_orders` |
-| The calculator's quantity (risk per trade × the free quote balance ÷ (entry − invalidation), rounded down to the quantity step) is above zero and worth at least the pair's minimum | `size` |
+| The quantity the rules give (a fixed amount ÷ the entry, or, with risk sizing, the calculator's: risk per trade × the free quote balance ÷ (entry − invalidation)), rounded down to the quantity step, is above zero and worth at least the pair's minimum | `size` |
 | The free quote balance covers the buy with the higher fee | `balance` |
 
 **The order**: a limit buy of that quantity at the entry, rounded down to the price step; a stop at the invalidation, rounded down; a target at target 1, rounded down. The broker then places it through the engine exactly as a manual order: the engine's own checks (the pair's data, the venue's rules, the balance) still apply, and an engine refusal is logged as `refused` with its reason.
@@ -93,6 +93,25 @@ From the setup transition's `an:events` entry to the automatic order's `practice
 - **Behaviour depends on the analysis ruleset.** A new ruleset changes which setups confirm. The ruleset version is recorded with every decision, and a replay uses the setups as they were published.
 - **Practice results stay practice results**: labelled as simulated, with the number of trades and the period beside every figure, never presented as expected performance.
 - **Real money is unaffected**: nothing here can reach an exchange, and `pnpm check:no-trading` is unchanged.
+
+## Changed 2026-11-16: a fixed amount per buy
+
+At your request on 2026-11-16, each automatic practice buy spends a fixed amount by default: 10 USDT on Binance (10 USD on Coinbase), rounded down to the pair’s quantity step and capped at the free balance. Sizing by the position-size calculator at a risk per trade stays as the other choice, and rules saved before the change keep it.
+
+- **The rules** gain `sizing` (`fixed` or `risk`) and `amount` (1 to 100,000 of the quote currency). New rules start from `fixed` and 10. A saved rule set without `sizing` is read as `risk`, so nobody's trading changes size without them choosing it.
+- **The size**: with `fixed`, the amount ÷ the entry price, rounded down to the quantity step (so a buy never spends more than the amount), then capped at what the free balance buys with the higher fee, as before. With `risk`, the calculator's size, as before. The checks that follow are unchanged; the `size` skip now reads "At your amount or risk per trade, the order is below the pair's minimum order."
+- **What it means**: the money at risk per trade now depends on the stop's distance (about 0.20 USDT for a stop 2 % below the entry, 0.50 USDT for 5 %), so results are small; compare them by win rate and reward for the risk. The daily loss limit (a share of the starting balance) is rarely reached at this size, and stays as a backstop.
+- **Where**: `packages/contracts` (the rules), `packages/paper-engine` (`AutoTrader`'s sizing, unit and property tests), the card's "Size of each buy" choice and its confirmation, and the broker's and the api's integration tests.
+
+## Changed 2026-11-16: notifications of each automatic trade
+
+Also at your request on 2026-11-16, the automatic trading card offers notifications of each automatic trade: switching it on (a box, ticked) or one button ("Notify me of automatic trades") makes the alert rules still missing, so that each automatic buy placed, each practice order filled, each stop or target sold and a pause reach the inbox, and as desktop or browser notifications while the app is open.
+
+- **Why rules**: Phase 8's alerts already carry these events (`practice_auto_order`, `practice_order_filled`, `practice_exit`, `practice_auto_paused`), with the inbox, desktop and browser notifications, quiet hours and the history. Before this change a user had to find and make each rule in the Alert Center; nobody had, so an automatic buy notified no one. The card now makes them, through the Alert Center's own endpoint (`POST /alerts/rules`, audited as `alert_rule.created`), so they are ordinary rules: the user changes, silences or deletes them there. No new endpoint, table or event.
+- **The rules**: "Automatic practice buy placed", "Practice order filled" (every practice order of the user's that ends with fills, automatic or not), "Practice stop or target sold" and "Automatic practice trading paused" (warning). No cooldown, as each is a trade of its own (each event still fires once per rule); channels: the inbox, the desktop and the browser.
+- **Which are missing**: a rule counts when it is on, has the same condition kind and watches every pair; stops and targets are counted leg by leg, so a rule for the stop alone leaves only "Practice target sold" to make. Nothing is made twice.
+- **Switching on**: when some are missing, the confirmation carries "Notify me of each automatic buy and sale", ticked. The switch goes first; then the rules; a rule that cannot be made (the limit of 100 rules) leaves automatic trading on and says so, with the button to try again. The click also asks the desktop or the browser for permission to notify (once; the Alert Center offers it as before).
+- **Where**: `packages/app` (`lib/alert-rules.ts`: the rules and `missingAutoTradeAlerts`, with unit tests; the card's box, line and button; its tests), and the Phase 16 end-to-end spec (the keyboard flow through the box, and the rules made).
 
 ## As built (Phase 16)
 

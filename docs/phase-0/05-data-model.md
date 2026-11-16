@@ -608,6 +608,14 @@ CREATE INDEX ON ai.analyses (context_hash, created_at DESC);
 -- Daily usage and cost come from a view over ai.analyses (low volume; no hypertable needed).
 ```
 
+> **As implemented in Phase 9** (migration 0014, [ADR 023](../adr/023-ai-pipeline.md)):
+>
+> - **More columns.** `request_reason` (`market_summary`, `setup_review`, `refresh`; set exactly for on-demand analyses), `setup_id` (a setup review's setup) and `error` (`failed`: why, such as `no_key` or `timeout`; `skipped_budget`: which cap; `rejected`: a repair that could not run).
+> - **Checks.** `cache_hit` exactly when `cache_source_id` is set; `accepted` needs a response, a stance and a confidence; `on_demand` exactly when `request_reason` is set.
+> - **What is kept.** `context` is exactly what was sent (`{}`, with an empty hash, when it could not be built). `response` is the validated answer, or for a rejected one the answer as received (unparsable text as `{ raw }`); `stance` and `confidence` are set for accepted analyses only. `validation` is `{ errors, warnings, firstAttemptErrors? }`. `output_tokens` is the visible answer; `reasoning_tokens` are apart. `cost_usd` includes a timed-out call's reserved worst case.
+> - **`ai.daily_usage`** (a view): per UTC day (`YYYY-MM-DD`), `calls` (accepted, rejected and failed), each status's count, `input_tokens`, `output_tokens` (with reasoning) and `cost_usd`.
+> - **Access.** `svc_jobs` inserts and reads, and reads `app.settings`; `svc_api` reads the table and the view; the other services have none.
+
 ## 7. `alerts` and `ops`
 
 ```sql
@@ -835,7 +843,7 @@ CREATE TABLE trading.ledger (
 
 > **As implemented in Phase 16** (migration 0013, [ADR 022](../adr/022-automatic-practice-trading.md)):
 >
-> - `trading.strategies`: one row per user (`user_id` unique): `enabled`, `rules` (`jsonb`, validated by `AutoRulesSchema`: the venue, which picks the account; pairs, patterns, minimum checklist score, minimum reward for the risk, risk per trade, open trades, orders per day and the daily loss limit), `version` (raised by every change), `paused_until`, `updated_by`. The api creates the row on the user's first save or switch-on.
+> - `trading.strategies`: one row per user (`user_id` unique): `enabled`, `rules` (`jsonb`, validated by `AutoRulesSchema`: the venue, which picks the account; pairs, patterns, minimum checklist score, minimum reward for the risk, the size of each buy (since 2026-11-16 `sizing`: a fixed `amount`, 10 by default, or the risk per trade; rules saved earlier read as risk), open trades, orders per day and the daily loss limit), `version` (raised by every change), `paused_until`, `updated_by`. The api creates the row on the user's first save or switch-on.
 > - `trading.auto_decisions`: every decision: the strategy and the version it used, the setup and its analysis `run_id` (the run names the ruleset version), the pattern, `outcome` (`placed`, `skipped`, `refused`, `cancelled`), the `reason` (set exactly when not placed) and the buy. Its ids are name-based, so a decision is stored once.
 > - `trading.auto_days`: per account and UTC day (`YYYY-MM-DD` text), the automatic buys placed (refused ones included) and the realized result of the automatic trades closed, for the limits and the "today" figures.
 > - `trading.orders.source` gains `auto`; `trading.journal` gains the kinds `setup` and `strategy` and a `decisions` column (the auto-trader's digest lines); `trading.broker_state` gains `setups_cursor`.

@@ -324,6 +324,8 @@ sequenceDiagram
 - **No free text reaches the model.** On-demand requests pick an instrument and a reason from a fixed list.
 - **Only the jobs service holds the Grok key** and has outbound access to xAI.
 
+> **As implemented in Phase 9** ([ADR 023](../adr/023-ai-pipeline.md)): the jobs service follows `an:events` itself (the analyzer is unchanged), behind a lease, and queues analyses on the `ai` BullMQ queue, worked one at a time; the api queues on-demand requests on the same queue and never calls xAI. The key is `.secrets-jobs/grok-api-key`, a folder only the jobs container mounts, read at every call; without it nothing is queued and requests are refused. The timeout is 60 s and a timeout is not retried (it may have been billed); a call's worst case, reasoning allowance included, is reserved before it is made, so a cap is never passed. Validation follows ADR 011 (V1–V6, gold rules included). The cache hash leaves out times and rounds the market's figures. A rejected analysis is kept with what was wrong and is never shown as an analysis. The AI Intelligence Center is the app's `/ai`.
+
 ## 9. Alerts and notifications
 
 - **Rule types** (one typed union in `contracts`):

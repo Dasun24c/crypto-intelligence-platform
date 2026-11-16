@@ -1,13 +1,7 @@
 import AxeBuilder from '@axe-core/playwright';
-import { expect, type Page, test } from '@playwright/test';
-import { DEV_PASSWORD, VIEWER } from '../support/users.ts';
-
-async function signIn(page: Page, email: string) {
-  await page.goto('/');
-  await page.getByLabel('E-mail').fill(email);
-  await page.getByLabel('Password').fill(DEV_PASSWORD);
-  await page.getByRole('button', { name: 'Sign in' }).click();
-}
+import { expect, test } from '@playwright/test';
+import { signIn, submitSignIn } from '../support/session.ts';
+import { VIEWER } from '../support/users.ts';
 
 test('the sign-in page has no serious accessibility violations', async ({ page }) => {
   await page.goto('/');
@@ -21,7 +15,8 @@ test('a wrong password is refused with a clear message', async ({ page }) => {
   await page.goto('/');
   await page.getByLabel('E-mail').fill(VIEWER);
   await page.getByLabel('Password').fill('definitely not the password');
-  await page.getByRole('button', { name: 'Sign in' }).click();
+  // Refused for the password, not for the login limit (a 429 is waited out first).
+  expect((await submitSignIn(page)).status()).toBe(401);
   await expect(page.getByRole('alert')).toContainText('Sign-in failed');
 });
 

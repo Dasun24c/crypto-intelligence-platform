@@ -2,6 +2,7 @@ import { act, cleanup, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import {
+  type AlertRule,
   type AutoDecision,
   channels,
   DEFAULT_AUTO_RULES,
@@ -12,6 +13,7 @@ import {
   type PracticeOrder,
   type PracticeStrategy,
 } from '@cip/contracts';
+import { AUTO_TRADE_ALERTS } from '../lib/alert-rules.js';
 import { BTC_BINANCE, BTC_COINBASE, ticker, USDT_COINBASE } from '../test/fixtures.js';
 import { type ApiRequest, json, mockApi, renderApp, signedIn } from '../test/harness.js';
 
@@ -95,8 +97,43 @@ const STRATEGY: PracticeStrategy = {
   today: { orders: 0, result: '0', asset: 'USDT' },
 };
 
-function api(opts: { open?: PracticeOrder[]; done?: PracticeOrder[]; extra?: Record<string, unknown> } = {}) {
+/** One of the user's alert rules, as `GET /alerts/rules` lists it. */
+function alertRule(n: number, extra: Partial<AlertRule> = {}): AlertRule {
+  return {
+    id: id(900 + n),
+    ownerId: id(1),
+    name: `Rule ${n}`,
+    enabled: true,
+    scope: {},
+    condition: { kind: 'practice_auto_order' },
+    severity: 'info',
+    cooldownSec: 300,
+    channels: ['in_app'],
+    quietHours: null,
+    version: 1,
+    createdAt: T,
+    updatedAt: T,
+    ...extra,
+  };
+}
+
+function api(
+  opts: {
+    open?: PracticeOrder[];
+    done?: PracticeOrder[];
+    /** The user's alert rules: `POST /alerts/rules` adds to them. */
+    rules?: AlertRule[];
+    extra?: Record<string, unknown>;
+  } = {},
+) {
+  const rules = [...(opts.rules ?? [])];
   return mockApi({
+    'GET /api/v1/alerts/rules': () => rules,
+    'POST /api/v1/alerts/rules': (r: ApiRequest) => {
+      const created = alertRule(rules.length, r.body as Partial<AlertRule>);
+      rules.push(created);
+      return json(201, created);
+    },
     'GET /api/v1/instruments': [BTC_BINANCE, BTC_COINBASE, USDT_COINBASE],
     'GET /api/v1/practice/account': { accounts: [BINANCE, COINBASE], fees: DEFAULT_PRACTICE_SETTINGS.fees },
     'GET /api/v1/practice/orders': (r: ApiRequest) => ({
@@ -424,17 +461,98 @@ describe('Automatic practice trading (Phase 16)', () => {
     const u = userEvent.setup();
     await u.click(c.getByRole('switch', { name: 'Automatic practice trading' }));
     const confirm = c.getByRole('group', { name: 'Switch on automatic practice trading' });
-    expect(within(confirm).getByText(/each risking 1 % of the free balance/)).toBeTruthy();
+    // The default since 2026-11-16: a fixed 10 USDT a buy.
+    expect(within(confirm).getByText(/each spending about 10 USDT, with a stop and a target/)).toBeTruthy();
     expect(find('POST', '/api/v1/practice/automatic/on')).toHaveLength(0);
     await u.click(within(confirm).getByRole('button', { name: 'Keep it off' }));
     expect(find('POST', '/api/v1/practice/automatic/on')).toHaveLength(0);
 
     await u.click(c.getByRole('switch', { name: 'Automatic practice trading' }));
+    // Changed 2026-11-16: it offers notifications of each automatic trade, ticked.
+    expect(c.getByLabelText<HTMLInputElement>(/Notify me of each automatic buy and sale/).checked).toBe(true);
     await u.click(c.getByRole('button', { name: 'Switch on' }));
     await waitFor(() => expect(c.getByText('On')).toBeTruthy());
     expect(find('POST', '/api/v1/practice/automatic/on')[0]!.body).toEqual({ version: 0 });
-    expect(screen.getByText('Automatic practice trading is on.')).toBeTruthy();
+    expect(
+      screen.getByText(
+        'Automatic practice trading is on. You will be notified of each automatic buy and sale.',
+      ),
+    ).toBeTruthy();
+    expect(find('POST', '/api/v1/alerts/rules').map((r) => r.body)).toEqual(AUTO_TRADE_ALERTS);
+    await waitFor(() =>
+      expect(c.getByText(/Notifications are on for each automatic buy placed/)).toBeTruthy(),
+    );
+    expect(c.getByRole('link', { name: 'Alert Center' }).getAttribute('href')).toBe('/alerts');
     expect(c.getByRole('button', { name: 'Stop and cancel its orders' })).toBeTruthy();
+  });
+
+  it('offers to notify of each automatic trade with one click, making only the rules still missing (changed 2026-11-16)', async () => {
+    const { find } = api({
+      rules: [
+        alertRule(0, { condition: { kind: 'practice_auto_order' } }),
+        alertRule(1, { condition: { kind: 'practice_exit', on: ['stop'] } }),
+        alertRule(2, { condition: { kind: 'practice_order_filled' }, enabled: false }),
+        alertRule(3, { condition: { kind: 'practice_auto_paused' }, scope: { venues: ['binance'] } }),
+      ],
+    });
+    await practicePage();
+    const c = await waitFor(() => card());
+    await waitFor(() => expect(c.getByText('You are not notified of every automatic trade.')).toBeTruthy());
+    const u = userEvent.setup();
+    await u.click(c.getByRole('button', { name: 'Notify me of automatic trades' }));
+    await waitFor(() =>
+      expect(c.getByText(/Notifications are on for each automatic buy placed/)).toBeTruthy(),
+    );
+    expect(find('POST', '/api/v1/alerts/rules').map((r) => r.body)).toEqual([
+      AUTO_TRADE_ALERTS[1],
+      {
+        ...AUTO_TRADE_ALERTS[2],
+        name: 'Practice target sold',
+        condition: { kind: 'practice_exit', on: ['target'] },
+      },
+      AUTO_TRADE_ALERTS[3],
+    ]);
+    expect(screen.getByText('You will be notified of each automatic buy and sale.')).toBeTruthy();
+    // Notified of everything: switching on offers nothing more and makes no rule.
+    await u.click(c.getByRole('switch', { name: 'Automatic practice trading' }));
+    const confirm = c.getByRole('group', { name: 'Switch on automatic practice trading' });
+    expect(within(confirm).queryByLabelText(/Notify me/)).toBeNull();
+  });
+
+  it('switches on without notifications when the box is cleared, and says when they could not be made', async () => {
+    let refuse = false;
+    const { find } = api({
+      extra: {
+        'POST /api/v1/practice/automatic/on': { ...STRATEGY, enabled: true, version: 1 },
+        'POST /api/v1/alerts/rules': () =>
+          refuse
+            ? json(409, {
+                type: 'about:blank',
+                title: 'Conflict',
+                status: 409,
+                code: 'CONFLICT',
+                detail: 'You can have at most 100 alert rules.',
+              })
+            : json(201, alertRule(0)),
+      },
+    });
+    await practicePage();
+    const c = await waitFor(() => card());
+    await waitFor(() => expect(c.getByText('You are not notified of automatic trades.')).toBeTruthy());
+    const u = userEvent.setup();
+    await u.click(c.getByRole('switch', { name: 'Automatic practice trading' }));
+    await u.click(c.getByLabelText(/Notify me of each automatic buy and sale/));
+    await u.click(c.getByRole('button', { name: 'Switch on' }));
+    await waitFor(() => expect(c.getByText('On')).toBeTruthy());
+    expect(screen.getByText('Automatic practice trading is on.')).toBeTruthy();
+    expect(find('POST', '/api/v1/alerts/rules')).toHaveLength(0);
+
+    // The button, when the rules cannot be made: it says why.
+    refuse = true;
+    await u.click(c.getByRole('button', { name: 'Notify me of automatic trades' }));
+    const alert = await screen.findByRole('alert');
+    expect(alert.textContent).toContain('The notifications could not be set up');
+    expect(alert.textContent).toContain('You can have at most 100 alert rules.');
   });
 
   it('checks the rules before saving them against the version it read, and says when they changed elsewhere', async () => {
@@ -456,6 +574,8 @@ describe('Automatic practice trading (Phase 16)', () => {
     await practicePage();
     const c = await waitFor(() => card());
     const u = userEvent.setup();
+    await u.click(c.getByLabelText('A share of the balance at risk'));
+    expect(c.queryByLabelText('Amount per buy (USDT)')).toBeNull();
     const risk = c.getByLabelText('Risk per trade (% of the free balance)');
     await u.clear(risk);
     await u.type(risk, '3');
@@ -492,9 +612,45 @@ describe('Automatic practice trading (Phase 16)', () => {
         ...DEFAULT_AUTO_RULES,
         instrumentIds: [BTC_BINANCE.id],
         patterns: ['htf_order_block'],
+        sizing: 'risk',
         riskPct: 0.5,
       },
     });
+  });
+
+  it('sizes each buy at a fixed amount by default, in the account’s quote currency, and checks it', async () => {
+    const { find } = api({
+      extra: {
+        'PUT /api/v1/practice/automatic': (r: ApiRequest) => ({
+          ...STRATEGY,
+          version: 1,
+          rules: (r.body as { rules: PracticeStrategy['rules'] }).rules,
+        }),
+      },
+    });
+    await practicePage();
+    const c = await waitFor(() => card());
+    const u = userEvent.setup();
+    expect(c.getByLabelText<HTMLInputElement>('A fixed amount').checked).toBe(true);
+    const amount = c.getByLabelText<HTMLInputElement>('Amount per buy (USDT)');
+    expect(amount.value).toBe('10');
+    expect(c.queryByLabelText('Risk per trade (% of the free balance)')).toBeNull();
+    await u.clear(amount);
+    await u.type(amount, '0.5');
+    await u.click(c.getByRole('button', { name: 'Save rules' }));
+    expect(c.getByText('From 1 to 100,000.')).toBeTruthy();
+    expect(find('PUT', '/api/v1/practice/automatic')).toHaveLength(0);
+    await u.clear(amount);
+    await u.type(amount, '25');
+    await u.click(c.getByRole('button', { name: 'Save rules' }));
+    await waitFor(() => expect(screen.getByText('Automatic trading rules saved.')).toBeTruthy());
+    expect(find('PUT', '/api/v1/practice/automatic').at(-1)!.body).toEqual({
+      version: 0,
+      rules: { ...DEFAULT_AUTO_RULES, amount: 25 },
+    });
+    // On the Coinbase practice account the amount is in US dollars.
+    await u.selectOptions(c.getByLabelText('Practice account'), 'coinbase');
+    expect(c.getByLabelText('Amount per buy (USD)')).toBeTruthy();
   });
 
   it('stops after confirming, cancelling its working orders; labels them Automatic (16.3, 16.7)', async () => {

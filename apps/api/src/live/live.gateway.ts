@@ -4,6 +4,9 @@ import { HttpAdapterHost } from '@nestjs/core';
 import { Redis } from 'ioredis';
 import { type DefaultEventsMap, type Namespace, Server, type Socket } from 'socket.io';
 import {
+  AI_EVENTS_STREAM,
+  AI_MESSAGE_TYPES,
+  type AiSnapshot,
   ALERTS_STREAM,
   type AlertsSnapshot,
   ANALYSIS_EVENTS_STREAM,
@@ -27,6 +30,7 @@ import {
   WS_PATH,
 } from '@cip/contracts';
 import type { Logger } from '@cip/observability';
+import { AiRepository } from '../ai/ai.repository.js';
 import { AlertsRepository } from '../alerts/alerts.repository.js';
 import { AnalysisRepository } from '../analysis/analysis.repository.js';
 import { SetupsRepository } from '../analysis/setups.repository.js';
@@ -46,11 +50,18 @@ import { effectiveStatus, toSummary, UsersRepository } from '../users/users.repo
 const LIVE_PATTERN = 'live:*';
 /**
  * The durable streams: market events from the ingestor, analysis events from the analyzer, the
- * users' alert messages from the jobs service and the API (Phase 8, ADR 020), and their practice
- * orders, fills and balances from the broker (Phase 14, ADR 021).
+ * users' alert messages from the jobs service and the API (Phase 8, ADR 020), their practice
+ * orders, fills and balances from the broker (Phase 14, ADR 021), and the AI analyses' lifecycle
+ * from the jobs service and the API (Phase 9, ADR 023).
  */
 const MARKET_EVENTS = 'md:events';
-const STREAMS = [MARKET_EVENTS, ANALYSIS_EVENTS_STREAM, ALERTS_STREAM, PRACTICE_EVENTS_STREAM] as const;
+const STREAMS = [
+  MARKET_EVENTS,
+  ANALYSIS_EVENTS_STREAM,
+  ALERTS_STREAM,
+  PRACTICE_EVENTS_STREAM,
+  AI_EVENTS_STREAM,
+] as const;
 type DurableStream = (typeof STREAMS)[number];
 
 /**
@@ -85,14 +96,17 @@ export const userRoom = (ch: UserChannel, userId: string) => `_${ch}:${userId}`;
 export const streamOf = (ch: string): DurableStream =>
   isUserChannel(ch)
     ? USER_CHANNELS[ch].stream
-    : ch.startsWith('indicators:') || ch.startsWith('smc:') || ch === 'setups' || ch.startsWith('setups:')
-      ? ANALYSIS_EVENTS_STREAM
-      : MARKET_EVENTS;
+    : ch === 'ai'
+      ? AI_EVENTS_STREAM
+      : ch.startsWith('indicators:') || ch.startsWith('smc:') || ch === 'setups' || ch.startsWith('setups:')
+        ? ANALYSIS_EVENTS_STREAM
+        : MARKET_EVENTS;
 /** Channels that carry every instrument: no instrument id to check. */
 const GLOBAL_CHANNELS = new Set<string>([
   'system:health',
   'setups',
   'calendar',
+  'ai',
   ...Object.keys(USER_CHANNELS),
 ]);
 const MARKET_TYPES = new Set(['gap.opened', 'gap.closed', 'feed.status', 'wall.appeared', 'wall.ended']);
@@ -140,6 +154,7 @@ export class LiveGateway implements OnApplicationBootstrap, OnApplicationShutdow
     'an:events': '0-0',
     'alerts:events': '0-0',
     'practice:events': '0-0',
+    'ai:events': '0-0',
   };
   private readonly lastLive = new Map<string, string>();
   private instrumentIds: { at: number; ids: Set<string> } | null = null;
@@ -163,6 +178,7 @@ export class LiveGateway implements OnApplicationBootstrap, OnApplicationShutdow
     private readonly calendar: CalendarRepository,
     private readonly alerts: AlertsRepository,
     private readonly practice: PracticeRepository,
+    private readonly ai: AiRepository,
   ) {}
 
   onApplicationBootstrap(): void {
@@ -398,6 +414,11 @@ export class LiveGateway implements OnApplicationBootstrap, OnApplicationShutdow
       const run = await this.smc.run(id);
       return { run, ...(run ? await this.smc.active(run.id) : { levels: [], ranges: [], zones: [] }) };
     }
+    // The budget and the latest analyses (Phase 9).
+    if (ch === 'ai') {
+      const [budget, latest] = await Promise.all([this.ai.budget(this.clock()), this.ai.latest(20)]);
+      return { budget, latest } satisfies AiSnapshot;
+    }
     // Setups that are not resolved, and the latest 50 transitions (API contracts §5.4).
     if (ch === 'setups') return this.setups.snapshot();
     if (ch.startsWith('setups:')) return this.setups.snapshot(id);
@@ -542,6 +563,11 @@ function replier(ack: unknown): (response: unknown) => void {
 export function toEnvelopes(seq: string, fields: string[]): Envelope[] {
   const type = fields[1];
   const raw = fields[3];
+  // The AI analyses' lifecycle (Phase 9): one global channel.
+  if (type && raw && (AI_MESSAGE_TYPES as readonly string[]).includes(type)) {
+    const data = safeJson(raw);
+    return data === null ? [] : [{ ch: 'ai', seq, ts: Number(seq.split('-')[0]), type, data }];
+  }
   if (type === 'setup' && raw) {
     const m = JSON.parse(raw) as Partial<SetupTransitionMessage>;
     if (typeof m.instrumentId !== 'string') return [];

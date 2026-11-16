@@ -250,6 +250,13 @@ const ENDPOINTS: Endpoint[] = [
   { method: 'GET', path: '/api/v1/practice/automatic/decisions', policy: 'practice.own' },
   { method: 'GET', path: '/api/v1/admin/settings/practice', policy: 'settings.manage' },
   { method: 'PUT', path: '/api/v1/admin/settings/practice', policy: 'settings.manage', body: {} },
+  // Phase 9: AI analyses (history for every role, requests for analysts and admins) and their settings.
+  { method: 'GET', path: '/api/v1/ai/analyses', policy: 'dashboards.view' },
+  { method: 'GET', path: `/api/v1/ai/analyses/${NOBODY}`, policy: 'dashboards.view' },
+  { method: 'POST', path: '/api/v1/ai/analyses', policy: 'ai.request', body: {} },
+  { method: 'GET', path: '/api/v1/ai/usage', policy: 'dashboards.view' },
+  { method: 'GET', path: '/api/v1/admin/settings/ai', policy: 'settings.manage' },
+  { method: 'PUT', path: '/api/v1/admin/settings/ai', policy: 'settings.manage', body: {} },
   { method: 'GET', path: '/api/v1/admin/instruments', policy: 'instruments.manage' },
   { method: 'POST', path: '/api/v1/admin/instruments', policy: 'instruments.manage', body: {} },
   { method: 'PATCH', path: `/api/v1/admin/instruments/${NOBODY}`, policy: 'instruments.manage', body: {} },

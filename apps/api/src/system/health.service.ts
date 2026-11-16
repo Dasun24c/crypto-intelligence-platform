@@ -2,6 +2,8 @@ import { Inject, Injectable } from '@nestjs/common';
 import type { Redis } from 'ioredis';
 import type pg from 'pg';
 import {
+  AI_STATUS_KEY,
+  AiStatusReportSchema,
   type DependencyHealth,
   type HealthStatus,
   SERVICE_NAMES,
@@ -42,6 +44,21 @@ export class HealthService {
       return { status: c.status, available: c.available, detail: c.detail };
     } catch (err) {
       return { status: 'down', available: false, detail: err instanceof Error ? err.message : 'unknown' };
+    }
+  }
+
+  /**
+   * Grok and the AI budget as the jobs service last reported them (Phase 9, ADR 023); absent when it
+   * has not reported lately. Shown on its own: it does not change the overall status.
+   */
+  private async ai(redisUp: boolean): Promise<SystemHealth['ai']> {
+    if (!redisUp) return undefined;
+    try {
+      const raw = await this.redis.get(AI_STATUS_KEY);
+      const parsed = raw ? AiStatusReportSchema.safeParse(JSON.parse(raw)) : null;
+      return parsed?.success ? parsed.data : undefined;
+    } catch {
+      return undefined;
     }
   }
 
@@ -90,7 +107,7 @@ export class HealthService {
     const dbUp = dependencies.find((d) => d.name === 'database')?.status === 'ok';
     const [feeds, analysis] =
       dbUp && redisUp ? await Promise.all([this.feedsService.feeds(), this.analysisStatus.all()]) : [[], []];
-    const calendar = await this.calendar(dbUp, now);
+    const [calendar, ai] = await Promise.all([this.calendar(dbUp, now), this.ai(redisUp)]);
     const dependencyStatus = worst(dependencies.map((d) => d.status));
     const serviceStatus = worst(services.map((s) => s.status));
     const feedsOk = feeds.every((f) => f.state === 'connected');
@@ -102,7 +119,16 @@ export class HealthService {
         : serviceStatus === 'ok' && feedsOk && analysisOk
           ? 'ok'
           : 'degraded';
-    return { status, checkedAt: now, dependencies, services, feeds, analysis, calendar };
+    return {
+      status,
+      checkedAt: now,
+      dependencies,
+      services,
+      feeds,
+      analysis,
+      calendar,
+      ...(ai ? { ai } : {}),
+    };
   }
 
   /** Readiness of this api instance: it can serve only if both dependencies answer. */

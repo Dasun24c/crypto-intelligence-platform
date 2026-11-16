@@ -9,3 +9,4 @@ export * from './profiles.js';
 export * from './calendar.js';
 export * from './alerts.js';
 export * from './trading.js';
+export * from './ai.js';
