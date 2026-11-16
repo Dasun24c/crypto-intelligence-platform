@@ -1,5 +1,6 @@
 import AxeBuilder from '@axe-core/playwright';
 import { type APIRequestContext, expect, type Locator, type Page, test } from '@playwright/test';
+import { login, submitSignIn } from '../support/session.ts';
 import { DEV_PASSWORD, VIEWER } from '../support/users.ts';
 
 /**
@@ -61,12 +62,12 @@ async function signIn(page: Page, email: string) {
   await page.goto('/');
   await page.getByLabel('E-mail').fill(email);
   await page.getByLabel('Password').fill(DEV_PASSWORD);
-  await page.getByRole('button', { name: 'Sign in' }).click();
+  await submitSignIn(page);
 }
 
 /** An access token from the login endpoint (a web login answers TokenResponse; the cookie is unused). */
 async function accessToken(request: APIRequestContext, email: string): Promise<string> {
-  const res = await request.post('/api/v1/auth/login', { data: { email, password: DEV_PASSWORD } });
+  const res = await login(request, email);
   expect(res.status(), await res.text()).toBe(200);
   const body = (await res.json()) as { accessToken?: string; mfaRequired?: boolean };
   expect(body.mfaRequired, 'the viewer signs in without a second factor').toBeUndefined();
