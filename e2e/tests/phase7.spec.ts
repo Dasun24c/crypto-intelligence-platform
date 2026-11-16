@@ -8,6 +8,7 @@ import {
   type Page,
   test,
 } from '@playwright/test';
+import { LIVE_ONLY, REPLAY_STACK } from '../support/stack.ts';
 import { accessToken, signIn, signInAdmin } from '../support/session.ts';
 import { VIEWER } from '../support/users.ts';
 
@@ -191,6 +192,7 @@ async function noSeriousAxeViolations(page: Page) {
 }
 
 test.describe('Phase 7', () => {
+  test.skip(REPLAY_STACK, LIVE_ONLY);
   test.setTimeout(240_000);
 
   // Sign-in is limited to five a minute per address and per account (API contracts §8), so the

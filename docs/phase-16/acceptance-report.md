@@ -2,7 +2,7 @@
 
 | | |
 |---|---|
-| Status | **Built; waiting for your acceptance.** All nine criteria are met. Committed on 2026-11-15 at your request, on the branch `phase-16/automatic-practice-trading`; not pushed |
+| Status | **Accepted 2026-11-15**, when you asked to start Phase 9. All nine criteria are met. Committed on 2026-11-15 at your request (`c318ed5`, on the branch `phase-16/automatic-practice-trading`); not pushed |
 | Date | 2026-11-15 |
 | Scope | [Implementation plan, Phase 16](../phase-0/08-implementation-plan.md#phase-16--automatic-practice-trading), [proposal 002](../proposals/002-automatic-practice-trading.md) (approved 2026-11-15), [ADR 022](../adr/022-automatic-practice-trading.md), REQUIREMENTS §11 revision 5 |
 | Evidence | This machine (Windows 11, Docker Desktop, Node.js 26.13.0); the local Compose stack streaming live public data from Binance and Coinbase, redeployed with Phase 16 at 11:42 UTC on 2026-11-15; checks to 13:24 UTC |

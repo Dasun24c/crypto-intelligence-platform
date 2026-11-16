@@ -298,12 +298,14 @@ export const channels = {
   alerts: 'alerts',
   /** The signed-in user's practice orders, fills and balances (Phase 14): implicit per user. */
   practice: 'practice',
+  /** AI analyses (Phase 9): queued, started, completed, rejected, failed, and the budget. */
+  ai: 'ai',
   systemHealth: 'system:health',
 } as const;
 
 const UUID = '[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}';
 export const CHANNEL_PATTERN = new RegExp(
-  `^(?:(?:ticker|book|trades|market|smc):${UUID}|(?:candles|indicators):${UUID}:(?:1m|5m|15m|1h|4h|1d)|setups(?::${UUID})?|calendar|alerts|practice|system:health)$`,
+  `^(?:(?:ticker|book|trades|market|smc):${UUID}|(?:candles|indicators):${UUID}:(?:1m|5m|15m|1h|4h|1d)|setups(?::${UUID})?|calendar|alerts|practice|ai|system:health)$`,
 );
 
 /**
@@ -315,6 +317,7 @@ export function isDurableChannel(channel: string): boolean {
   return (
     channel === 'alerts' ||
     channel === 'practice' ||
+    channel === 'ai' ||
     channel.startsWith('trades:') ||
     channel.startsWith('market:') ||
     channel.startsWith('indicators:') ||
@@ -421,6 +424,12 @@ export type MarketMessageType =
   | 'practice.fill'
   | 'practice.account'
   | 'practice.automatic'
+  | 'ai.queued'
+  | 'ai.started'
+  | 'ai.completed'
+  | 'ai.rejected'
+  | 'ai.failed'
+  | 'ai.budget'
   | 'health.update';
 
 /** A stored or live candle in its wire form (structural, so this package stays dependency-free). */

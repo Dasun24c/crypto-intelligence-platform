@@ -608,6 +608,14 @@ CREATE INDEX ON ai.analyses (context_hash, created_at DESC);
 -- Daily usage and cost come from a view over ai.analyses (low volume; no hypertable needed).
 ```
 
+> **As implemented in Phase 9** (migration 0014, [ADR 023](../adr/023-ai-pipeline.md)):
+>
+> - **More columns.** `request_reason` (`market_summary`, `setup_review`, `refresh`; set exactly for on-demand analyses), `setup_id` (a setup review's setup) and `error` (`failed`: why, such as `no_key` or `timeout`; `skipped_budget`: which cap; `rejected`: a repair that could not run).
+> - **Checks.** `cache_hit` exactly when `cache_source_id` is set; `accepted` needs a response, a stance and a confidence; `on_demand` exactly when `request_reason` is set.
+> - **What is kept.** `context` is exactly what was sent (`{}`, with an empty hash, when it could not be built). `response` is the validated answer, or for a rejected one the answer as received (unparsable text as `{ raw }`); `stance` and `confidence` are set for accepted analyses only. `validation` is `{ errors, warnings, firstAttemptErrors? }`. `output_tokens` is the visible answer; `reasoning_tokens` are apart. `cost_usd` includes a timed-out call's reserved worst case.
+> - **`ai.daily_usage`** (a view): per UTC day (`YYYY-MM-DD`), `calls` (accepted, rejected and failed), each status's count, `input_tokens`, `output_tokens` (with reasoning) and `cost_usd`.
+> - **Access.** `svc_jobs` inserts and reads, and reads `app.settings`; `svc_api` reads the table and the view; the other services have none.
+
 ## 7. `alerts` and `ops`
 
 ```sql

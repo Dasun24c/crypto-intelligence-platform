@@ -17,6 +17,7 @@ import { useInstruments } from '../api/queries.js';
 import { RunStatusBadge } from '../components/analysis-status.js';
 import { FEED_TONE } from '../components/market-badges.js';
 import { useSystemHealth } from '../live/market-hooks.js';
+import { BUDGET_LABEL } from '../lib/ai.js';
 import { formatLag } from '../lib/analysis.js';
 import { formatAge } from '../lib/format.js';
 import { groupInstruments, VENUE_LABEL } from '../lib/market.js';
@@ -330,6 +331,24 @@ export function SystemHealthPage() {
                   </Td>
                   <Td className="font-mono">—</Td>
                   <Td className="text-fg-muted">{data.calendar.detail}</Td>
+                </tr>
+              ) : null}
+              {/* Phase 9: Grok and the AI budget, as the jobs service reports them. */}
+              {data.ai ? (
+                <tr data-component="ai">
+                  <Td>
+                    <Link to="/ai" className="text-accent underline">
+                      AI (Grok)
+                    </Link>
+                  </Td>
+                  <Td>
+                    <Status status={data.ai.status} />
+                  </Td>
+                  <Td className="font-mono">—</Td>
+                  <Td className="text-fg-muted">
+                    {data.ai.detail}
+                    {data.ai.budget.state === 'ok' ? '' : `; ${BUDGET_LABEL[data.ai.budget.state]}`}
+                  </Td>
                 </tr>
               ) : null}
             </tbody>

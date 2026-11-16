@@ -26,7 +26,7 @@ COPY . .
 RUN --mount=type=cache,id=pnpm-store,target=/pnpm/store --mount=type=cache,id=pnpm-cache,target=/root/.cache/pnpm \
     pnpm install --offline --frozen-lockfile --store-dir /pnpm/store \
       --filter "./packages/*" --filter "./apps/{api,ingestor,analyzer,jobs,broker,web}"
-RUN pnpm --filter "./packages/{contracts,observability,db,domain,exchange-adapters,market-data,indicators,smc-engine,alerts,paper-engine}" --filter "./apps/{api,ingestor,analyzer,jobs,broker}" run build \
+RUN pnpm --filter "./packages/{contracts,observability,db,domain,exchange-adapters,market-data,indicators,smc-engine,alerts,paper-engine,ai}" --filter "./apps/{api,ingestor,analyzer,jobs,broker}" run build \
  && CIP_PUBLIC_DEV_TOOLS=$CIP_PUBLIC_DEV_TOOLS pnpm --filter @cip/web run build
 
 # Production dependencies only, for the server packages. This stage starts clean: `pnpm fetch` fills
@@ -57,6 +57,7 @@ COPY --from=build --chown=node:node /repo/packages/indicators/dist ./packages/in
 COPY --from=build --chown=node:node /repo/packages/smc-engine/dist ./packages/smc-engine/dist
 COPY --from=build --chown=node:node /repo/packages/alerts/dist ./packages/alerts/dist
 COPY --from=build --chown=node:node /repo/packages/paper-engine/dist ./packages/paper-engine/dist
+COPY --from=build --chown=node:node /repo/packages/ai/dist ./packages/ai/dist
 COPY --from=build --chown=node:node /repo/apps/api/dist ./apps/api/dist
 COPY --from=build --chown=node:node /repo/apps/ingestor/dist ./apps/ingestor/dist
 COPY --from=build --chown=node:node /repo/apps/analyzer/dist ./apps/analyzer/dist

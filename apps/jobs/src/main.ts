@@ -1,14 +1,19 @@
 import 'reflect-metadata';
-import { readFileSync } from 'node:fs';
 import { DelayedError, Queue, Worker } from 'bullmq';
 import { Redis } from 'ioredis';
-import { CALENDAR_SYNC_JOB, NOTIFICATIONS_QUEUE } from '@cip/contracts';
+import { AI_QUEUE, type AiJob, CALENDAR_SYNC_JOB, NOTIFICATIONS_QUEUE } from '@cip/contracts';
 import { createDb, createPool, pingDb } from '@cip/db';
 import { BinanceVenue, CoinbaseVenue } from '@cip/exchange-adapters';
-import { checkDependencies, ConfigError, runService } from '@cip/observability';
+import { GrokProvider } from '@cip/ai/provider';
+import { checkDependencies, ConfigError, INSTANCE_ID, runService } from '@cip/observability';
+import { ContextBuilder } from './ai/context.js';
+import { AiStatusReporter } from './ai/status.js';
+import { AiStore } from './ai/store.js';
+import { AiTriggerFollower } from './ai/triggers.js';
+import { AiWorker } from './ai/worker.js';
 import { Backfiller, type BackfillJob, GapNotRepairable, GapNotSettled } from './backfill.js';
 import { syncCalendar } from './calendar-sync.js';
-import { loadJobsConfig } from './config.js';
+import { keyReader, loadJobsConfig } from './config.js';
 import { CONSISTENCY_CHECK, CONSISTENCY_PATTERN, checkConsistency, previousDay } from './consistency.js';
 import { gapRepairer, HOLE_SWEEP, HOLE_SWEEP_EVERY_MS, sweepHoles } from './gap-repairs.js';
 import { Maintenance } from './maintenance.js';
@@ -16,6 +21,8 @@ import { type DeliverJob, deliverAlert } from './notifications.js';
 
 /** The jobs service is degraded while 10 or more maintenance jobs failed within this window. */
 const RECENT_FAILURES_MS = 60 * 60_000;
+/** How often `ai:status` (Grok and the budget) is refreshed. */
+const AI_STATUS_EVERY_MS = 30_000;
 import {
   GENERATE_CLOSURES,
   GENERATE_CLOSURES_EVERY_MS,
@@ -48,17 +55,7 @@ async function main(): Promise<void> {
       prefix: config.QUEUE_PREFIX,
     });
     // The FRED key's file is read at every sync, so a key added to it later needs no restart.
-    const fredApiKey = (): string | undefined => {
-      const file = process.env.FRED_API_KEY_FILE;
-      let key = config.FRED_API_KEY;
-      if (file)
-        try {
-          key = readFileSync(file, 'utf8').trim();
-        } catch {
-          key = undefined;
-        }
-      return key ? key : undefined;
-    };
+    const fredApiKey = keyReader(config.FRED_API_KEY, process.env.FRED_API_KEY_FILE);
     const maintenance = new Maintenance({
       redisUrl: config.REDIS_URL,
       prefix: config.QUEUE_PREFIX,
@@ -182,6 +179,63 @@ async function main(): Promise<void> {
       log.warn({ err, eventId: job?.data.eventId, attempts: job?.attemptsMade }, 'alert delivery failed');
     });
 
+    // AI analyses (Phase 9, ADR 023): only this service holds the Grok key and calls the model.
+    const grokKey = keyReader(config.GROK_API_KEY, process.env.GROK_API_KEY_FILE);
+    const hasKey = () => grokKey() !== undefined;
+    const provider = new GrokProvider({ baseUrl: config.AI_BASE_URL, apiKey: grokKey });
+    const aiStore = new AiStore(db);
+    const aiStatus = new AiStatusReporter({ store: aiStore, provider, redis, log, hasKey });
+    const aiWorker = new AiWorker({
+      store: aiStore,
+      contexts: new ContextBuilder(db, redis),
+      provider,
+      redis,
+      log,
+      model: (settings) => aiStatus.model(settings),
+    });
+    const aiQueue = new Queue<AiJob>(AI_QUEUE, { connection: queueRedis, prefix: config.QUEUE_PREFIX });
+    // One call at a time across every instance: the budget is checked before each.
+    await aiQueue.setGlobalConcurrency(1);
+    const ai = new Worker<AiJob>(AI_QUEUE, async (job) => aiWorker.run(job.data), {
+      connection: queueRedis.duplicate(),
+      prefix: config.QUEUE_PREFIX,
+      concurrency: 1,
+    });
+    ai.on('completed', (job, r: { status?: string } | undefined) =>
+      completed.add(1, { queue: 'ai', name: `${job.name}:${r?.status ?? 'done'}` }),
+    );
+    ai.on('failed', (job, err) => {
+      failed.add(1, { queue: 'ai', name: job?.name ?? 'unknown' });
+      log.warn({ err, analysisId: job?.data.analysisId }, 'AI analysis job failed');
+    });
+    const aiReader = new Redis(config.REDIS_URL, {
+      maxRetriesPerRequest: null,
+      connectionName: 'cip-jobs-ai-reader',
+    });
+    const triggers = new AiTriggerFollower({
+      db,
+      redis,
+      reader: aiReader,
+      queue: aiQueue,
+      store: aiStore,
+      log,
+      instance: INSTANCE_ID,
+      hasKey,
+      announce: (job) =>
+        aiWorker.announce('ai.queued', {
+          analysisId: job.analysisId,
+          instrumentId: job.instrumentId,
+          trigger: job.trigger,
+          reason: job.reason,
+          queuedAt: job.queuedAt,
+        }),
+    });
+    await triggers.start();
+    const refreshAiStatus = () =>
+      aiStatus.refresh().catch((err: unknown) => log.warn({ err }, 'AI status refresh failed'));
+    await refreshAiStatus();
+    const aiStatusTimer = setInterval(() => void refreshAiStatus(), AI_STATUS_EVERY_MS);
+
     return {
       async probe() {
         const [m, b, recent] = await Promise.all([
@@ -190,14 +244,24 @@ async function main(): Promise<void> {
           // Failed jobs are kept for inspection however old: only the last hour's say how it is now.
           maintenance.failedSince(Date.now() - RECENT_FAILURES_MS),
         ]);
-        const running = maintenance.worker.isRunning() && backfill.isRunning() && notifications.isRunning();
+        const running =
+          maintenance.worker.isRunning() &&
+          backfill.isRunning() &&
+          notifications.isRunning() &&
+          ai.isRunning();
+        const triggerState = triggers.lastError ?? (triggers.holding ? 'following events' : 'standby');
         return {
-          status: running && recent < 10 ? 'ok' : 'degraded',
-          detail: `${running ? 'workers running' : 'a worker stopped'}; backfill: ${b.waiting ?? 0} waiting, ${b.active ?? 0} active, ${b.failed ?? 0} failed; maintenance: ${m.delayed ?? 0} scheduled, ${recent} failed in the last hour`,
+          status: running && recent < 10 && !triggers.lastError ? 'ok' : 'degraded',
+          detail: `${running ? 'workers running' : 'a worker stopped'}; backfill: ${b.waiting ?? 0} waiting, ${b.active ?? 0} active, ${b.failed ?? 0} failed; maintenance: ${m.delayed ?? 0} scheduled, ${recent} failed in the last hour; AI triggers: ${triggerState}`,
         };
       },
       readiness: () => checkDependencies({ database: () => pingDb(pool), redis: () => redis.ping() }),
       async stop() {
+        clearInterval(aiStatusTimer);
+        await triggers.stop();
+        await ai.close();
+        await aiQueue.close();
+        aiReader.disconnect();
         await notifications.close();
         await backfill.close();
         await backfillQueue.close();

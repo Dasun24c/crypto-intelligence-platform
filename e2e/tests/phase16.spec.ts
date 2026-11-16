@@ -3,6 +3,7 @@ import { randomUUID } from 'node:crypto';
 import AxeBuilder from '@axe-core/playwright';
 import { type APIRequestContext, type BrowserContext, expect, type Page, test } from '@playwright/test';
 import { Redis } from 'ioredis';
+import { LIVE_ONLY, REPLAY_STACK } from '../support/stack.ts';
 import { accessToken, signIn } from '../support/session.ts';
 import { ANALYST } from '../support/users.ts';
 
@@ -43,6 +44,7 @@ function onTick(value: number, tick: string): string {
 
 test.describe('Phase 16', () => {
   test.describe.configure({ mode: 'serial' });
+  test.skip(REPLAY_STACK, LIVE_ONLY);
   test.setTimeout(5 * 60_000);
 
   let ctx: BrowserContext;

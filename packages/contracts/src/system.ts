@@ -1,4 +1,5 @@
 import { z } from 'zod';
+import { AiStatusReportSchema } from './ai.js';
 import { TsSchema } from './common.js';
 import { AnalysisStatusSchema } from './analysis.js';
 import { CalendarStatusSchema } from './calendar.js';
@@ -56,6 +57,11 @@ export const SystemHealthSchema = z.object({
    * before Phase 7.
    */
   calendar: CalendarStatusSchema.pick({ status: true, available: true, detail: true }).optional(),
+  /**
+   * AI analysis (Phase 9): Grok's state and the budget, shown on their own; AI unavailable does not
+   * change the overall status. Absent before the jobs service first reports it.
+   */
+  ai: AiStatusReportSchema.optional(),
 });
 export type SystemHealth = z.infer<typeof SystemHealthSchema>;
 

@@ -10,7 +10,7 @@ import {
 import { type Capability, can, type Tf, type UserSummary } from '@cip/contracts';
 import { Shell } from './layout/shell.js';
 import { isTimeframe } from './lib/analysis.js';
-import { readLiquiditySearch, readPracticeSearch, readScannerSearch } from './lib/search.js';
+import { readAiSearch, readLiquiditySearch, readPracticeSearch, readScannerSearch } from './lib/search.js';
 import { AdminAuditPage } from './pages/admin-audit.js';
 import { AdminInstrumentsPage } from './pages/admin-instruments.js';
 import { AdminUsersPage } from './pages/admin-users.js';
@@ -111,6 +111,14 @@ const routeTree = rootRoute.addChildren([
     path: '/alerts',
     beforeLoad: requireCapability('alerts.own'),
     component: lazyRouteComponent(() => import('./pages/alert-center.js'), 'AlertCenterPage'),
+  }),
+  // Phase 9: the AI Intelligence Center (every role reads; analysts and admins ask).
+  createRoute({
+    getParentRoute: () => rootRoute,
+    path: '/ai',
+    beforeLoad: requireCapability('dashboards.view'),
+    validateSearch: readAiSearch,
+    component: lazyRouteComponent(() => import('./pages/ai-center.js'), 'AiCenterPage'),
   }),
   // Phase 14: practice trading on the user's own practice account (every role).
   createRoute({
