@@ -17,21 +17,23 @@
 //   node scripts/practice-latency.mjs --drive [orders=40] [minutes]  place practice orders first, then measure
 //   node scripts/practice-latency.mjs --auto [setups=30] [minutes]   drive automatic trading first, then measure
 //
-// --drive signs in as the development viewer (seed-dev) through the api at API_URL (default
+// --drive signs in as the tests' viewer (e2e-viewer@cip.test, seed-dev) through the api at API_URL (default
 // http://localhost:8080) and places, on Binance BTC/USDT: market buys and sells of the smallest
 // quantity worth the venue minimum, and limit buys and sells one price step inside the best prices,
 // which fill when a trade goes through them. Practice orders only: nothing reaches an exchange.
 // The seed password comes from DEV_SEED_PASSWORD, or the development default in apps/api/src/cli.ts.
 //
-// --auto signs in as the development viewer, starts their Binance practice account again, sets their
+// --auto signs in as the tests' viewer, starts their Binance practice account again, sets their
 // automatic trading to Binance BTC/USDT and switches it on; then appends, one at a time, confirmed
 // bullish setup transitions to `an:events` in the analyzer's message shape (an entry at half the price,
 // so the buy rests), waits for the broker's decision, and ends each setup (invalidated) so its buy is
 // cancelled before the next. It switches automatic trading off at the end. Synthetic setups: the
-// analysis finds a few real ones a day. Practice orders only: nothing reaches an exchange.
+// analysis finds a few real ones a day. Practice orders only: nothing reaches an exchange. Those
+// confirmed setups reach every account's automatic trading, so --auto first asks the audit log (as the
+// tests' admin, e2e/.auth/e2e-admin-totp.txt) and refuses while another account has it switched on.
 
-import { randomUUID } from 'node:crypto';
-import { readFileSync } from 'node:fs';
+import { createHmac, randomUUID } from 'node:crypto';
+import { existsSync, readFileSync } from 'node:fs';
 import net from 'node:net';
 
 const args = process.argv.slice(2);
@@ -158,16 +160,113 @@ async function call(token, method, path, body) {
     body: body ? JSON.stringify(body) : undefined,
   });
   const text = await res.text();
-  return { status: res.status, body: text ? JSON.parse(text) : undefined };
+  return {
+    status: res.status,
+    body: text ? JSON.parse(text) : undefined,
+    retryAfter: Number(res.headers.get('retry-after')),
+  };
+}
+
+// The tests' own accounts (seed-dev), never the ones people use: this resets practice balances and
+// switches automatic trading.
+const TEST_VIEWER = 'e2e-viewer@cip.test';
+const TEST_ADMIN = 'e2e-admin@cip.test';
+
+/** `POST /auth/login`, waiting out the login limit (5 a minute per address and per account). */
+async function login(email) {
+  for (let attempt = 0; ; attempt++) {
+    const res = await call(null, 'POST', '/auth/login', { email, password: seedPassword() });
+    if (res.status !== 429 || attempt >= 10) return res;
+    await sleep((res.retryAfter > 0 ? res.retryAfter * 1000 : 12_000) + 250);
+  }
 }
 
 async function signInViewer() {
-  const login = await call(null, 'POST', '/auth/login', {
-    email: 'viewer@cip.test',
-    password: seedPassword(),
-  });
-  if (login.status !== 200 || !login.body.accessToken) throw new Error(`sign-in failed (${login.status})`);
-  return login.body.accessToken;
+  const res = await login(TEST_VIEWER);
+  if (res.status !== 200 || !res.body.accessToken) throw new Error(`sign-in failed (${res.status})`);
+  return res.body.accessToken;
+}
+
+/** RFC 6238 TOTP (SHA-1, 6 digits, 30 s), for the tests' admin. */
+function totp(secretBase32, nowMs = Date.now()) {
+  const alphabet = 'ABCDEFGHIJKLMNOPQRSTUVWXYZ234567';
+  let bits = 0;
+  let value = 0;
+  const bytes = [];
+  for (const ch of secretBase32.replace(/[\s=]/g, '').toUpperCase()) {
+    value = (value << 5) | alphabet.indexOf(ch);
+    bits += 5;
+    if (bits >= 8) {
+      bytes.push((value >>> (bits - 8)) & 0xff);
+      bits -= 8;
+    }
+  }
+  const counter = Buffer.alloc(8);
+  counter.writeBigUInt64BE(BigInt(Math.floor(nowMs / 30_000)));
+  const mac = createHmac('sha1', Buffer.from(bytes)).update(counter).digest();
+  const offset = mac[mac.length - 1] & 0x0f;
+  return String((mac.readUInt32BE(offset) & 0x7fffffff) % 1_000_000).padStart(6, '0');
+}
+
+/** The tests' admin's access token: the password, then a code from their authenticator's secret. */
+async function signInTestAdmin() {
+  const file = new URL('../e2e/.auth/e2e-admin-totp.txt', import.meta.url);
+  if (!existsSync(file))
+    throw new Error(
+      "the tests' admin has not enrolled yet: run the admin end-to-end spec once (pnpm e2e admin.spec)",
+    );
+  const secret = readFileSync(file, 'utf8').trim();
+  const res = await login(TEST_ADMIN);
+  if (res.status !== 200 || !res.body.mfaToken)
+    throw new Error(`the test admin's sign-in failed (${res.status})`);
+  let used;
+  for (let attempt = 0; attempt < 3;) {
+    let code = totp(secret);
+    while (code === used) {
+      await sleep(1_000);
+      code = totp(secret);
+    }
+    const mfa = await call(null, 'POST', '/auth/mfa', { mfaToken: res.body.mfaToken, code });
+    if (mfa.status === 200 && mfa.body.accessToken) return mfa.body.accessToken;
+    if (mfa.status === 429) {
+      await sleep((mfa.retryAfter > 0 ? mfa.retryAfter * 1000 : 12_000) + 250);
+      continue;
+    }
+    // A code from a time step already used is refused: the next step's is not.
+    used = code;
+    attempt++;
+  }
+  throw new Error("the test admin's second factor failed");
+}
+
+/**
+ * Accounts other than `ownUserId` whose automatic practice trading is on: each account's latest
+ * switch in the audit log, newest first.
+ */
+async function othersTradingAutomatically(ownUserId) {
+  const admin = await signInTestAdmin();
+  const switches = new Set([
+    'practice_auto.switched_on',
+    'practice_auto.switched_off',
+    'practice_auto.stopped',
+  ]);
+  const latest = new Map();
+  let cursor = null;
+  do {
+    const page = await call(
+      admin,
+      'GET',
+      `/admin/audit?action=practice_auto.&limit=1000${cursor ? `&cursor=${encodeURIComponent(cursor)}` : ''}`,
+    );
+    if (page.status !== 200) throw new Error(`reading the audit log failed (${page.status})`);
+    for (const e of page.body.items)
+      if (e.actorUserId && switches.has(e.action) && !latest.has(e.actorUserId))
+        latest.set(e.actorUserId, e.action);
+    cursor = page.body.nextCursor;
+  } while (cursor);
+  return [...latest]
+    .filter(([id, a]) => id !== ownUserId && a === 'practice_auto.switched_on')
+    .map(([id]) => id);
 }
 
 async function driveOrders(redis) {
@@ -263,6 +362,14 @@ async function driveAutomatic(redis) {
   const half = Number(t.ask) / 2;
   const levels = { entry: price(half), invalidation: price(half * 0.98), target1: price(half * 1.1) };
 
+  // Its confirmed setups reach every account's automatic trading: not while another account has it on.
+  const me = (await call(token, 'GET', '/me')).body;
+  const others = await othersTradingAutomatically(me.id);
+  if (others.length > 0)
+    throw new Error(
+      `automatic trading is on for ${others.length} other account(s): these confirmed setups would trade for them`,
+    );
+
   // From the starting balances, its rules for BTC/USDT, switched on.
   const current = (await call(token, 'GET', '/practice/automatic')).body;
   if (current.enabled) await call(token, 'POST', '/practice/automatic/stop');
@@ -285,7 +392,7 @@ async function driveAutomatic(redis) {
   const on = await call(token, 'POST', '/practice/automatic/on', { version: saved.body.version });
   if (on.status !== 200) throw new Error(`switching on failed (${on.status})`);
   console.log(
-    `driving ${setups} confirmed setups for the development viewer's automatic practice trading (simulated)`,
+    `driving ${setups} confirmed setups for the tests' viewer's automatic practice trading (simulated)`,
   );
 
   const runId = randomUUID();

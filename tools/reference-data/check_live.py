@@ -103,7 +103,8 @@ def main() -> None:
     args = parser.parse_args()
     base = args.base.rstrip("/") + "/api/v1"
     password = os.environ.get("DEV_SEED_PASSWORD", "local-dev-password")
-    token = call(base, "/auth/login", body={"email": "viewer@cip.test", "password": password})["accessToken"]
+    # The tests' own viewer (seed-dev), never the one people use.
+    token = call(base, "/auth/login", body={"email": "e2e-viewer@cip.test", "password": password})["accessToken"]
     failed = False
     total = total_exact = 0
     for instrument in call(base, "/instruments", token):

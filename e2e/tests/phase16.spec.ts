@@ -4,7 +4,14 @@ import AxeBuilder from '@axe-core/playwright';
 import { type APIRequestContext, type BrowserContext, expect, type Page, test } from '@playwright/test';
 import { Redis } from 'ioredis';
 import { LIVE_ONLY, REPLAY_STACK } from '../support/stack.ts';
-import { accessToken, signIn } from '../support/session.ts';
+import {
+  accessToken,
+  adminAccessToken,
+  ensureTestAdmin,
+  othersTradingAutomatically,
+  signIn,
+  userIdOf,
+} from '../support/session.ts';
 import { ANALYST } from '../support/users.ts';
 
 /**
@@ -74,6 +81,8 @@ test.describe('Phase 16', () => {
   let rulesBefore = new Set<string>();
   /** Whether the analyst lacked some notification of automatic trades, so the card offers them. */
   let offered = false;
+  /** Past the guard: from then on the spec changes its analyst's account, and cleans up after. */
+  let changing = false;
   const runId = randomUUID();
 
   /** A setup transition as the analyzer appends it to an:events (`SetupTransitionMessage`). */
@@ -146,6 +155,20 @@ test.describe('Phase 16', () => {
     const baseURL = testInfo.project.use.baseURL;
     api = await playwright.request.newContext({ baseURL });
     headers = await accessToken(api, ANALYST);
+    // The confirmed setups this spec appends to an:events reach every account's automatic trading:
+    // one switched on with matching rules would trade on them too. So it runs only when no other
+    // account has automatic trading on.
+    await ensureTestAdmin(browser, baseURL);
+    const others = await othersTradingAutomatically(
+      api,
+      await adminAccessToken(api),
+      await userIdOf(api, headers),
+    );
+    test.skip(
+      others.length > 0,
+      `automatic trading is on for ${others.length} other account(s): this spec's confirmed setups would trade for them`,
+    );
+    changing = true;
     redis = new Redis(REDIS_URL, { maxRetriesPerRequest: 2 });
     const instruments = (await (await api.get('/api/v1/instruments', { headers })).json()) as Instrument[];
     btc = instruments.find((i) => i.venue === 'binance' && i.base === 'BTC' && i.quote === 'USDT')!;
@@ -205,14 +228,14 @@ test.describe('Phase 16', () => {
   });
 
   test.afterAll(async () => {
-    if (api) {
+    if (api && changing) {
       await api.post('/api/v1/practice/automatic/stop', { headers }).catch(() => undefined);
       // The spec's own rules: its rule, and the notifications switching on made.
       const made = (await rules().catch(() => [])).filter((r) => !rulesBefore.has(r.id)).map((r) => r.id);
       for (const id of [...(ruleId ? [ruleId] : []), ...made])
         await api.delete(`/api/v1/alerts/rules/${id}`, { headers }).catch(() => undefined);
-      await api.dispose();
     }
+    await api?.dispose();
     redis?.disconnect();
     await ctx?.close();
   });
