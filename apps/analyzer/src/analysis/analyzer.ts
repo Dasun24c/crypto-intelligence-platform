@@ -1,10 +1,10 @@
 import type { Meter } from '@opentelemetry/api';
 import { Redis } from 'ioredis';
 import type { Kysely } from 'kysely';
-import { type AnalysisStatus, analysisStatusKey } from '@cip/contracts';
+import { type ActivityCounters, type AnalysisStatus, analysisStatusKey } from '@cip/contracts';
 import type { Database } from '@cip/db';
 import type { Timeframe } from '@cip/domain';
-import type { HeartbeatProbe, Logger } from '@cip/observability';
+import { type HeartbeatProbe, type Logger, RateCounter } from '@cip/observability';
 import { AlertService, type DeliveryQueue } from '../alerts/alert-service.js';
 import { InstrumentActor } from './actor.js';
 import { InstrumentLease, LEASE_RENEW_MS, LEASE_TTL_MS } from './lease.js';
@@ -63,8 +63,16 @@ export class Analyzer {
   private readonly steps = new RecentValues(4_096);
   /** Users' alert rules (ADR 020). */
   readonly alerts: AlertService | null;
+  /**
+   * The brain's analysis counters (ADR 024): candle boundaries analysed, and the instruments that
+   * analysed some during the second. The routine wake-up every few seconds that finds nothing due is
+   * not analysis, and is not counted.
+   */
+  private readonly candles: RateCounter;
+  private readonly analysing = new Set<string>();
 
   constructor(private readonly o: AnalyzerOptions) {
+    this.candles = new RateCounter(o.now);
     this.repo = new AnalysisRepository(o.db);
     this.store = new SmcStore(o.db);
     const histogram = o.meter?.createHistogram('cip_analysis_publish_lag_ms', {
@@ -158,6 +166,24 @@ export class Analyzer {
     };
   }
 
+  /**
+   * The second just ended, for the 3D brain (ADR 024): candle boundaries analysed a second, the
+   * instruments that analysed some, those with a wake-up waiting, and those held back.
+   */
+  activity(): ActivityCounters {
+    const held = [...this.held];
+    const activeJobs = this.analysing.size;
+    this.analysing.clear();
+    return {
+      analysis: {
+        candlesPerSec: this.candles.take(),
+        activeJobs,
+        backlog: held.filter(([, h]) => h.actor.waiting).length,
+        paused: held.filter(([id]) => this.statuses.get(id)?.paused === true).length,
+      },
+    };
+  }
+
   /** Renews leases and follows instrument changes, then retries each actor and publishes its state. */
   async tick(): Promise<void> {
     if (this.stopped) return;
@@ -227,6 +253,10 @@ export class Analyzer {
             onPublished: this.onPublished,
             onStep: this.onStep,
             onAlerts: this.alerts ? (id, items, at) => this.alerts!.published(id, items, at) : undefined,
+            onCandles: (n) => {
+              this.candles.add(n);
+              this.analysing.add(instrument.id);
+            },
           }),
         };
         this.held.set(instrument.id, h);

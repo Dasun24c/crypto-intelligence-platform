@@ -21,8 +21,8 @@ import {
   type SocketStatus,
   type Unparsed,
 } from '@cip/exchange-adapters';
-import type { HeartbeatProbe, Logger } from '@cip/observability';
-import { CONFIG_CHANNELS } from '@cip/contracts';
+import { type HeartbeatProbe, type Logger, RateCounter } from '@cip/observability';
+import { type ActivityCounters, CONFIG_CHANNELS, type VenueLinkState } from '@cip/contracts';
 import { NOTIONAL_BIN_RATIO } from '@cip/market-data';
 import { Detections } from './detections.js';
 import { ClosureCalendar, loadInstruments, type StreamedInstrument } from './instruments.js';
@@ -225,6 +225,8 @@ export class MarketIngestor {
   }
 
   private readonly countEvent: (venue: string) => void;
+  /** Venue messages a second, per venue, for the 3D brain (ADR 024). */
+  private readonly rates = new Map<StreamVenue, RateCounter>();
 
   async start(): Promise<void> {
     const now = Date.now();
@@ -274,6 +276,7 @@ export class MarketIngestor {
       onEvent: (e: MarketEvent) => {
         this.eventsSeen++;
         this.countEvent(venue);
+        this.rateOf(venue).add();
         // Replayed events keep their recorded format (binance/coinbase); they belong to replay instruments.
         this.pipelines.get(`${venue}:${e.symbol}`)?.onEvent(e);
       },
@@ -568,6 +571,29 @@ export class MarketIngestor {
           'PX',
           15_000,
         );
+  }
+
+  private rateOf(venue: StreamVenue): RateCounter {
+    let rate = this.rates.get(venue);
+    if (!rate) {
+      rate = new RateCounter();
+      this.rates.set(venue, rate);
+    }
+    return rate;
+  }
+
+  /**
+   * The second just ended, for the 3D brain (ADR 024): venue messages processed a second per venue,
+   * and each venue's connection where this instance holds its lease (`standby` elsewhere).
+   */
+  activity(): ActivityCounters {
+    const msgsPerSec: Record<string, number> = {};
+    const venues: Record<string, VenueLinkState> = {};
+    for (const v of this.venues) {
+      msgsPerSec[v] = this.rateOf(v).take();
+      venues[v] = this.leases[v].held ? this.venueState[v] : 'standby';
+    }
+    return { ingest: { msgsPerSec, venues } };
   }
 
   probe(): HeartbeatProbe {

@@ -389,6 +389,8 @@ The brain is a live view of system activity, divided into regions mapped to subs
 - Randomness is used only as seeded spatial noise for particle placement. It never drives state or rates. A test feeds zero activity and asserts the scene settles at idle parameters.
 - **Performance**: instanced meshes, up to 20k particles by default, adaptive quality, rendering paused while hidden, and a reduced-motion mode. A text status line is always next to the canvas.
 
+> **As implemented in Phase 10** ([ADR 024](../adr/024-activity-feed-and-3d-brain.md)): the page is **System Brain** (`/brain`), its scene a lazy chunk (React Three Fiber 9.8.2, three 0.187.0). Every ingestor, analyzer and jobs instance reports its second to `sys:activity`; the api combines the reports with alerts, AI results and System Health into `activity.snapshot` every 500 ms, and sends `activity.pulse` at once ([API contracts §5.3](06-api-contracts.md#53-channels)). The state and every mapping are pure functions of the snapshot (receiving: 1 venue message a second or more; firing 0.2 a second plus 0.6 per analysis running), smoothed over 0.5 s of elapsed time. About 1,600 nodes in four regions, about 3,000 links, and 20,000 particles at High (8,000 Medium, 3,000 Low) whose paths are computed on the GPU; Automatic quality drops a tier below 45 fps and rises after 10 s above 57 fps. The loop stops while the tab is hidden, the canvas is off screen or the animation is paused; with reduced motion it draws a still frame per change. Without WebGL2 (or when the user picks it) a 2D view shows a meter per region.
+
 ## 13. Desktop (Tauri 2)
 
 - Uses the same `packages/app` build with the Tauri platform implementation.

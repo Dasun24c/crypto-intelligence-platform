@@ -4,6 +4,10 @@ import { HttpAdapterHost } from '@nestjs/core';
 import { Redis } from 'ioredis';
 import { type DefaultEventsMap, type Namespace, Server, type Socket } from 'socket.io';
 import {
+  ACTIVITY_SNAPSHOT_MS,
+  ACTIVITY_STREAM,
+  type ActivityPulse,
+  ActivityReportSchema,
   AI_EVENTS_STREAM,
   AI_MESSAGE_TYPES,
   type AiSnapshot,
@@ -43,6 +47,7 @@ import { TAURI_ORIGINS, type ApiConfig } from '../config.js';
 import { MarketRepository } from '../market/market.repository.js';
 import { PracticeRepository } from '../practice/practice.repository.js';
 import { HealthService } from '../system/health.service.js';
+import { ActivityAggregator, aiOutcomeOf, aiResultOf, PulseLimiter, pulseOf } from './activity.js';
 import { API_CONFIG, CLOCK, type Clock, LOGGER, REDIS } from '../tokens.js';
 import { effectiveStatus, toSummary, UsersRepository } from '../users/users.repository.js';
 
@@ -104,6 +109,7 @@ export const streamOf = (ch: string): DurableStream =>
 /** Channels that carry every instrument: no instrument id to check. */
 const GLOBAL_CHANNELS = new Set<string>([
   'system:health',
+  'system:activity',
   'setups',
   'calendar',
   'ai',
@@ -124,6 +130,10 @@ const OVER_LIMIT_MS = 30_000;
  * is in flight, which loses most of a burst (six candle updates per tick) even for a fast client.
  */
 const SLOW_ROOM = '_slow';
+/** The 3D brain's channel (Phase 10, ADR 024). */
+const ACTIVITY_CHANNEL = 'system:activity';
+/** System Health older than this is checked again before a new subscriber's first snapshot. */
+const ERRORS_FRESH_MS = 10_000;
 
 interface SocketState {
   user: AuthenticatedUser;
@@ -160,6 +170,10 @@ export class LiveGateway implements OnApplicationBootstrap, OnApplicationShutdow
   private instrumentIds: { at: number; ids: Set<string> } | null = null;
   private timers: NodeJS.Timeout[] = [];
   private lastHealth = { json: '', at: 0 };
+  /** The brain's activity (ADR 024): the services' reports, alerts, AI results and pulses. */
+  private readonly activity = new ActivityAggregator();
+  private readonly pulseLimiter = new PulseLimiter();
+  private activitySeq = '0-0';
   delivered = 0;
 
   constructor(
@@ -226,7 +240,19 @@ export class LiveGateway implements OnApplicationBootstrap, OnApplicationShutdow
     void this.readEvents();
     this.timers.push(setInterval(() => this.checkBackpressure(), 1_000));
     this.timers.push(setInterval(() => void this.broadcastHealth(), 5_000));
+    this.timers.push(setInterval(() => this.broadcastActivity(), ACTIVITY_SNAPSHOT_MS));
     for (const t of this.timers) t.unref();
+    void this.seedAi();
+  }
+
+  /** The AI's last result before this instance started (ADR 024); later ones come from ai:events. */
+  private async seedAi(): Promise<void> {
+    try {
+      const [latest] = await this.ai.latest(1);
+      if (latest) this.activity.aiFinished(aiResultOf(latest.status), latest.createdAt);
+    } catch (err) {
+      this.log.warn({ err }, 'could not read the last AI analysis for the activity view');
+    }
   }
 
   async onApplicationShutdown(): Promise<void> {
@@ -338,6 +364,15 @@ export class LiveGateway implements OnApplicationBootstrap, OnApplicationShutdow
     since: string | undefined,
   ): Promise<SubscribeAck['results'][string]> {
     if (ch === 'system:health') return { mode: 'snapshot', snapshot: await this.health.check() };
+    if (ch === ACTIVITY_CHANNEL) {
+      const now = this.clock();
+      if (now - this.activity.errorsAt > ERRORS_FRESH_MS)
+        await this.health
+          .check()
+          .then((h) => this.activity.health(h, now))
+          .catch((err: unknown) => this.log.warn({ err }, 'health check for the activity view failed'));
+      return { mode: 'snapshot', snapshot: this.activity.snapshot(now) };
+    }
     if (!isDurableChannel(ch)) return { mode: 'snapshot', snapshot: await this.liveSnapshot(ch) };
 
     const stream = streamOf(ch);
@@ -464,6 +499,7 @@ export class LiveGateway implements OnApplicationBootstrap, OnApplicationShutdow
         this.log.warn({ err, stream }, 'could not read the event stream position');
       }
     }
+    await this.seedActivity(reader);
     while (this.running) {
       try {
         const res = await reader.xread(
@@ -473,11 +509,19 @@ export class LiveGateway implements OnApplicationBootstrap, OnApplicationShutdow
           5_000,
           'STREAMS',
           ...STREAMS,
+          ACTIVITY_STREAM,
           ...STREAMS.map((s) => this.lastSeq[s]),
+          this.activitySeq,
         );
         for (const [stream, entries] of res ?? [])
           for (const [seq, fields] of entries) {
+            if (stream === ACTIVITY_STREAM) {
+              this.activitySeq = seq;
+              this.onActivityReport(fields);
+              continue;
+            }
             this.lastSeq[stream as DurableStream] = seq;
+            this.observeActivity(stream, seq, fields);
             const userChannel = USER_CHANNEL_OF_STREAM.get(stream);
             if (userChannel) {
               const u = toUserEnvelope(userChannel, seq, fields);
@@ -502,6 +546,72 @@ export class LiveGateway implements OnApplicationBootstrap, OnApplicationShutdow
     }
   }
 
+  /**
+   * Where the activity view starts (ADR 024): the latest report position, and the alerts fired in the
+   * last minute up to where the reader starts (later ones arrive on the stream).
+   */
+  private async seedActivity(reader: Redis): Promise<void> {
+    try {
+      this.activitySeq = (await reader.xrevrange(ACTIVITY_STREAM, '+', '-', 'COUNT', 1))[0]?.[0] ?? '0-0';
+      const until = this.lastSeq[ALERTS_STREAM];
+      if (until === '0-0') return;
+      const since = String(this.clock() - 60_000);
+      for (const [seq, fields] of await reader.xrange(ALERTS_STREAM, since, until, 'COUNT', 10_000))
+        if (fields[1] === 'alert.fired') this.activity.alertFired(Number(seq.split('-')[0]));
+    } catch (err) {
+      this.log.warn({ err }, 'could not read the activity stream position');
+    }
+  }
+
+  /** A service instance's second (ADR 024); a malformed report is ignored. */
+  private onActivityReport(fields: string[]): void {
+    const raw = fields[3];
+    const parsed = fields[1] === 'activity' && raw ? ActivityReportSchema.safeParse(safeJson(raw)) : null;
+    if (parsed?.success) this.activity.report(parsed.data);
+  }
+
+  /** What a durable stream's entry means for the activity view: an AI result, an alert, a pulse. */
+  private observeActivity(stream: string, seq: string, fields: string[]): void {
+    const ts = Number(seq.split('-')[0]);
+    if (stream === AI_EVENTS_STREAM) {
+      const outcome = aiOutcomeOf(fields);
+      if (outcome) this.activity.aiFinished(outcome, ts);
+    }
+    if (stream === ALERTS_STREAM && fields[1] === 'alert.fired') this.activity.alertFired(ts);
+    const pulse = pulseOf(stream, seq, fields);
+    if (pulse) this.emitPulse(pulse);
+  }
+
+  private emitPulse(pulse: ActivityPulse): void {
+    if (!this.nsp?.adapter.rooms.has(ACTIVITY_CHANNEL) || !this.pulseLimiter.allow(this.clock())) return;
+    this.delivered++;
+    this.nsp
+      .to(ACTIVITY_CHANNEL)
+      .except(SLOW_ROOM)
+      .emit('message', {
+        ch: ACTIVITY_CHANNEL,
+        ts: pulse.ts,
+        type: 'activity.pulse',
+        data: pulse,
+      } satisfies Envelope);
+  }
+
+  /** `activity.snapshot` every ACTIVITY_SNAPSHOT_MS while anyone is subscribed (≤ 4 Hz). */
+  private broadcastActivity(): void {
+    if (!this.nsp?.adapter.rooms.has(ACTIVITY_CHANNEL)) return;
+    const now = this.clock();
+    this.delivered++;
+    this.nsp
+      .to(ACTIVITY_CHANNEL)
+      .except(SLOW_ROOM)
+      .emit('message', {
+        ch: ACTIVITY_CHANNEL,
+        ts: now,
+        type: 'activity.snapshot',
+        data: this.activity.snapshot(now),
+      } satisfies Envelope);
+  }
+
   private checkBackpressure(): void {
     const now = this.clock();
     for (const socket of this.nsp?.sockets.values() ?? []) {
@@ -520,13 +630,20 @@ export class LiveGateway implements OnApplicationBootstrap, OnApplicationShutdow
     }
   }
 
-  /** `system:health` on change, and at least every 10 s, while anyone is subscribed. */
+  /**
+   * `system:health` on change, and at least every 10 s, while anyone is subscribed; and the activity
+   * view's errors, while anyone watches it (ADR 024).
+   */
   private async broadcastHealth(): Promise<void> {
-    if (!this.nsp?.adapter.rooms.has('system:health')) return;
+    const forHealth = this.nsp?.adapter.rooms.has('system:health') ?? false;
+    const forActivity = this.nsp?.adapter.rooms.has(ACTIVITY_CHANNEL) ?? false;
+    if (!forHealth && !forActivity) return;
     try {
       const health = await this.health.check();
-      const json = JSON.stringify({ ...health, checkedAt: 0 });
       const now = this.clock();
+      if (forActivity) this.activity.health(health, now);
+      if (!forHealth || !this.nsp) return;
+      const json = JSON.stringify({ ...health, checkedAt: 0 });
       if (json === this.lastHealth.json && now - this.lastHealth.at < 10_000) return;
       this.lastHealth = { json, at: now };
       this.nsp.to('system:health').emit('message', {

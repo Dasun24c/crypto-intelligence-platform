@@ -69,6 +69,8 @@ export interface ActorDeps {
   onStep?: (ms: number) => void;
   /** What was just published, for alert rules (Phase 8; never warm-up or replays). */
   onAlerts?: (instrumentId: string, items: Published[], processedAt: number) => void;
+  /** Candle boundaries just analysed, for the brain's candles a second and "analysing" (ADR 024). */
+  onCandles?: (boundaries: number) => void;
 }
 
 export function toRow(
@@ -180,6 +182,11 @@ export class InstrumentActor {
   /** A newer lease holder owns the run: drop this actor. */
   get leaseLost(): boolean {
     return this.lost;
+  }
+
+  /** A wake-up waits behind the step in progress (the brain's backlog, ADR 024). */
+  get waiting(): boolean {
+    return this.pending;
   }
 
   /** The last boundary processed, for tests. */
@@ -316,7 +323,10 @@ export class InstrumentActor {
       await this.refreshContext();
       const stop = await proc.advance({ max: CHECKPOINT_EVERY - this.sinceCheckpoint });
       const out = proc.drain();
-      if (out.boundaries > 0) await this.flush(out);
+      if (out.boundaries > 0) {
+        await this.flush(out);
+        this.deps.onCandles?.(out.boundaries);
+      }
       if (stop.kind === 'limit') continue;
       this.pause = stop.kind === 'paused' ? { reason: 'data_gap', detail: stop.detail } : null;
       const run = this.run!;

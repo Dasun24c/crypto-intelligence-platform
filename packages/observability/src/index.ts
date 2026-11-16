@@ -4,6 +4,7 @@ export * from './metrics.js';
 export * from './tracing.js';
 export * from './ops-server.js';
 export * from './heartbeat.js';
+export * from './activity.js';
 export * from './instance.js';
 export * from './service.js';
 export * from './nest-logger.js';

@@ -155,6 +155,50 @@ describe('live gateway', () => {
     });
   });
 
+  it('sends the activity snapshot on subscribe and every 500 ms from the services’ reports, and pulses at once (Phase 10)', async () => {
+    const socket = connect({ token });
+    await connected(socket);
+    const messages = collect(socket);
+    const ack = await subscribe(socket, ['system:activity']);
+    expect(ack.results['system:activity']).toMatchObject({
+      mode: 'snapshot',
+      snapshot: { ingest: { perVenue: expect.any(Object) }, errors: expect.any(Array) },
+    });
+    const report = (data: unknown) =>
+      redis.xadd('sys:activity', '*', 'type', 'activity', 'data', JSON.stringify(data));
+    await report({
+      service: 'ingestor',
+      instance: 'test-ingestor',
+      at: h.clock.now,
+      ingest: { msgsPerSec: { binance: 123 }, venues: { binance: 'open' } },
+    });
+    await report({
+      service: 'analyzer',
+      instance: 'test-analyzer',
+      at: h.clock.now,
+      analysis: { candlesPerSec: 2, activeJobs: 1, backlog: 0, paused: 0 },
+    });
+    // A malformed report is ignored.
+    await report({ service: 'nope', instance: 'x', at: h.clock.now });
+    const latest = () => messages.filter((m) => m.type === 'activity.snapshot').at(-1)?.data;
+    await expect.poll(latest, { timeout: 5_000 }).toMatchObject({
+      ingest: { msgsPerSec: 123, perVenue: { binance: 123 }, state: 'ok' },
+      analysis: { candlesPerSec: 2, activeJobs: 1 },
+    });
+    // A setup transition on an:events is a pattern pulse, sent at once.
+    await redis.xadd(
+      'an:events',
+      '*',
+      'type',
+      'setup',
+      'data',
+      JSON.stringify({ id: 'setup-x', instrumentId: BTC }),
+    );
+    await expect
+      .poll(() => messages.find((m) => m.type === 'activity.pulse')?.data, { timeout: 5_000 })
+      .toMatchObject({ kind: 'pattern', refId: 'setup-x', instrumentId: BTC });
+  });
+
   it('disconnects a client whose renewal token is invalid', async () => {
     const socket = connect({ token });
     await connected(socket);

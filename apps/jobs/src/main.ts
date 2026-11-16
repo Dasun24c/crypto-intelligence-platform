@@ -5,7 +5,7 @@ import { AI_QUEUE, type AiJob, CALENDAR_SYNC_JOB, NOTIFICATIONS_QUEUE } from '@c
 import { createDb, createPool, pingDb } from '@cip/db';
 import { BinanceVenue, CoinbaseVenue } from '@cip/exchange-adapters';
 import { GrokProvider } from '@cip/ai/provider';
-import { checkDependencies, ConfigError, INSTANCE_ID, runService } from '@cip/observability';
+import { checkDependencies, ConfigError, INSTANCE_ID, PeakGauge, runService } from '@cip/observability';
 import { ContextBuilder } from './ai/context.js';
 import { AiStatusReporter } from './ai/status.js';
 import { AiStore } from './ai/store.js';
@@ -196,11 +196,24 @@ async function main(): Promise<void> {
     const aiQueue = new Queue<AiJob>(AI_QUEUE, { connection: queueRedis, prefix: config.QUEUE_PREFIX });
     // One call at a time across every instance: the budget is checked before each.
     await aiQueue.setGlobalConcurrency(1);
-    const ai = new Worker<AiJob>(AI_QUEUE, async (job) => aiWorker.run(job.data), {
-      connection: queueRedis.duplicate(),
-      prefix: config.QUEUE_PREFIX,
-      concurrency: 1,
-    });
+    // AI calls in progress, for the 3D brain (ADR 024).
+    const aiInflight = new PeakGauge();
+    const ai = new Worker<AiJob>(
+      AI_QUEUE,
+      async (job) => {
+        aiInflight.inc();
+        try {
+          return await aiWorker.run(job.data);
+        } finally {
+          aiInflight.dec();
+        }
+      },
+      {
+        connection: queueRedis.duplicate(),
+        prefix: config.QUEUE_PREFIX,
+        concurrency: 1,
+      },
+    );
     ai.on('completed', (job, r: { status?: string } | undefined) =>
       completed.add(1, { queue: 'ai', name: `${job.name}:${r?.status ?? 'done'}` }),
     );
@@ -254,6 +267,14 @@ async function main(): Promise<void> {
           status: running && recent < 10 && !triggers.lastError ? 'ok' : 'degraded',
           detail: `${running ? 'workers running' : 'a worker stopped'}; backfill: ${b.waiting ?? 0} waiting, ${b.active ?? 0} active, ${b.failed ?? 0} failed; maintenance: ${m.delayed ?? 0} scheduled, ${recent} failed in the last hour; AI triggers: ${triggerState}`,
         };
+      },
+      /** The second just ended, for the 3D brain (ADR 024): AI calls in progress and waiting. */
+      async activity() {
+        const waiting = await aiQueue
+          .getJobCounts('waiting', 'prioritized', 'delayed')
+          .then((c) => (c.waiting ?? 0) + (c.prioritized ?? 0) + (c.delayed ?? 0))
+          .catch(() => 0);
+        return { ai: { inflight: aiInflight.take(), queued: waiting } };
       },
       readiness: () => checkDependencies({ database: () => pingDb(pool), redis: () => redis.ping() }),
       async stop() {

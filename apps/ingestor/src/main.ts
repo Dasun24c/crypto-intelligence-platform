@@ -37,6 +37,7 @@ async function main(): Promise<void> {
     await market.start();
     return {
       probe: () => market.probe(),
+      activity: () => market.activity(),
       readiness: () => status.readiness(),
       stop: async () => {
         await market.stop();
