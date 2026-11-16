@@ -70,15 +70,34 @@ describe('automatic practice trading contracts (Phase 16)', () => {
 
   it('ship the recommended defaults, every pattern, and a text for every skip reason', () => {
     expect(AutoRulesSchema.parse(DEFAULT_AUTO_RULES)).toEqual(DEFAULT_AUTO_RULES);
-    expect(DEFAULT_AUTO_RULES).toMatchObject({ minScore: 70, minReward: 2, riskPct: 1, dailyLossPct: 3 });
+    expect(DEFAULT_AUTO_RULES).toMatchObject({
+      minScore: 70,
+      minReward: 2,
+      sizing: 'fixed',
+      amount: 10,
+      riskPct: 1,
+      dailyLossPct: 3,
+    });
     expect(DEFAULT_AUTO_RULES.patterns).toEqual([...PATTERN_NAMES]);
     expect(Object.keys(AUTO_SKIP_TEXT).sort()).toEqual([...AUTO_SKIP_REASONS].sort());
+  });
+
+  it('read rules saved before the fixed amount existed as they were saved: risk sizing', () => {
+    const { sizing: _sizing, amount: _amount, ...saved } = DEFAULT_AUTO_RULES;
+    expect(AutoRulesSchema.parse(saved)).toMatchObject({ sizing: 'risk', amount: 10, riskPct: 1 });
+    expect(AutoRulesSchema.parse({ ...saved, sizing: 'fixed', amount: 25 })).toMatchObject({
+      sizing: 'fixed',
+      amount: 25,
+    });
   });
 
   it('keep the rules inside their limits', () => {
     for (const r of [
       rules({ riskPct: 0.1 }),
       rules({ riskPct: 2 }),
+      rules({ sizing: 'risk' }),
+      rules({ amount: 1 }),
+      rules({ amount: 100_000 }),
       rules({ maxOpenTrades: 10, maxOrdersPerDay: 50, dailyLossPct: 10, minReward: 10, minScore: 0 }),
       rules({ instrumentIds: [INSTRUMENT], patterns: ['htf_order_block'] }),
     ])
@@ -86,6 +105,9 @@ describe('automatic practice trading contracts (Phase 16)', () => {
     for (const r of [
       rules({ riskPct: 2.5 }), // at most 2 % a trade
       rules({ riskPct: 0 }),
+      rules({ amount: 0.5 }),
+      rules({ amount: 100_001 }),
+      rules({ sizing: 'all_in' }),
       rules({ patterns: [] }),
       rules({ patterns: ['guess'] }),
       rules({ minScore: 101 }),

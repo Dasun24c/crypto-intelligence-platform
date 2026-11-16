@@ -1,5 +1,66 @@
-import type { AlertCondition, AlertConditionKind, AlertRule } from '@cip/contracts';
+import type { AlertCondition, AlertConditionKind, AlertRule, CreateAlertRuleRequest } from '@cip/contracts';
 import { PATTERN_SHORT, STATE_TITLE } from './setups.js';
+
+/** The query of the user's own alert rules (the Alert Center and the automatic trading card). */
+export const ALERT_RULES_KEY = ['alerts', 'rules'] as const;
+
+/**
+ * Notifications of automatic practice trading (changed 2026-11-16, at a user's request; ADR 022): the
+ * alert rules the automatic trading card offers to make, so that each automatic buy placed, each
+ * practice order filled, each stop or target sold and a pause reach the inbox, and as desktop or
+ * browser notifications while the app is open. No cooldown: each is a trade of its own.
+ */
+export const AUTO_TRADE_ALERTS: readonly CreateAlertRuleRequest[] = [
+  {
+    name: 'Automatic practice buy placed',
+    condition: { kind: 'practice_auto_order' },
+    severity: 'info',
+    cooldownSec: 0,
+    channels: ['in_app', 'desktop', 'web'],
+  },
+  {
+    name: 'Practice order filled',
+    condition: { kind: 'practice_order_filled' },
+    severity: 'info',
+    cooldownSec: 0,
+    channels: ['in_app', 'desktop', 'web'],
+  },
+  {
+    name: 'Practice stop or target sold',
+    condition: { kind: 'practice_exit', on: ['stop', 'target'] },
+    severity: 'info',
+    cooldownSec: 0,
+    channels: ['in_app', 'desktop', 'web'],
+  },
+  {
+    name: 'Automatic practice trading paused',
+    condition: { kind: 'practice_auto_paused' },
+    severity: 'warning',
+    cooldownSec: 0,
+    channels: ['in_app', 'desktop', 'web'],
+  },
+];
+
+/**
+ * Those of {@link AUTO_TRADE_ALERTS} the user's rules do not give yet: a rule gives one when it is
+ * switched on, has the same condition kind and watches every pair. Stops and targets are counted leg
+ * by leg, so a rule for the stop alone leaves only the target to make. Rules switched off do not count.
+ */
+export function missingAutoTradeAlerts(rules: readonly AlertRule[]): CreateAlertRuleRequest[] {
+  const live = rules.filter((r) => r.enabled && !r.scope.instrumentIds && !r.scope.venues);
+  const legs = new Set(live.flatMap((r) => (r.condition.kind === 'practice_exit' ? r.condition.on : [])));
+  return AUTO_TRADE_ALERTS.flatMap((want) => {
+    const c = want.condition;
+    if (c.kind !== 'practice_exit') return live.some((r) => r.condition.kind === c.kind) ? [] : [want];
+    const on = c.on.filter((leg) => !legs.has(leg));
+    if (on.length === c.on.length) return [want];
+    return on.map((leg) => ({
+      ...want,
+      name: `Practice ${leg} sold`,
+      condition: { kind: c.kind, on: [leg] },
+    }));
+  });
+}
 
 /** The sixteen condition kinds, in the order the rule form offers them. */
 export const KIND_LABELS: Record<AlertConditionKind, string> = {

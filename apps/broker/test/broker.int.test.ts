@@ -719,7 +719,8 @@ describe('automatic practice trading in the broker (ADR 022, Phase 16)', () => {
         id: strategyId,
         user_id: userId,
         enabled: true,
-        rules: { ...DEFAULT_AUTO_RULES },
+        // Phase 16's sizing, named: the calculator's size at the risk per trade (the default is now a fixed amount).
+        rules: { ...DEFAULT_AUTO_RULES, sizing: 'risk' },
         version: 1,
         updated_by: userId,
       })
@@ -1069,6 +1070,7 @@ describe('automatic practice trading in the broker (ADR 022, Phase 16)', () => {
     // both decide, and the order checks refuse both orders.
     const late = randomUUID();
     const lateAccount = randomUUID();
+    const lateStrategy = randomUUID();
     await owner
       .insertInto('app.users')
       .values({ id: late, email: `${late}@cip.test`, display_name: 'x', role: 'viewer', password_hash: 'x' })
@@ -1092,7 +1094,7 @@ describe('automatic practice trading in the broker (ADR 022, Phase 16)', () => {
     await owner
       .insertInto('trading.strategies')
       .values({
-        id: randomUUID(),
+        id: lateStrategy,
         user_id: late,
         enabled: true,
         rules: { ...DEFAULT_AUTO_RULES },
@@ -1107,6 +1109,21 @@ describe('automatic practice trading in the broker (ADR 022, Phase 16)', () => {
       ['refused', 'data_delayed'],
       ['refused', 'data_delayed'],
     ]);
+    // The late user's rules are the defaults: a fixed 10 USDT a buy (since 2026-11-16), so its refused
+    // buy is 10 ÷ 99 rounded down to ETH's quantity step.
+    const lateDecision = await owner
+      .selectFrom('trading.auto_decisions')
+      .select('order_id')
+      .where('strategy_id', '=', lateStrategy)
+      .where('setup_id', '=', ethSetup)
+      .executeTakeFirstOrThrow();
+    const lateBuy = await owner
+      .selectFrom('trading.orders')
+      .select(['quantity', 'status', 'source'])
+      .where('id', '=', lateDecision.order_id!)
+      .executeTakeFirstOrThrow();
+    expect(lateBuy).toMatchObject({ status: 'refused', source: 'auto' });
+    expect(dec(lateBuy.quantity).eq('0.101')).toBe(true);
     // An unreadable setup message is passed over.
     await redis.xadd(ANALYSIS_EVENTS_STREAM, '*', 'type', 'setup', 'data', '{"not":"a setup"}');
     await redis.xadd(ANALYSIS_EVENTS_STREAM, '*', 'type', 'setup', 'data', 'not json');

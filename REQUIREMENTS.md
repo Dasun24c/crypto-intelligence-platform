@@ -1,5 +1,7 @@
 # Project: AI-Powered Cryptocurrency Intelligence & Monitoring Platform
 
+> Revision 6 (2026-11-16) — automatic practice buys spend a fixed amount by default (10 USDT, or 10 USD on Coinbase); sizing by the position-size calculator at the user's risk per trade stays as a choice (section 11). Switching automatic trading on offers notifications of each automatic trade (alert rules of the user's own). Practice balances only, as before. See [ADR 022](docs/adr/022-automatic-practice-trading.md#changed-2026-11-16-a-fixed-amount-per-buy) and [its notifications](docs/adr/022-automatic-practice-trading.md#changed-2026-11-16-notifications-of-each-automatic-trade).
+>
 > Revision 5 (2026-11-15) — adds automatic practice trading: rules a user sets may place practice orders on their own practice account, switched on by them, within their limits (section 11), plus changes to section 3.1, the data model and the final acceptance criteria. Real-money trading stays out of the initial release, and the AI never decides an order. See [proposal 002](docs/proposals/002-automatic-practice-trading.md).
 >
 > Revision 4 (2026-11-13) — adds practice trading with simulated orders (new section 11), plus changes to the main objective, sections 3.1, 3.7, 6, 8 and 10, the data model and the final acceptance criteria. Real-money trading stays out of the initial release. See [proposal 001](docs/proposals/001-trading.md).
@@ -344,9 +346,9 @@ Let users practise buying and selling without real money. Practice orders are si
 
 - Each user may switch on automatic trading for their own practice account. It is off by default, and nobody, admins included, can switch it on for someone else.
 - It acts only on confirmed bullish setups that match the user's rules: the patterns, the pairs, a minimum checklist score and a minimum reward for the risk at target 1. The AI never decides an automatic order, and an indicator on its own never triggers one.
-- For each such setup it places a practice limit buy at the setup's entry, sized by the position-size calculator at the user's risk per trade, with a protective stop at the invalidation and a target at target 1. It cancels the buy if the setup expires or is invalidated before the buy fills.
+- For each such setup it places a practice limit buy at the setup's entry, sized as the user's rules say: a fixed amount of the quote currency (10 by default), or the position-size calculator's size at their risk per trade; with a protective stop at the invalidation and a target at target 1. It cancels the buy if the setup expires or is invalidated before the buy fills.
 - Limits: the most open automatic trades (one per pair), the most automatic orders a day, and a daily loss limit that pauses it until the next UTC day. A stop control switches it off and cancels its open orders within 5 seconds.
-- Every decision is logged with its reason, placed or skipped. Every automatic order is labelled "Automatic", audited with the setup and rules version that caused it, and alerted. Rule changes are audited.
+- Every decision is logged with its reason, placed or skipped. Every automatic order is labelled "Automatic", audited with the setup and rules version that caused it, and alerted. Rule changes are audited. Switching it on offers the user notifications of each automatic buy, fill, stop or target sale and pause (revision 6).
 - Decisions are deterministic: replaying the same setups, market data and rules gives the same decisions and fills.
 - Its results are practice results like any other: labelled as simulated, never presented as expected performance.
 

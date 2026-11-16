@@ -265,6 +265,15 @@ export type PracticeSnapshot = z.infer<typeof PracticeSnapshotSchema>;
  * places a practice limit buy at the entry, with a stop at the invalidation and a target at target 1,
  * sized at `riskPct` of the free quote balance. Practice balances only; the AI never decides.
  */
+/**
+ * How each automatic buy is sized (changed 2026-11-16, at the owner's request): `fixed` spends about
+ * a fixed amount of the pair's quote currency; `risk` puts the risk per trade of the free balance at
+ * risk, by the position-size calculator.
+ */
+export const AUTO_SIZINGS = ['fixed', 'risk'] as const;
+export const AutoSizingSchema = z.enum(AUTO_SIZINGS);
+export type AutoSizing = z.infer<typeof AutoSizingSchema>;
+
 export const AutoRulesSchema = z.strictObject({
   /** The practice account it trades. */
   venue: VenueSchema,
@@ -275,7 +284,14 @@ export const AutoRulesSchema = z.strictObject({
   minScore: z.number().min(0).max(100),
   /** Target 1's distance over the stop's, at least. */
   minReward: z.number().min(0.5).max(10),
-  /** Percent of the free quote balance put at risk per trade. */
+  /**
+   * How each buy is sized. Rules saved before 2026-11-16 have no `sizing`: they keep `risk`, as
+   * they were saved. New rules start from DEFAULT_AUTO_RULES (`fixed`).
+   */
+  sizing: AutoSizingSchema.default('risk'),
+  /** With `fixed`: what each buy spends, in the pair's quote currency (USDT on Binance, USD on Coinbase). */
+  amount: z.number().min(1).max(100_000).default(10),
+  /** With `risk`: percent of the free quote balance put at risk per trade. */
   riskPct: z.number().min(0.1).max(2),
   maxOpenTrades: z.number().int().min(1).max(10),
   maxOrdersPerDay: z.number().int().min(1).max(50),
@@ -284,13 +300,18 @@ export const AutoRulesSchema = z.strictObject({
 });
 export type AutoRules = z.infer<typeof AutoRulesSchema>;
 
-/** Proposal 002's recommended defaults (decisions A4 and A5). */
+/**
+ * Proposal 002's recommended defaults (decisions A4 and A5), with each buy a fixed 10 of the quote
+ * currency since 2026-11-16 (the owner's choice); 1 % risk per trade stays as the other choice.
+ */
 export const DEFAULT_AUTO_RULES: AutoRules = {
   venue: 'binance',
   instrumentIds: [],
   patterns: [...PATTERN_NAMES],
   minScore: 70,
   minReward: 2,
+  sizing: 'fixed',
+  amount: 10,
   riskPct: 1,
   maxOpenTrades: 3,
   maxOrdersPerDay: 10,
@@ -325,7 +346,7 @@ export const AUTO_SKIP_TEXT: Readonly<Record<AutoSkipReason, string>> = {
   reward: 'Its reward for the risk at target 1 is below your minimum, or its levels are incomplete.',
   open_limit: 'Already at your limit of open automatic trades, or one is open on this pair.',
   daily_orders: 'Already at your limit of automatic orders today.',
-  size: 'At your risk per trade, the quantity is too small for the pair.',
+  size: 'At your amount or risk per trade, the order is below the pair’s minimum order.',
   balance: 'Not enough free practice balance for the order and its fees.',
 };
 

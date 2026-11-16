@@ -33,6 +33,7 @@ import {
 } from '@cip/ui';
 import { useInstruments } from '../api/queries.js';
 import {
+  ALERT_RULES_KEY as RULES_KEY,
   defaultCondition,
   describeCondition,
   describeDelivery,
@@ -45,7 +46,6 @@ import { PATTERN_SHORT, STATE_TITLE } from '../lib/setups.js';
 import { useAlerts } from '../live/alerts.js';
 import { useDisplayTimeZone, useSession } from '../session.js';
 
-const RULES_KEY = ['alerts', 'rules'] as const;
 const SEVERITY_TONE = { info: 'info', warning: 'warn', critical: 'crit' } as const;
 
 /**
