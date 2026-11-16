@@ -1,3 +1,5 @@
+import WsSocket from 'ws';
+
 /**
  * A WebSocket that stays connected (architecture §5.1): exponential backoff with jitter from 1 s to
  * 8 s, a watchdog that reconnects a silent connection, and a proactive reconnect before the venue's
@@ -21,7 +23,7 @@ export interface SocketOptions {
   maxBackoffMs?: number;
   random?: () => number;
   now?: () => number;
-  /** Injected in tests; the platform's WebSocket otherwise. */
+  /** Injected in tests; `UncompressedWebSocket` otherwise. */
   WebSocketImpl?: new (url: string) => MinimalWebSocket;
 }
 
@@ -37,6 +39,60 @@ export interface MinimalWebSocket {
 
 const OPEN = 1;
 const MAX_BACKOFF_MS = 8_000;
+/** A connection attempt that has not opened by then is abandoned, and the next one is scheduled. */
+const HANDSHAKE_TIMEOUT_MS = 10_000;
+
+/**
+ * The venue sockets' WebSocket: `ws` with permessage-deflate turned off.
+ *
+ * The platform WebSocket (undici) negotiates permessage-deflate with both venues. It inflates every
+ * message through asynchronous zlib calls and parses nothing more from that socket until they return,
+ * which costs about three event-loop turns a message. On a busy event loop that caps a socket well
+ * below a busy venue's rate. On 2026-11-16 the Coinbase backlog grew to minutes, and trades that
+ * arrived after their minute was final were left out of the candles. Uncompressed frames are parsed
+ * as they arrive, as many in one turn as have been received.
+ */
+export class UncompressedWebSocket implements MinimalWebSocket {
+  onopen: MinimalWebSocket['onopen'] = null;
+  onmessage: MinimalWebSocket['onmessage'] = null;
+  onclose: MinimalWebSocket['onclose'] = null;
+  onerror: MinimalWebSocket['onerror'] = null;
+  private readonly ws: WsSocket;
+
+  constructor(url: string) {
+    this.ws = new WsSocket(url, { perMessageDeflate: false, handshakeTimeout: HANDSHAKE_TIMEOUT_MS });
+    this.ws.on('open', () => this.onopen?.({}));
+    this.ws.on('message', (data, isBinary) => this.onmessage?.({ data: isBinary ? data : wsText(data) }));
+    // `ws` follows every error with a close (code 1006 when the connection dropped), as the WHATWG
+    // WebSocket does, and an error with no listener would be thrown: this one is always attached.
+    this.ws.on('error', (err) => this.onerror?.(err));
+    this.ws.on('close', (code, reason) => this.onclose?.({ code, reason: reason.toString() }));
+  }
+
+  get readyState(): number {
+    return this.ws.readyState;
+  }
+
+  /** The negotiated extensions: always empty, since none are offered. */
+  get extensions(): string {
+    return this.ws.extensions;
+  }
+
+  send(data: string): void {
+    this.ws.send(data);
+  }
+
+  close(code?: number, reason?: string): void {
+    this.ws.close(code, reason);
+  }
+}
+
+/** A text frame's payload: one Buffer by default, chunks or an ArrayBuffer with other binary types. */
+function wsText(data: WsSocket.RawData): string {
+  if (Buffer.isBuffer(data)) return data.toString('utf8');
+  if (Array.isArray(data)) return Buffer.concat(data).toString('utf8');
+  return Buffer.from(data).toString('utf8');
+}
 
 export class ReconnectingSocket {
   private ws: MinimalWebSocket | null = null;
@@ -102,8 +158,7 @@ export class ReconnectingSocket {
 
   private connect(): void {
     if (this.stopped) return;
-    const Impl =
-      this.opts.WebSocketImpl ?? (globalThis.WebSocket as unknown as new (url: string) => MinimalWebSocket);
+    const Impl = this.opts.WebSocketImpl ?? UncompressedWebSocket;
     this.hooks.onStatus(
       'connecting',
       this.attempt === 0 ? 'connecting' : `reconnect attempt ${this.attempt}`,

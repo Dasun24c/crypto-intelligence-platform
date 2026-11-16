@@ -1,6 +1,7 @@
 import { randomUUID } from 'node:crypto';
 import type { Redis } from 'ioredis';
 import type { Kysely } from 'kysely';
+import pg from 'pg';
 import {
   aggregateCandles,
   type Candle,
@@ -137,11 +138,40 @@ export async function publishEvent(
   );
 }
 
-/** Collects rows and inserts them in batches every `intervalMs` (trades, book metrics, snapshots). */
+/** Rows per INSERT statement. */
+const INSERT_CHUNK = 1_000;
+
+/**
+ * SQLSTATE classes of failures that may pass if the insert is simply tried again: connection
+ * exception (08), transaction rollback (40), insufficient resources (53), object not in prerequisite
+ * state such as a lock not available (55), operator intervention such as a statement timeout or a
+ * shutdown (57), and system error (58).
+ */
+const TRANSIENT_SQLSTATE_CLASSES = new Set(['08', '40', '53', '55', '57', '58']);
+
+/**
+ * Whether an insert may succeed later unchanged. An error that does not come from the server (a pool
+ * timeout, a refused or dropped connection) is transient, as are the server's own transient classes.
+ * Anything else the server rejects (a data error, a constraint violation) would fail again.
+ */
+export function isTransient(err: unknown): boolean {
+  if (!(err instanceof pg.DatabaseError)) return true;
+  return TRANSIENT_SQLSTATE_CLASSES.has(err.code?.slice(0, 2) ?? '');
+}
+
+/**
+ * Collects rows and inserts them in batches every `intervalMs` (trades, book metrics, snapshots).
+ * One flush runs at a time. Rows a flush could not store because the database was out of reach are
+ * kept for the next one (the inserts ignore rows already stored), up to `maxPending`; beyond that the
+ * oldest are dropped. Rows the database rejects are dropped, so one bad row cannot hold up the rest.
+ * On 2026-11-16 every failed flush lost its rows, and flushes overlapped on a starved pool.
+ */
 export class BatchWriter<Row> {
   private rows: Row[] = [];
   private timer: ReturnType<typeof setInterval> | undefined;
+  private flushing: Promise<void> | null = null;
   written = 0;
+  /** Rows given up on: rejected by the database, or the oldest dropped beyond `maxPending`. */
   failed = 0;
 
   constructor(
@@ -158,26 +188,68 @@ export class BatchWriter<Row> {
   }
 
   add(row: Row): void {
-    if (this.rows.length >= this.maxPending) this.rows.shift();
+    if (this.rows.length >= this.maxPending) {
+      this.rows.shift();
+      this.failed++;
+    }
     this.rows.push(row);
   }
 
-  async flush(): Promise<void> {
-    if (this.rows.length === 0) return;
-    const batch = this.rows;
-    this.rows = [];
-    try {
-      for (let i = 0; i < batch.length; i += 1_000) await this.insert(batch.slice(i, i + 1_000));
-      this.written += batch.length;
-    } catch (err) {
-      this.failed += batch.length;
-      this.log.error({ err, writer: this.name, rows: batch.length }, 'batch insert failed');
-    }
+  /** Rows waiting for the next flush. */
+  get pending(): number {
+    return this.rows.length;
+  }
+
+  /** Inserts the waiting rows; while a flush is running, that flush's promise is returned instead. */
+  flush(): Promise<void> {
+    this.flushing ??= this.drain().finally(() => {
+      this.flushing = null;
+    });
+    return this.flushing;
   }
 
   async stop(): Promise<void> {
     clearInterval(this.timer);
     await this.flush();
+    // Rows added while that flush was running, or kept from a failed one: one last attempt.
+    if (this.rows.length > 0) await this.flush();
+  }
+
+  private async drain(): Promise<void> {
+    const batch = this.rows;
+    this.rows = [];
+    for (let i = 0; i < batch.length; i += INSERT_CHUNK) {
+      const chunk = batch.slice(i, i + INSERT_CHUNK);
+      try {
+        await this.insert(chunk);
+        this.written += chunk.length;
+      } catch (err) {
+        if (!isTransient(err)) {
+          this.failed += chunk.length;
+          this.log.error({ err, writer: this.name, rows: chunk.length, kept: 0 }, 'batch insert failed');
+          continue;
+        }
+        const unsaved = batch.length - i;
+        const kept = this.requeue(batch.slice(i));
+        this.log.error({ err, writer: this.name, rows: unsaved, kept }, 'batch insert failed');
+        return;
+      }
+    }
+  }
+
+  /**
+   * Puts unsaved rows back ahead of those added since, keeping the newest `maxPending`. Returns how
+   * many of the unsaved rows were kept.
+   */
+  private requeue(unsaved: Row[]): number {
+    const rows = unsaved.concat(this.rows);
+    const excess = Math.max(0, rows.length - this.maxPending);
+    if (excess > 0) {
+      rows.splice(0, excess);
+      this.failed += excess;
+    }
+    this.rows = rows;
+    return Math.max(0, unsaved.length - excess);
   }
 }
 
