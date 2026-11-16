@@ -224,14 +224,24 @@ export abstract class InstrumentPipeline {
     detectedBy: 'sequence' | 'heartbeat' | 'timer' | 'reconnect',
     details?: Record<string, unknown>,
   ): void {
-    void this.deps.gaps.record({
-      instrumentId: this.instrument.id,
-      stream,
-      from,
-      to,
-      detectedBy,
-      ...(details ? { details } : {}),
-    });
+    // A failed insert (the database out of reach for a while) is logged, never left unhandled: on
+    // 2026-11-16 one such rejection stopped the ingestor. Missing candles are still found by the jobs
+    // hole sweep within 10 minutes and repaired from REST.
+    this.deps.gaps
+      .record({
+        instrumentId: this.instrument.id,
+        stream,
+        from,
+        to,
+        detectedBy,
+        ...(details ? { details } : {}),
+      })
+      .catch((err: unknown) =>
+        this.deps.log.error(
+          { err, instrumentId: this.instrument.id, stream, from, to, detectedBy },
+          'data gap not recorded',
+        ),
+      );
   }
 
   /** Every new (non-duplicate) trade: raw storage, last price, walls and large-trade grouping. */

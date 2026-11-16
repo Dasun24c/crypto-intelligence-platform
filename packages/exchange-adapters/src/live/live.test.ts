@@ -1,7 +1,9 @@
+import type { AddressInfo } from 'node:net';
 import { afterEach, describe, expect, it, vi } from 'vitest';
+import WsSocket, { WebSocketServer } from 'ws';
 import type { MarketEvent } from '../events.js';
 import { RateLimitedError, RestBudget, RestClient } from './rest.js';
-import { type MinimalWebSocket, ReconnectingSocket } from './socket.js';
+import { type MinimalWebSocket, ReconnectingSocket, UncompressedWebSocket } from './socket.js';
 import { BinanceVenue, CoinbaseVenue } from './venues.js';
 
 /** A scripted WebSocket: tests open, deliver and close it by hand. */
@@ -101,6 +103,112 @@ describe('ReconnectingSocket', () => {
     vi.advanceTimersByTime(5_000);
     expect(FakeSocket.all[1]!.readyState).toBe(3); // closed for its lifetime
     s.stop();
+  });
+});
+
+/** A local server that accepts permessage-deflate whenever a client offers it, like both venues. */
+async function deflatingServer(): Promise<{ server: WebSocketServer; url: string }> {
+  const server = new WebSocketServer({ host: '127.0.0.1', port: 0, perMessageDeflate: true });
+  await new Promise<void>((resolve) => server.once('listening', resolve));
+  return { server, url: `ws://127.0.0.1:${(server.address() as AddressInfo).port}` };
+}
+
+function closeServer(server: WebSocketServer): Promise<void> {
+  for (const client of server.clients) client.terminate();
+  return new Promise((resolve) => server.close(() => resolve()));
+}
+
+/** Loopback is quick, but a refused connection takes about 2 s to fail on Windows. */
+const WAIT = { timeout: 4_000, interval: 10 };
+
+describe('UncompressedWebSocket (the venue sockets)', () => {
+  it('does not offer permessage-deflate, so frames are parsed as they arrive (2026-11-16 Coinbase backlog)', async () => {
+    const { server, url } = await deflatingServer();
+    const offered: (string | undefined)[] = [];
+    server.on('connection', (socket, req) => {
+      offered.push(req.headers['sec-websocket-extensions']);
+      socket.send('{"a":1}');
+      socket.send('{"b":2}');
+    });
+    // The control: a client that offers compression gets it from this server.
+    const compressed = new WsSocket(url);
+    await new Promise((resolve) => compressed.once('open', resolve));
+    expect(compressed.extensions).toContain('permessage-deflate');
+    compressed.close();
+
+    const received: unknown[] = [];
+    const ws = new UncompressedWebSocket(url);
+    ws.onmessage = (ev) => received.push(ev.data);
+    await vi.waitFor(() => expect(received).toHaveLength(2), WAIT);
+    expect(received).toEqual(['{"a":1}', '{"b":2}']);
+    expect(offered[1]).toBeUndefined();
+    expect(ws.extensions).toBe('');
+    expect(ws.readyState).toBe(1);
+    ws.close(1000, 'done');
+    await closeServer(server);
+  });
+
+  it(
+    'reports the close code and reason, and an error followed by a close when the connection fails',
+    {
+      timeout: 10_000,
+    },
+    async () => {
+      const { server, url } = await deflatingServer();
+      server.on('connection', (socket) => socket.close(4002, 'bye'));
+      const events: string[] = [];
+      const ws = new UncompressedWebSocket(url);
+      ws.onerror = () => events.push('error');
+      ws.onclose = (ev) => events.push(`close ${ev.code} ${ev.reason}`);
+      await vi.waitFor(() => expect(events).toEqual(['close 4002 bye']), WAIT);
+      await closeServer(server);
+
+      // Nothing listens there any more: the reconnect logic needs the close after the error.
+      const refused: string[] = [];
+      const lost = new UncompressedWebSocket(url);
+      lost.onerror = () => refused.push('error');
+      lost.onclose = (ev) => refused.push(`close ${ev.code}`);
+      await vi.waitFor(() => expect(refused).toEqual(['error', 'close 1006']), WAIT);
+    },
+  );
+
+  it('is what ReconnectingSocket uses by default: subscribes on open, delivers text, reconnects after a drop', async () => {
+    const { server, url } = await deflatingServer();
+    const subscriptions: string[] = [];
+    let connections = 0;
+    server.on('connection', (socket) => {
+      const n = ++connections;
+      socket.on('message', (data) => {
+        subscriptions.push((data as Buffer).toString('utf8')); // text frames arrive as one Buffer
+        if (n === 1) {
+          socket.send('{"x":1}');
+          setTimeout(() => socket.terminate(), 20); // the connection drops (no close frame)
+        }
+      });
+    });
+    const statuses: string[] = [];
+    const messages: string[] = [];
+    const s = new ReconnectingSocket(
+      () => url,
+      {
+        onOpen: (send) => send('sub'),
+        onMessage: (data) => messages.push(data),
+        onStatus: (st, detail) => statuses.push(`${st}:${detail}`),
+      },
+      { idleTimeoutMs: 30_000, initialBackoffMs: 10, random: () => 0 },
+    );
+    s.start();
+    await vi.waitFor(() => expect(subscriptions).toEqual(['sub', 'sub']), WAIT);
+    expect(messages).toEqual(['{"x":1}']);
+    expect(statuses).toEqual([
+      'connecting:connecting',
+      'open:connected',
+      'closed:closed (1006)',
+      'connecting:reconnect attempt 1',
+      'open:connected',
+    ]);
+    s.stop();
+    await closeServer(server);
   });
 });
 

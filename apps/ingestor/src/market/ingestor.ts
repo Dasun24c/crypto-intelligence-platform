@@ -1,7 +1,7 @@
 import type { Meter } from '@opentelemetry/api';
 import { Queue } from 'bullmq';
 import { Redis } from 'ioredis';
-import { type Kysely, sql } from 'kysely';
+import type { Kysely } from 'kysely';
 import {
   floorTo,
   HISTORY_CANDLES,
@@ -23,7 +23,6 @@ import {
 } from '@cip/exchange-adapters';
 import { type HeartbeatProbe, type Logger, RateCounter } from '@cip/observability';
 import { type ActivityCounters, CONFIG_CHANNELS, type VenueLinkState } from '@cip/contracts';
-import { NOTIONAL_BIN_RATIO } from '@cip/market-data';
 import { Detections } from './detections.js';
 import { ClosureCalendar, loadInstruments, type StreamedInstrument } from './instruments.js';
 import { LivePublisher } from './live.js';
@@ -35,6 +34,7 @@ import {
   type MetricsRow,
   type SnapshotRow,
 } from './pipelines.js';
+import { LargeTradeSeeder, orderBins } from './seed.js';
 import { decimal, SPREAD_BASES, SpreadMonitor, spreadLegs } from './spread.js';
 import { BatchWriter, CandleWriter, GapRecorder, publishEvent } from './writers.js';
 
@@ -58,6 +58,11 @@ export const DEEP_HISTORY_CANDLES = HISTORY_CANDLES + Math.ceil(HISTORY_CANDLES 
 
 export interface MarketIngestorOptions {
   db: Kysely<Database>;
+  /**
+   * Background reads (the large-trade seeds) on a pool of their own, so a slow read never holds a
+   * connection the writes need. Defaults to `db`.
+   */
+  seedDb?: Kysely<Database>;
   redis: Redis;
   redisUrl: string;
   log: Logger;
@@ -142,6 +147,7 @@ export class MarketIngestor {
   private readonly subscriber: Redis;
   private readonly live: LivePublisher;
   private readonly detections: Detections;
+  private readonly seeder: LargeTradeSeeder;
   private readonly spreads: { base: string; monitor: SpreadMonitor }[];
   private syncing: Promise<void> = Promise.resolve();
   private binance!: BinanceVenue;
@@ -160,6 +166,10 @@ export class MarketIngestor {
     this.subscriber = new Redis(o.redisUrl, { connectionName: 'cip-ingestor-config', lazyConnect: true });
     this.live = new LivePublisher(o.redis, o.log);
     this.detections = new Detections(o.db, o.redis, o.log);
+    this.seeder = new LargeTradeSeeder(
+      (instrumentId, until, usd) => orderBins(o.seedDb ?? o.db, instrumentId, until, usd),
+      o.log,
+    );
     this.spreads = SPREAD_BASES.map((base) => ({
       base,
       monitor: new SpreadMonitor(base, o.db, this.live, o.log),
@@ -451,15 +461,11 @@ export class MarketIngestor {
         : new CoinbasePipeline(deps, { nextOpen, lastClose: last?.close ?? null });
     pipeline.seedRunning(await this.candles.minutesSince(inst.id, floorTo(now, '1d')));
     const detector = pipeline.largeTrades;
-    if (detector) {
-      // The threshold's trailing day comes from stored trades before detection starts.
-      void this.seedOrders(inst, now)
-        .then((rows) => detector.seed(rows))
-        .catch((err: unknown) =>
-          this.o.log.warn({ err, instrument: inst.venueSymbol }, 'large-trade seed failed'),
-        )
-        .finally(() => detector.start());
-    }
+    // The threshold's trailing day comes from stored trades before detection starts, one instrument
+    // at a time on the seed connection (the promise never rejects). It ends now: the pipeline sees
+    // live orders from the moment it is returned.
+    if (detector)
+      void this.seeder.add(inst, detector, Date.now(), () => Number(this.usdPerQuote(inst.quote)));
     this.o.log.info({ instrument: inst.venueSymbol, venue: inst.venue }, 'pipeline created');
     return pipeline;
   }
@@ -485,34 +491,6 @@ export class MarketIngestor {
         details: { timeframe: tf, reason: 'deep history' },
       });
     }
-  }
-
-  /**
-   * Hourly log-binned counts of taker-order notional over the trailing 24 h of stored trades, binned
-   * exactly as `notionalBin` does. Coinbase fills are grouped by taker order; a Binance aggTrade is
-   * already one taker order at one price (sweeps are not merged here: a small low bias that leaves
-   * the window within a day). USDT is taken at the current USDT-USD rate.
-   */
-  private async seedOrders(
-    inst: StreamedInstrument,
-    now: number,
-  ): Promise<{ hour: number; bin: number; count: number }[]> {
-    const since = new Date(now - 86_400_000);
-    const usd = Number(this.usdPerQuote(inst.quote));
-    const { rows } = await sql<{ hour: number; bin: number; count: number }>`
-      WITH orders AS (
-        SELECT ts, price * qty AS notional FROM market.trades
-        WHERE instrument_id = ${inst.id} AND ts > ${since} AND taker_order_ref IS NULL
-        UNION ALL
-        SELECT min(ts), sum(price * qty) FROM market.trades
-        WHERE instrument_id = ${inst.id} AND ts > ${since} AND taker_order_ref IS NOT NULL
-        GROUP BY taker_order_ref
-      )
-      SELECT floor(extract(epoch FROM ts) / 3600)::int AS hour,
-             greatest(0, floor(ln(greatest(notional * ${usd}, 1)) / ln(${NOTIONAL_BIN_RATIO})))::int AS bin,
-             count(*)::int AS count
-      FROM orders GROUP BY 1, 2`.execute(this.o.db);
-    return rows;
   }
 
   /** USD per unit of a quote currency: 1 for USD; the USDT-USD mid for USDT ("1" until it is known). */

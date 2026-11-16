@@ -287,6 +287,9 @@ catalogs:
     '@types/three':
       specifier: 0.187.0
       version: 0.187.0
+    '@types/ws':
+      specifier: 8.18.2
+      version: 8.18.2
     '@typescript/native':
       specifier: npm:typescript@7.0.2
       version: 7.0.2
@@ -419,6 +422,9 @@ catalogs:
     vitest:
       specifier: 5.1.0
       version: 5.1.0
+    ws:
+      specifier: 8.21.3
+      version: 8.21.3
     zod:
       specifier: 4.6.7
       version: 4.6.7
@@ -1333,6 +1339,9 @@ importers:
       '@cip/domain':
         specifier: workspace:*
         version: link:../domain
+      ws:
+        specifier: 'catalog:'
+        version: 8.21.3
     devDependencies:
       '@cip/config':
         specifier: workspace:*
@@ -1346,6 +1355,9 @@ importers:
       '@types/node':
         specifier: 'catalog:'
         version: 26.6.6
+      '@types/ws':
+        specifier: 'catalog:'
+        version: 8.18.2
       '@typescript/native':
         specifier: 'catalog:'
         version: typescript@7.0.2

@@ -17,13 +17,15 @@
     "test": "vitest run"
   },
   "dependencies": {
-    "@cip/domain": "workspace:*"
+    "@cip/domain": "workspace:*",
+    "ws": "catalog:"
   },
   "devDependencies": {
     "@cip/config": "workspace:*",
     "@swc/cli": "catalog:",
     "@swc/core": "catalog:",
     "@types/node": "catalog:",
+    "@types/ws": "catalog:",
     "@typescript/native": "catalog:",
     "@vitest/coverage-v8": "catalog:",
     "vitest": "catalog:"

@@ -1,7 +1,7 @@
 import 'reflect-metadata';
 import { NestFactory } from '@nestjs/core';
 import type pg from 'pg';
-import { createDb } from '@cip/db';
+import { createDb, createPool } from '@cip/db';
 import { ConfigError, INSTANCE_ID, PinoNestLogger, runService } from '@cip/observability';
 import { readFileSync } from 'node:fs';
 import { gunzipSync } from 'node:zlib';
@@ -22,8 +22,16 @@ async function main(): Promise<void> {
       logger: new PinoNestLogger(log),
     });
     const status = app.get(IngestorStatus);
+    // Background reads (the large-trade seeds) get one connection of their own, so a slow read never
+    // holds one of the write pool's connections.
+    const seedPool = createPool({
+      connectionString: config.DATABASE_URL,
+      max: 1,
+      applicationName: 'cip-ingestor-seed',
+    });
     const market = new MarketIngestor({
       db: createDb({ pool: app.get<pg.Pool>(PG_POOL) }),
+      seedDb: createDb({ pool: seedPool }),
       redis,
       redisUrl: config.REDIS_URL,
       log,
@@ -42,6 +50,7 @@ async function main(): Promise<void> {
       stop: async () => {
         await market.stop();
         await app.close();
+        await seedPool.end();
       },
     };
   });

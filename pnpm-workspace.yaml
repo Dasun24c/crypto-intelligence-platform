@@ -51,6 +51,10 @@ catalog:
   ioredis: 6.0.0
   bullmq: 6.7.2
   socket.io: 4.8.4 # live channels; fan-out over Redis pub/sub and md:events, no adapter (ADR 014)
+  # Venue sockets without permessage-deflate: the platform WebSocket negotiates it and inflates each
+  # message asynchronously, which caps a busy socket at about one message per few event-loop turns.
+  ws: 8.21.3
+  '@types/ws': 8.18.2
   pino: 10.4.0
   pino-pretty: 13.2.0
   '@opentelemetry/api': 1.10.0
