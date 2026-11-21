@@ -46,7 +46,7 @@ No application code was written in this phase, as the requirements ask.
 | D6 | Economic calendar | Free official sources; no forecast/actual values at first | Phase 7 |
 | D7 | **Code hosting and CI/CD** | GitHub, with Actions and Container Registry. This folder isn't a git repository yet. **Which GitHub organisation or account should own the repository?** | Phase 1 |
 | D8 | Spot-gold (XAUUSD) feed | Stay deferred | — |
-| D9 | On-chain providers | Decide in Phase 11; start with the low-cost option and a curated list of exchange addresses | Phase 11 |
+| D9 | On-chain providers | Decide in Phase 11; start with the low-cost option and a curated list of exchange addresses. **Decided 2026-11-17:** option A of [proposal 003](../proposals/003-on-chain-providers.md), at no cost: Alchemy's free plan for Ethereum, PAXG and Solana, mempool.space for Bitcoin, and our own list of exchange addresses | Phase 11 |
 | D10 | SMC judgement calls J1–J10 ([rulebook §11](07-smc-rulebook.md#11-judgement-calls-for-approval)) | Accept the proposed defaults; refine with labelled data in Phases 4–6 | Phase 4 |
 | D11 | Quality targets NFR-01 to NFR-15 ([requirements §4](01-requirements-analysis.md#4-non-functional-requirements-proposed-targets)) | Accept | Phase 1 |
 | D12 | Code-signing purchases | Apple Developer Program ($99/year) and a Windows signing option, bought before Phase 13 | Phase 13 |
@@ -57,6 +57,7 @@ No application code was written in this phase, as the requirements ask.
 |---|---|---|
 | 001 | [Buying and selling](../proposals/001-trading.md): practice trading as a new Phase 14, then exchange test networks as Phase 15. Real money stays out of the initial release. | Approved 2026-11-13 with the recommended choice for each of T1–T7, and applied: REQUIREMENTS.md revision 4 and these documents. Phase 14 follows Phase 8; Phase 15 is decided after Phase 14. |
 | 002 | [Automatic practice trading](../proposals/002-automatic-practice-trading.md): a user's own rules place practice orders on confirmed bullish setups, within their limits, as a new Phase 16. Practice balances only; the AI never decides an order. | Approved 2026-11-15 with the recommended choice for each of A1–A9, and applied: REQUIREMENTS.md revision 5 and these documents. Phase 16 follows Phase 14, before Phase 9. |
+| 003 | [On-chain providers](../proposals/003-on-chain-providers.md) for the Whale Tracker (decision D9) | Approved 2026-11-17 with option A, the free one. It changes no requirement. |
 
 ## Next step
 

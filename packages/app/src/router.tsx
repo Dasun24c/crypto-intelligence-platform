@@ -112,6 +112,13 @@ const routeTree = rootRoute.addChildren([
     beforeLoad: requireCapability('alerts.own'),
     component: lazyRouteComponent(() => import('./pages/alert-center.js'), 'AlertCenterPage'),
   }),
+  // Phase 11: the Whale Tracker, exchange flow and on-chain (every role; admins keep the labels).
+  createRoute({
+    getParentRoute: () => rootRoute,
+    path: '/whales',
+    beforeLoad: requireCapability('dashboards.view'),
+    component: lazyRouteComponent(() => import('./pages/whale-tracker.js'), 'WhaleTrackerPage'),
+  }),
   // Phase 9: the AI Intelligence Center (every role reads; analysts and admins ask).
   createRoute({
     getParentRoute: () => rootRoute,

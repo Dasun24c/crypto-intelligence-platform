@@ -160,9 +160,15 @@ services:
       # The AI analyses' Grok key (Phase 9, ADR 023): put it in .secrets-jobs/grok-api-key (empty: no
       # analyses are queued; requested ones fail as no_key). Read at every call: no restart needed.
       GROK_API_KEY_FILE: /secrets-jobs/grok-api-key
+      # The Whale Tracker's Alchemy key (Phase 11, proposal 003): .secrets-jobs/alchemy-api-key (empty:
+      # Ethereum, PAXG and Solana wait; Bitcoin needs no key). Read every 30 s: no restart needed.
+      ALCHEMY_API_KEY_FILE: /secrets-jobs/alchemy-api-key
+      # The on-chain watcher is off in the local stack: nothing connects to blockchain providers unless
+      # you start it with ONCHAIN_ENABLED=true (on a computer where that traffic is allowed).
+      ONCHAIN_ENABLED: ${ONCHAIN_ENABLED:-false}
     volumes:
       - ../../.secrets:/secrets:ro
-      # Only this service mounts the folder with the Grok key.
+      # Only this service mounts the folder with the Grok and Alchemy keys.
       - ../../.secrets-jobs:/secrets-jobs:ro
     healthcheck:
       test: ['CMD', 'node', 'infra/healthcheck.mjs', 'http://127.0.0.1:9467/readyz']

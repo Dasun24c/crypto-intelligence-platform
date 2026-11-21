@@ -267,6 +267,13 @@ const ENDPOINTS: Endpoint[] = [
     policy: 'settings.manage',
     route: '/api/v1/admin/closures',
   },
+  // Phase 11: the Whale Tracker for every role; the exchange addresses it labels, for admins.
+  { method: 'GET', path: '/api/v1/whales/exchange', policy: 'dashboards.view' },
+  { method: 'GET', path: '/api/v1/whales/onchain', policy: 'dashboards.view' },
+  { method: 'GET', path: '/api/v1/whales/onchain/status', policy: 'dashboards.view' },
+  { method: 'GET', path: '/api/v1/admin/whales/labels', policy: 'settings.manage' },
+  { method: 'POST', path: '/api/v1/admin/whales/labels', policy: 'settings.manage', body: {} },
+  { method: 'DELETE', path: `/api/v1/admin/whales/labels/${NOBODY}`, policy: 'settings.manage' },
   { method: 'GET', path: '/healthz', policy: 'public' },
   { method: 'GET', path: '/readyz', policy: 'public' },
 ];

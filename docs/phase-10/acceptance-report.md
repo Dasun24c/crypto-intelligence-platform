@@ -2,7 +2,7 @@
 
 | | |
 |---|---|
-| Status | **Built; waiting for your acceptance.** The four criteria are met on this machine; 10.3 was measured on its Intel integrated GPU (the Iris Xe class the criterion names). Apple M1 and the macOS desktop app's WKWebView are not available here: they are carried forward, as Phase 8's macOS items were. Committed on 2026-11-16 at your request, on the branch `phase-10/3d-visualization`, on top of the Phase 16 changes of the same day (their own commit, which `phase-16/fixed-amount` also points to); not pushed |
+| Status | **Accepted 2026-11-16** (you asked to start Phase 11). The four criteria are met on this machine; 10.3 was measured on its Intel integrated GPU (the Iris Xe class the criterion names). Apple M1 and the macOS desktop app's WKWebView are not available here: they are carried forward, as Phase 8's macOS items were. Committed on 2026-11-16 at your request, on the branch `phase-10/3d-visualization`, and merged into `main` through pull requests #7 and #9 |
 | Date | 2026-11-16 |
 | Scope | [Implementation plan, Phase 10](../phase-0/08-implementation-plan.md#phase-10--3d-visualization), REQUIREMENTS §5 (VIZ-01), NFR-10, NFR-12, C8, [architecture §11–§12](../phase-0/03-architecture.md#12-3d-visualization), [API contracts §5.3](../phase-0/06-api-contracts.md#53-channels), [ADR 024](../adr/024-activity-feed-and-3d-brain.md) |
 | Evidence | This machine (Windows 11, Intel Core Ultra 5 235U with Intel Graphics, Docker Desktop, Node.js 26.13.0); the local Compose stack streaming live public data from Binance and Coinbase, redeployed with Phase 10 on 2026-11-16 |

@@ -117,6 +117,9 @@ export interface Database {
   'trading.auto_days': TradingAutoDaysTable;
   'ai.analyses': AiAnalysesTable;
   'ai.daily_usage': AiDailyUsageView;
+  'onchain.labels': OnchainLabelsTable;
+  'onchain.events': OnchainEventsTable;
+  'onchain.cursors': OnchainCursorsTable;
 }
 
 // ---------------------------------------------------------------- market (data model §4)
@@ -548,6 +551,55 @@ export interface AiDailyUsageView {
   cost_usd: string;
 }
 
+// ---------------------------------------------------------------- onchain (migration 0015, Phase 11)
+
+type ChainName = 'bitcoin' | 'ethereum' | 'solana';
+
+/** Exchange addresses, curated by hand (proposal 003). */
+export interface OnchainLabelsTable {
+  id: string;
+  chain: ChainName;
+  /** Ethereum: lowercase hex. */
+  address: string;
+  owner: string;
+  wallet: ColumnType<
+    'cold' | 'hot' | 'reserve' | 'unknown',
+    'cold' | 'hot' | 'reserve' | 'unknown' | undefined
+  >;
+  source: string;
+  created_by: string | null;
+  created_at: Generated<Date>;
+  updated_at: Generated<Date>;
+}
+
+/** Large transfers, and PAXG mints and burns (ADR 025). */
+export interface OnchainEventsTable {
+  id: string;
+  chain: ChainName;
+  asset: 'BTC' | 'ETH' | 'SOL' | 'PAXG';
+  kind: 'transfer' | 'mint' | 'burn';
+  tx_hash: string;
+  position: number;
+  /** bigint: node-postgres returns it as a string. */
+  block_number: ColumnType<string, string | number, string | number>;
+  block_time: Date;
+  from_address: string | null;
+  to_address: string | null;
+  amount: string;
+  price_usd: string | null;
+  usd_value: string | null;
+  provider: string;
+  details: ColumnType<Json, Json | undefined, Json>;
+  received_at: ColumnType<Date, Date | undefined, Date>;
+}
+
+/** How far each chain's watcher got. */
+export interface OnchainCursorsTable {
+  chain: ChainName;
+  block_number: ColumnType<string, string | number, string | number>;
+  updated_at: Generated<Date>;
+}
+
 /** A user's automatic practice trading rules (migration 0013, ADR 022). */
 export interface TradingStrategiesTable {
   id: string;
@@ -904,6 +956,9 @@ export type NewTradingAutoDecision = Insertable<TradingAutoDecisionsTable>;
 export type TradingAutoDayRow = Selectable<TradingAutoDaysTable>;
 export type AiAnalysisRow = Selectable<AiAnalysesTable>;
 export type NewAiAnalysis = Insertable<AiAnalysesTable>;
+export type OnchainLabelRow = Selectable<OnchainLabelsTable>;
+export type OnchainEventRow = Selectable<OnchainEventsTable>;
+export type NewOnchainEvent = Insertable<OnchainEventsTable>;
 
 export type UserRow = Selectable<UsersTable>;
 export type NewUser = Insertable<UsersTable>;

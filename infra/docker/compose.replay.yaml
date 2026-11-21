@@ -14,6 +14,10 @@ services:
         node packages/db/dist/cli.js migrate &&
         node packages/db/dist/cli.js seed-replay --only &&
         node apps/api/dist/cli.js seed-dev
+  # Nothing contacts the on-chain providers either (Phase 11).
+  jobs:
+    environment:
+      ONCHAIN_ENABLED: 'false'
   ingestor:
     environment:
       MARKET_SOURCE: replay

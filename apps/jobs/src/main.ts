@@ -1,7 +1,14 @@
 import 'reflect-metadata';
 import { DelayedError, Queue, Worker } from 'bullmq';
 import { Redis } from 'ioredis';
-import { AI_QUEUE, type AiJob, CALENDAR_SYNC_JOB, NOTIFICATIONS_QUEUE } from '@cip/contracts';
+import {
+  AI_QUEUE,
+  type AiJob,
+  CALENDAR_SYNC_JOB,
+  NOTIFICATIONS_QUEUE,
+  ONCHAIN_QUEUE,
+  ONCHAIN_STATUS_KEY,
+} from '@cip/contracts';
 import { createDb, createPool, pingDb } from '@cip/db';
 import { BinanceVenue, CoinbaseVenue } from '@cip/exchange-adapters';
 import { GrokProvider } from '@cip/ai/provider';
@@ -18,6 +25,11 @@ import { CONSISTENCY_CHECK, CONSISTENCY_PATTERN, checkConsistency, previousDay }
 import { gapRepairer, HOLE_SWEEP, HOLE_SWEEP_EVERY_MS, sweepHoles } from './gap-repairs.js';
 import { Maintenance } from './maintenance.js';
 import { type DeliverJob, deliverAlert } from './notifications.js';
+import { EsploraClient } from './onchain/http.js';
+import type { OnchainJob } from './onchain/jobs.js';
+import { OnchainPrices } from './onchain/prices.js';
+import { OnchainProcessor } from './onchain/processor.js';
+import { OnchainWatcher, switchedOffStatus } from './onchain/watcher.js';
 
 /** The jobs service is degraded while 10 or more maintenance jobs failed within this window. */
 const RECENT_FAILURES_MS = 60 * 60_000;
@@ -249,6 +261,82 @@ async function main(): Promise<void> {
     await refreshAiStatus();
     const aiStatusTimer = setInterval(() => void refreshAiStatus(), AI_STATUS_EVERY_MS);
 
+    // The Whale Tracker's on-chain events (Phase 11, ADR 025): one instance holds the providers'
+    // subscriptions; every instance reads the blocks and transactions they push off the queue.
+    const alchemyKey = keyReader(config.ALCHEMY_API_KEY, process.env.ALCHEMY_API_KEY_FILE);
+    const withKey = (base: string) => () => {
+      const key = alchemyKey();
+      return key ? `${base}${key}` : null;
+    };
+    const thresholdsUsd = {
+      BTC: config.ONCHAIN_MIN_USD_BTC,
+      ETH: config.ONCHAIN_MIN_USD_ETH,
+      SOL: config.ONCHAIN_MIN_USD_SOL,
+      PAXG: config.ONCHAIN_MIN_USD_PAXG,
+    };
+    const esplora = new EsploraClient(() => config.ONCHAIN_BTC_API_URL);
+    const onchainQueue = new Queue<OnchainJob>(ONCHAIN_QUEUE, {
+      connection: queueRedis,
+      prefix: config.QUEUE_PREFIX,
+    });
+    let onchain: Worker<OnchainJob> | null = null;
+    let watcher: OnchainWatcher | null = null;
+    if (config.ONCHAIN_ENABLED) {
+      const processor = new OnchainProcessor({
+        db,
+        redis,
+        log,
+        prices: new OnchainPrices(db, redis),
+        esplora,
+        fetch: globalThis.fetch,
+        ethHttpUrl: withKey(config.ONCHAIN_ETH_HTTP_URL),
+        solHttpUrl: withKey(config.ONCHAIN_SOL_HTTP_URL),
+        thresholdsUsd,
+        solDailyCalls: config.ONCHAIN_SOL_DAILY_CALLS,
+        btcProvider: new URL(config.ONCHAIN_BTC_API_URL).host,
+      });
+      onchain = new Worker<OnchainJob>(ONCHAIN_QUEUE, (job) => processor.run(job.data), {
+        connection: queueRedis.duplicate(),
+        prefix: config.QUEUE_PREFIX,
+        concurrency: 2,
+      });
+      onchain.on('completed', (job) => completed.add(1, { queue: ONCHAIN_QUEUE, name: job.name }));
+      onchain.on('failed', (job, err) => {
+        failed.add(1, { queue: ONCHAIN_QUEUE, name: job?.name ?? 'unknown' });
+        // The message names the provider and the status, never a URL (which carries the key).
+        log.warn({ error: err.message, job: job?.name, attempts: job?.attemptsMade }, 'on-chain job failed');
+      });
+      watcher = new OnchainWatcher({
+        db,
+        redis,
+        queue: onchainQueue,
+        esplora,
+        log,
+        instance: INSTANCE_ID,
+        config: {
+          btcWsUrl: config.ONCHAIN_BTC_WS_URL,
+          ethWsUrl: withKey(config.ONCHAIN_ETH_WS_URL),
+          solWsUrl: withKey(config.ONCHAIN_SOL_WS_URL),
+          thresholdsUsd,
+        },
+      });
+      await watcher.start();
+    }
+    // Switched off (the local stack's default, and the replay stack's): say so, without connecting.
+    const writeOffStatus = () =>
+      redis
+        .set(
+          ONCHAIN_STATUS_KEY,
+          JSON.stringify(
+            switchedOffStatus(thresholdsUsd, Date.now(), new URL(config.ONCHAIN_BTC_WS_URL).host),
+          ),
+          'PX',
+          120_000,
+        )
+        .catch((err: unknown) => log.warn({ err }, 'on-chain status not written'));
+    const offStatusTimer = config.ONCHAIN_ENABLED ? null : setInterval(() => void writeOffStatus(), 30_000);
+    if (!config.ONCHAIN_ENABLED) await writeOffStatus();
+
     return {
       async probe() {
         const [m, b, recent] = await Promise.all([
@@ -261,11 +349,13 @@ async function main(): Promise<void> {
           maintenance.worker.isRunning() &&
           backfill.isRunning() &&
           notifications.isRunning() &&
-          ai.isRunning();
+          ai.isRunning() &&
+          (onchain?.isRunning() ?? true);
         const triggerState = triggers.lastError ?? (triggers.holding ? 'following events' : 'standby');
+        const onchainState = watcher ? `; ${watcher.summary()}` : '; on-chain: switched off';
         return {
           status: running && recent < 10 && !triggers.lastError ? 'ok' : 'degraded',
-          detail: `${running ? 'workers running' : 'a worker stopped'}; backfill: ${b.waiting ?? 0} waiting, ${b.active ?? 0} active, ${b.failed ?? 0} failed; maintenance: ${m.delayed ?? 0} scheduled, ${recent} failed in the last hour; AI triggers: ${triggerState}`,
+          detail: `${running ? 'workers running' : 'a worker stopped'}; backfill: ${b.waiting ?? 0} waiting, ${b.active ?? 0} active, ${b.failed ?? 0} failed; maintenance: ${m.delayed ?? 0} scheduled, ${recent} failed in the last hour; AI triggers: ${triggerState}${onchainState}`,
         };
       },
       /** The second just ended, for the 3D brain (ADR 024): AI calls in progress and waiting. */
@@ -278,6 +368,10 @@ async function main(): Promise<void> {
       },
       readiness: () => checkDependencies({ database: () => pingDb(pool), redis: () => redis.ping() }),
       async stop() {
+        if (offStatusTimer) clearInterval(offStatusTimer);
+        await watcher?.stop();
+        await onchain?.close();
+        await onchainQueue.close();
         clearInterval(aiStatusTimer);
         await triggers.stop();
         await ai.close();

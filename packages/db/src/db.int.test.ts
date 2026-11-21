@@ -61,6 +61,7 @@ describe('migrations', () => {
       '0012_trading',
       '0013_auto_trading',
       '0014_ai',
+      '0015_onchain',
     ]);
     const again = await migrateToLatest(owner);
     expect(again.error).toBeUndefined();
@@ -80,7 +81,7 @@ describe('migrations', () => {
   it('match the Kysely table types', async () => {
     const { rows } = await sql<{ table_schema: string; table_name: string; column_name: string }>`
       SELECT table_schema, table_name, column_name FROM information_schema.columns
-      WHERE table_schema IN ('app', 'market', 'analysis', 'alerts', 'trading', 'ai')
+      WHERE table_schema IN ('app', 'market', 'analysis', 'alerts', 'trading', 'ai', 'onchain')
     `.execute(owner);
     const actual: Record<string, string[]> = {};
     for (const r of rows) (actual[`${r.table_schema}.${r.table_name}`] ??= []).push(r.column_name);

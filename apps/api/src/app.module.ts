@@ -8,6 +8,8 @@ import { AdminAuditController } from './admin/admin-audit.controller.js';
 import { AdminUsersController } from './admin/admin-users.controller.js';
 import { AdminAiSettingsController, AiController } from './ai/ai.controller.js';
 import { AiRepository } from './ai/ai.repository.js';
+import { AdminWhaleLabelsController, WhalesController } from './whales/whales.controller.js';
+import { WhalesRepository } from './whales/whales.repository.js';
 import { AiService } from './ai/ai.service.js';
 import { AuditService } from './audit/audit.service.js';
 import {
@@ -105,6 +107,8 @@ export class AppModule {
         AdminPracticeSettingsController,
         AiController,
         AdminAiSettingsController,
+        WhalesController,
+        AdminWhaleLabelsController,
         SystemController,
         ProbesController,
       ],
@@ -153,6 +157,7 @@ export class AppModule {
         AutomaticService,
         AiRepository,
         AiService,
+        WhalesRepository,
         CalendarSyncQueue,
         LiveGateway,
       ],

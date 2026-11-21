@@ -18,4 +18,11 @@ describe('jobs configuration', () => {
     expect(() => loadJobsConfig({ ...base, QUEUE_PREFIX: 'Bad Prefix' })).toThrow(/QUEUE_PREFIX/);
     expect(loadJobsConfig(base).QUEUE_PREFIX).toBe('cip');
   });
+
+  it('leaves the on-chain watcher off unless it is switched on', () => {
+    const base = { DATABASE_URL: 'postgres://u:p@db:5432/cip', REDIS_URL: 'redis://valkey:6379' };
+    expect(loadJobsConfig(base).ONCHAIN_ENABLED).toBe(false);
+    expect(loadJobsConfig({ ...base, ONCHAIN_ENABLED: 'false' }).ONCHAIN_ENABLED).toBe(false);
+    expect(loadJobsConfig({ ...base, ONCHAIN_ENABLED: 'true' }).ONCHAIN_ENABLED).toBe(true);
+  });
 });
