@@ -10,3 +10,4 @@ export * from './calendar.js';
 export * from './alerts.js';
 export * from './trading.js';
 export * from './ai.js';
+export * from './onchain.js';

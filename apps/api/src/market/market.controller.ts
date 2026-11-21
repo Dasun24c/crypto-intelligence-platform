@@ -42,7 +42,7 @@ const HOUR = 60 * MINUTE;
 const DAY = 24 * HOUR;
 
 /** Resolves an optional [from, to) with a default span ending now, and refuses spans above `max`. */
-function range(q: { from?: number; to?: number }, now: number, span: number, max: number) {
+export function range(q: { from?: number; to?: number }, now: number, span: number, max: number) {
   const to = q.to ?? (q.from !== undefined ? Math.min(now, q.from + span) : now);
   const from = q.from ?? to - span;
   if (to <= from) throw new ProblemError('VALIDATION_FAILED', '`to` must be after `from`.');

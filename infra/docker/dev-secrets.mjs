@@ -30,9 +30,12 @@ for (const name of ['fred-api-key']) {
   if (!existsSync(path)) writeFileSync(path, '', { mode: 0o644 });
 }
 // grok-api-key: the AI analyses' xAI key (console.x.ai); empty means no AI calls.
+// alchemy-api-key: the Whale Tracker's Alchemy key (proposal 003); empty: Ethereum, PAXG and Solana wait.
 if (jobsDir) {
-  const path = join(jobsDir, 'grok-api-key');
-  if (!existsSync(path)) writeFileSync(path, '', { mode: 0o644 });
+  for (const name of ['grok-api-key', 'alchemy-api-key']) {
+    const path = join(jobsDir, name);
+    if (!existsSync(path)) writeFileSync(path, '', { mode: 0o644 });
+  }
 }
 
 const roles = {

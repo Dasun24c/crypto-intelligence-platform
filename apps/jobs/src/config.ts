@@ -1,6 +1,10 @@
 import { readFileSync } from 'node:fs';
 import { z } from 'zod';
+import { DEFAULT_ONCHAIN_THRESHOLDS_USD } from '@cip/contracts';
 import { LogLevelSchema, loadEnv, NodeEnvSchema, PortSchema } from '@cip/observability';
+
+/** A positive USD amount as a decimal string. */
+const UsdSchema = z.string().regex(/^\d+(\.\d+)?$/, 'a USD amount such as 1000000');
 
 /** Validated at start-up; every key may also come from a file via `<KEY>_FILE`. */
 export const JobsEnvSchema = z.object({
@@ -46,6 +50,30 @@ export const JobsEnvSchema = z.object({
   GROK_API_KEY: z.string().optional(),
   /** xAI's OpenAI-compatible API; tests point it at a fake server. */
   AI_BASE_URL: z.url().default('https://api.x.ai/v1'),
+  /**
+   * The Alchemy API key for the Whale Tracker's Ethereum, PAXG and Solana events (proposal 003,
+   * ADR 025). Only this service has it: in the local stack it is `.secrets-jobs/alchemy-api-key`.
+   * Optional: without it those chains wait (`no_key`), and Bitcoin needs none. With
+   * `ALCHEMY_API_KEY_FILE` the file is read again every 30 s, so a key added later needs no restart.
+   */
+  ALCHEMY_API_KEY: z.string().optional(),
+  /** Whether the on-chain watcher runs (off on the replay stack and in CI: no outside calls). */
+  ONCHAIN_ENABLED: z.stringbool().default(true),
+  /** Bitcoin: a mempool-compatible WebSocket that pushes each block, and an Esplora REST API. */
+  ONCHAIN_BTC_WS_URL: z.url().default('wss://mempool.space/api/v1/ws'),
+  ONCHAIN_BTC_API_URL: z.url().default('https://mempool.space/api'),
+  /** Alchemy's endpoints; the key is appended to each. */
+  ONCHAIN_ETH_WS_URL: z.url().default('wss://eth-mainnet.g.alchemy.com/v2/'),
+  ONCHAIN_ETH_HTTP_URL: z.url().default('https://eth-mainnet.g.alchemy.com/v2/'),
+  ONCHAIN_SOL_WS_URL: z.url().default('wss://solana-mainnet.g.alchemy.com/v2/'),
+  ONCHAIN_SOL_HTTP_URL: z.url().default('https://solana-mainnet.g.alchemy.com/v2/'),
+  /** The smallest transfer recorded, in USD (mints and burns are recorded whatever their size). */
+  ONCHAIN_MIN_USD_BTC: UsdSchema.default(DEFAULT_ONCHAIN_THRESHOLDS_USD.BTC),
+  ONCHAIN_MIN_USD_ETH: UsdSchema.default(DEFAULT_ONCHAIN_THRESHOLDS_USD.ETH),
+  ONCHAIN_MIN_USD_SOL: UsdSchema.default(DEFAULT_ONCHAIN_THRESHOLDS_USD.SOL),
+  ONCHAIN_MIN_USD_PAXG: UsdSchema.default(DEFAULT_ONCHAIN_THRESHOLDS_USD.PAXG),
+  /** Solana transactions read per UTC day at most, to keep the free plan for Ethereum (proposal 003). */
+  ONCHAIN_SOL_DAILY_CALLS: z.coerce.number().int().min(0).default(5_000),
 });
 
 export type JobsConfig = z.infer<typeof JobsEnvSchema>;

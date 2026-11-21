@@ -13,3 +13,4 @@ export * from './alerts.js';
 export * from './practice.js';
 export * from './ai.js';
 export * from './activity.js';
+export * from './whales.js';

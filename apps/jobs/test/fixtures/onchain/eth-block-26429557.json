@@ -1,0 +1,24 @@
+{
+  "source": "eth_getBlockByNumber from a public Ethereum node (publicnode.com), 2026-11-17; transactions trimmed to these",
+  "block": {
+    "number": "0x1934875",
+    "hash": "0x91ee7ca526205eb953056861a8298ef4b166332bd8e71ace00a48e21f930f707",
+    "timestamp": "0x6afb536f",
+    "transactions": [
+      {
+        "hash": "0xb64788847fb220e82058882c02674e289edf328b8fe64939efa17c9c042e28bd",
+        "from": "0x7042141b22f5d44c974729847f22b3ff8616b6c2",
+        "to": "0x5678f1eb998a9f07730bf338e763c0aca42c7279",
+        "value": "0xf24604678288",
+        "transactionIndex": "0x1"
+      },
+      {
+        "hash": "0x1ae7ecf44df7e9b00a5e8e0aee85e65425b33afc8bc75ad663059e3f3b8738bd",
+        "from": "0xbc748540db5c76335d324d353f6903e9cf77c65d",
+        "to": "0x2729284c6382557c98710e1cdc8e6c8090cb4c5e",
+        "value": "0x37f6cab9cecb3c19f58",
+        "transactionIndex": "0x5e"
+      }
+    ]
+  }
+}
