@@ -11,7 +11,7 @@ import {
   PAXG_CONTRACT,
 } from '@cip/contracts';
 import { type Database, exchangeLabelRows, onchainCursor } from '@cip/db';
-import { ReconnectingSocket, type SocketStatus } from '@cip/exchange-adapters';
+import { ReconnectingSocket, type SocketOptions, type SocketStatus } from '@cip/exchange-adapters';
 import { FencedLease, LEASE_RENEW_MS, type Logger } from '@cip/observability';
 import { type EthLog, TOPICS } from './detect.js';
 import type { EsploraClient } from './http.js';
@@ -47,6 +47,8 @@ export interface WatcherDeps {
   instance: string;
   config: WatcherConfig;
   now?: () => number;
+  /** The providers' WebSocket: tests inject an in-memory one, so nothing connects out. */
+  webSocket?: SocketOptions['WebSocketImpl'];
 }
 
 /**
@@ -258,7 +260,7 @@ export class OnchainWatcher {
           s.onSocket(status, detail);
         },
       },
-      { idleTimeoutMs: 120_000 },
+      { idleTimeoutMs: 120_000, WebSocketImpl: this.d.webSocket },
     );
     s.socket.start();
   }
@@ -313,7 +315,7 @@ export class OnchainWatcher {
         onMessage: (data) => void this.ethereumMessage(data, subs),
         onStatus: (status, detail) => s.onSocket(status, detail),
       },
-      { idleTimeoutMs: 60_000 },
+      { idleTimeoutMs: 60_000, WebSocketImpl: this.d.webSocket },
     );
     s.socket.start();
   }
@@ -456,7 +458,7 @@ export class OnchainWatcher {
         onStatus: (status, detail) => s.onSocket(status, detail),
       },
       // Quiet wallets send nothing for long stretches: only a very long silence reconnects.
-      { idleTimeoutMs: 15 * 60_000 },
+      { idleTimeoutMs: 15 * 60_000, WebSocketImpl: this.d.webSocket },
     );
     s.socket.start();
   }

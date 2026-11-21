@@ -375,7 +375,7 @@ function Sources({ status }: { status: OnchainStatusResponse }) {
       {status.sources.every((s) => s.state === 'off') ? (
         <Alert tone="info" title="The on-chain watcher is switched off on this stack">
           Nothing here connects to the blockchain providers, so no new on-chain event arrives. It is switched
-          on with ONCHAIN_ENABLED=true, on a computer where that traffic is allowed.
+          on in the jobs service's settings, on a computer where that traffic is allowed.
         </Alert>
       ) : null}
       <dl className="grid gap-4 sm:grid-cols-3">

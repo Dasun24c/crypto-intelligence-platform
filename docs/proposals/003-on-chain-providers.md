@@ -2,7 +2,7 @@
 
 | | |
 |---|---|
-| Status | **Approved 2026-11-17 with option A, the free one** (you answered "A, free"). Phase 11 builds it. Your part: a free Alchemy account, with its key in `.secrets-jobs/alchemy-api-key`. Until the key is there, Ethereum, PAXG and Solana wait, and Bitcoin runs without a key. |
+| Status | **Approved 2026-11-17 with option A, the free one** (you answered "A, free"). Built in Phase 11 ([ADR 025](../adr/025-whale-tracker.md)). The watcher connects to the providers only when the stack runs with `ONCHAIN_ENABLED=true`. On 2026-11-21 you chose to keep it off on the development laptop ("Keep it off"), so nothing connects from there; it is switched on later on a computer where that traffic is allowed, after the providers' terms are read. Your part then: a free Alchemy account, with its key in `.secrets-jobs/alchemy-api-key`. Until the key is there, Ethereum, PAXG and Solana wait, and Bitcoin runs without a key. |
 | Date | 2026-11-16 |
 | Decision | D9 in the [Phase 0 decisions](../phase-0/README.md), taken in Phase 11 as planned. See [§6](#6-decision-for-you). |
 | Scope | [REQUIREMENTS §7](../../REQUIREMENTS.md#7-whale-monitoring) (WH-02); [implementation plan, Phase 11](../phase-0/08-implementation-plan.md#phase-11--whale-tracker), criteria 11.2 and 11.4; [feasibility §9](../phase-0/02-feasibility.md#9-on-chain-providers-decision-in-phase-11) |

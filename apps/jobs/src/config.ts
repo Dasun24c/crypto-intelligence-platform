@@ -57,8 +57,12 @@ export const JobsEnvSchema = z.object({
    * `ALCHEMY_API_KEY_FILE` the file is read again every 30 s, so a key added later needs no restart.
    */
   ALCHEMY_API_KEY: z.string().optional(),
-  /** Whether the on-chain watcher runs (off on the replay stack and in CI: no outside calls). */
-  ONCHAIN_ENABLED: z.stringbool().default(true),
+  /**
+   * Whether the on-chain watcher runs (ADR 025). Off unless set to true: it connects to mempool.space
+   * (no key needed) and Alchemy, which only a computer where that traffic is allowed should do. The
+   * local stack and the replay stack leave it off, and so does running this service from source.
+   */
+  ONCHAIN_ENABLED: z.stringbool().default(false),
   /** Bitcoin: a mempool-compatible WebSocket that pushes each block, and an Esplora REST API. */
   ONCHAIN_BTC_WS_URL: z.url().default('wss://mempool.space/api/v1/ws'),
   ONCHAIN_BTC_API_URL: z.url().default('https://mempool.space/api'),

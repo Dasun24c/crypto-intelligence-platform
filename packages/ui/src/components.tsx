@@ -1,7 +1,7 @@
 import { cva, type VariantProps } from 'class-variance-authority';
 import { AlertTriangle, CheckCircle2, Info, Loader2, XCircle } from 'lucide-react';
 import { Slot, Switch as SwitchPrimitive } from 'radix-ui';
-import type { ComponentProps, ReactNode } from 'react';
+import { type ComponentProps, type ReactNode, useEffect, useRef, useState } from 'react';
 import { cn } from './cn.js';
 
 const buttonVariants = cva(
@@ -192,9 +192,32 @@ export function Alert({
   );
 }
 
+/**
+ * A table in a box that scrolls sideways when the table is wider than the page. While it scrolls, the
+ * box is a focusable region named by the table's caption, so it can be scrolled from the keyboard too
+ * (WCAG 2.1.1; axe's scrollable-region-focusable). A table that fits adds no tab stop.
+ */
 export function Table({ className, ...props }: ComponentProps<'table'>) {
+  const box = useRef<HTMLDivElement>(null);
+  const [scrollLabel, setScrollLabel] = useState<string | null>(null);
+  useEffect(() => {
+    const el = box.current;
+    if (!el || typeof ResizeObserver === 'undefined') return;
+    // The observer reports once when it starts, then on every change of the box's or the table's size.
+    const observer = new ResizeObserver(() => {
+      const caption = el.querySelector('caption')?.textContent?.trim();
+      setScrollLabel(el.scrollWidth > el.clientWidth ? caption || 'Table' : null);
+    });
+    observer.observe(el);
+    if (el.firstElementChild) observer.observe(el.firstElementChild);
+    return () => observer.disconnect();
+  }, []);
   return (
-    <div className="w-full overflow-x-auto">
+    <div
+      ref={box}
+      className="w-full overflow-x-auto"
+      {...(scrollLabel === null ? {} : { role: 'region', 'aria-label': scrollLabel, tabIndex: 0 })}
+    >
       <table className={cn('w-full border-collapse text-sm', className)} {...props} />
     </div>
   );
