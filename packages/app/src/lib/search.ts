@@ -97,3 +97,27 @@ export function readAiSearch(search: unknown): AiSearch {
     ...(reason === 'market_summary' || reason === 'setup_review' || reason === 'refresh' ? { reason } : {}),
   };
 }
+
+/** `/history?tab&replay&compare&run`: Historical Analytics (Phase 12), linkable. */
+export interface HistorySearch {
+  tab?: 'stats' | 'replays';
+  /** The replay shown in the Replays tab. */
+  replay?: string;
+  /** The run it is compared with (default: the live run it started from). */
+  compare?: string;
+  /** The statistics of one run (a replay's) instead of the live runs'. */
+  run?: string;
+}
+
+const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/;
+
+export function readHistorySearch(search: unknown): HistorySearch {
+  const s = (search ?? {}) as Record<string, unknown>;
+  const id = (k: string) => (typeof s[k] === 'string' && UUID.test(s[k]) ? { [k]: s[k] } : {});
+  return {
+    ...(s['tab'] === 'stats' || s['tab'] === 'replays' ? { tab: s['tab'] } : {}),
+    ...id('replay'),
+    ...id('compare'),
+    ...id('run'),
+  };
+}

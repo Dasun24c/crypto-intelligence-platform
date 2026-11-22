@@ -62,6 +62,7 @@ describe('migrations', () => {
       '0013_auto_trading',
       '0014_ai',
       '0015_onchain',
+      '0016_replay_settings',
     ]);
     const again = await migrateToLatest(owner);
     expect(again.error).toBeUndefined();
@@ -415,6 +416,52 @@ describe('analysis schema (migration 0006)', () => {
         .execute();
     } finally {
       await owner.deleteFrom('analysis.indicator_values').where('instrument_id', '=', instrumentId).execute();
+      await owner.deleteFrom('analysis.detection_runs').where('instrument_id', '=', instrumentId).execute();
+      await analyzer.destroy();
+    }
+  });
+
+  it('keeps changed settings on replays only, always with the settings they ran with (migration 0016)', async () => {
+    const analyzer = createDb({ connectionString: roleUrls.svc_analyzer, max: 1 });
+    const instrumentId = '019a6f00-0000-7000-8000-000000000003';
+    const run = (id: string, mode: 'live' | 'replay', extra: { settings?: string; params?: string }) => ({
+      id,
+      mode,
+      instrument_id: instrumentId,
+      profile_id: LAUNCH_PROFILE_IDS['crypto-majors'],
+      ruleset_version: 'test',
+      params_hash: 'x',
+      from_time: new Date(Date.UTC(2026, 10, 10)),
+      to_time: new Date(Date.UTC(2026, 10, 11)),
+      status: 'completed' as const,
+      ...extra,
+    });
+    const settings = JSON.stringify({ minRR: 3 });
+    const params = JSON.stringify({ indicators: {}, smc: { setups: { checklist: { minRR: 3 } } } });
+    try {
+      await analyzer
+        .insertInto('analysis.detection_runs')
+        .values([
+          run('019a6f00-0000-7000-8000-00000000f011', 'replay', { settings, params }),
+          run('019a6f00-0000-7000-8000-00000000f012', 'replay', {}),
+        ])
+        .execute();
+      const stored = await api
+        .selectFrom('analysis.detection_runs')
+        .select(['settings', 'params'])
+        .where('id', '=', '019a6f00-0000-7000-8000-00000000f011')
+        .executeTakeFirstOrThrow();
+      expect(stored.settings).toEqual({ minRR: 3 });
+      expect(stored.params).toEqual({ indicators: {}, smc: { setups: { checklist: { minRR: 3 } } } });
+      for (const bad of [
+        run('019a6f00-0000-7000-8000-00000000f013', 'live', { settings, params }),
+        run('019a6f00-0000-7000-8000-00000000f014', 'replay', { settings }),
+        run('019a6f00-0000-7000-8000-00000000f015', 'replay', { params }),
+      ])
+        expect(await sqlState(analyzer.insertInto('analysis.detection_runs').values(bad).execute())).toBe(
+          '23514',
+        );
+    } finally {
       await owner.deleteFrom('analysis.detection_runs').where('instrument_id', '=', instrumentId).execute();
       await analyzer.destroy();
     }

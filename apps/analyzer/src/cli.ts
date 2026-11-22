@@ -1,5 +1,6 @@
 #!/usr/bin/env node
 import { v7 as uuidv7 } from 'uuid';
+import { type ReplaySettings, ReplaySettingsSchema } from '@cip/contracts';
 import { createDb } from '@cip/db';
 import { createLogger, INSTANCE_ID } from '@cip/observability';
 import { AnalysisRepository } from './analysis/repository.js';
@@ -14,24 +15,40 @@ import { loadAnalyzerConfig } from './config.js';
  *
  * `cip-analyzer digest <runId> <from> <to>`: a run's digest over (from, to].
  *
- * Times are ISO 8601 (`2026-11-11T00:00:00Z`) or epoch milliseconds.
+ * Times are ISO 8601 (`2026-11-11T00:00:00Z`) or epoch milliseconds. A replay can change settings
+ * for itself (Phase 12) with a JSON object as its last argument, e.g. `'{"minRR":3}'`.
  */
-const USAGE = 'usage: cip-analyzer replay <instrumentId> <from> <to> | digest <runId> <from> <to>';
+const USAGE =
+  "usage: cip-analyzer replay <instrumentId> <from> <to> ['<settings JSON>'] | digest <runId> <from> <to>";
 
 const time = (s: string | undefined): number => (s && /^\d+$/.test(s) ? Number(s) : Date.parse(s ?? ''));
+
+/** The optional settings argument; undefined when it is not valid. */
+function settingsArg(s: string | undefined): ReplaySettings | null | undefined {
+  if (s === undefined) return null;
+  try {
+    const parsed = ReplaySettingsSchema.safeParse(JSON.parse(s));
+    return parsed.success ? parsed.data : undefined;
+  } catch {
+    return undefined;
+  }
+}
 
 async function main(argv: string[]): Promise<number> {
   const config = loadAnalyzerConfig();
   const log = createLogger({ service: 'analyzer', instance: INSTANCE_ID, level: config.LOG_LEVEL });
-  const [command, id, a, b] = argv;
+  const [command, id, a, b, extra] = argv;
   const from = time(a);
   const to = time(b);
+  const settings = command === 'replay' ? settingsArg(extra) : null;
   if (
     (command !== 'replay' && command !== 'digest') ||
     !id ||
     Number.isNaN(from) ||
     Number.isNaN(to) ||
-    to <= from
+    to <= from ||
+    settings === undefined ||
+    (command === 'digest' && extra !== undefined)
   ) {
     log.error({ argv }, USAGE);
     return 64;
@@ -55,7 +72,7 @@ async function main(argv: string[]): Promise<number> {
     try {
       result = await runReplay(
         { repo, store, log },
-        { runId, instrumentId: id, from, to, requestedBy: null },
+        { runId, instrumentId: id, from, to, requestedBy: null, settings },
       );
     } catch (err) {
       // As the queue's worker does: the run is not left "running".
@@ -67,11 +84,13 @@ async function main(argv: string[]): Promise<number> {
       ...result,
       from,
       to,
+      settings,
       live: live && { runId: result.liveRunId, ...live },
       equal: live ? live.digest === result.digest && live.events === result.events : null,
     };
     process.stdout.write(`${JSON.stringify(report, null, 2)}\n`);
-    return report.equal === false ? 2 : 0;
+    // With changed settings a difference is what was asked for, not a determinism failure.
+    return report.equal === false && !settings ? 2 : 0;
   } finally {
     await db.destroy();
   }

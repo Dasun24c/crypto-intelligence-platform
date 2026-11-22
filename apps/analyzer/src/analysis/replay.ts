@@ -1,6 +1,6 @@
 import { type Job, Worker } from 'bullmq';
 import { Redis } from 'ioredis';
-import { REPLAY_QUEUE, type ReplayJob } from '@cip/contracts';
+import { applyReplaySettings, REPLAY_QUEUE, type ReplayJob } from '@cip/contracts';
 import { type Closure, floorTo, HISTORY_CANDLES, TF_MS, TIMEFRAMES } from '@cip/domain';
 import type { Logger } from '@cip/observability';
 import { analysisParams, RULESET_VERSION, toRow } from './actor.js';
@@ -41,6 +41,10 @@ const DAY_MS = 86_400_000;
  * stored history. Otherwise every timeframe warms up on HISTORY_CANDLES of stored history before
  * `from`.
  *
+ * Settings the replay changes (Phase 12, ADR 026) apply on top of that profile. The run keeps them,
+ * and the whole settings it ran with, so a comparison can list them; its digest then differs from
+ * the live run's wherever the change made the engine decide differently.
+ *
  * A replay reads final history only: a candle that is not stored, or still awaiting repair, fails it.
  */
 export async function runReplay(deps: ReplayDeps, job: ReplayJob): Promise<ReplayResult> {
@@ -67,6 +71,9 @@ export async function runReplay(deps: ReplayDeps, job: ReplayJob): Promise<Repla
       origins[tf] = Math.max(floorTo(job.from, tf) - HISTORY_CANDLES * TF_MS[tf], earliest);
     }
   }
+  const changes = job.settings ?? null;
+  if (changes) params = applyReplaySettings(params, changes);
+  // Checks the settings, changed or not, as a live run would: a bad change fails the replay here.
   const settings = analysisParams(params);
   const run = await repo.createReplayRun({
     id: job.runId,
@@ -79,6 +86,7 @@ export async function runReplay(deps: ReplayDeps, job: ReplayJob): Promise<Repla
     origins,
     requestedBy: job.requestedBy,
     sourceRunId: live?.id ?? null,
+    changed: changes ? { settings: changes, params } : null,
   });
   const starts = Object.values(run.series_origins);
   if (starts.length === 0) throw new Error('no stored candles to replay');

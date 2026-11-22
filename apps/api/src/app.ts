@@ -34,7 +34,8 @@ export async function createApiApp(opts: ApiModuleOptions): Promise<NestExpressA
     credentials: true,
     methods: ['GET', 'POST', 'PUT', 'PATCH', 'DELETE'],
     allowedHeaders: ['authorization', 'content-type', 'x-client', 'x-request-id'],
-    exposedHeaders: ['x-request-id', 'retry-after'],
+    // content-disposition: the CSV exports' file names (Phase 12), read by the desktop app.
+    exposedHeaders: ['x-request-id', 'retry-after', 'content-disposition'],
     maxAge: 600,
   });
   app.setGlobalPrefix(API_PREFIX, {

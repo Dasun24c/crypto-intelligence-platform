@@ -195,7 +195,11 @@ export class AnalysisRepository {
     );
   }
 
-  /** Creates a replay run (idempotent: a retried job finds its run). */
+  /**
+   * Creates a replay run (idempotent: a retried job finds its run). With `changed`, the run keeps
+   * the settings it changed and the whole settings it runs with, and its params hash is that
+   * object's, computed as the profiles' are (sha256 of the jsonb text).
+   */
   async createReplayRun(run: {
     id: string;
     instrumentId: string;
@@ -207,7 +211,11 @@ export class AnalysisRepository {
     origins: Record<string, number>;
     requestedBy: string | null;
     sourceRunId: string | null;
+    changed?: { settings: unknown; params: unknown } | null;
   }): Promise<DetectionRunRow> {
+    const changed = run.changed
+      ? { settings: JSON.stringify(run.changed.settings), params: JSON.stringify(run.changed.params) }
+      : null;
     await this.db
       .insertInto('analysis.detection_runs')
       .values({
@@ -216,7 +224,11 @@ export class AnalysisRepository {
         instrument_id: run.instrumentId,
         profile_id: run.profileId,
         ruleset_version: run.rulesetVersion,
-        params_hash: run.paramsHash,
+        params_hash: changed
+          ? sql<string>`encode(sha256(convert_to(${changed.params}::jsonb::text, 'UTF8')), 'hex')`
+          : run.paramsHash,
+        settings: changed?.settings ?? null,
+        params: changed?.params ?? null,
         from_time: new Date(run.from),
         to_time: new Date(run.to),
         series_origins: run.origins,

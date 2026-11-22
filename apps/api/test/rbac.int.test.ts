@@ -274,6 +274,29 @@ const ENDPOINTS: Endpoint[] = [
   { method: 'GET', path: '/api/v1/admin/whales/labels', policy: 'settings.manage' },
   { method: 'POST', path: '/api/v1/admin/whales/labels', policy: 'settings.manage', body: {} },
   { method: 'DELETE', path: `/api/v1/admin/whales/labels/${NOBODY}`, policy: 'settings.manage' },
+  // Phase 12: outcome statistics, the list of replays and the CSV exports. The exports are asked
+  // with a bad query, so an allowed role gets a JSON 400 after the guard rather than a CSV file.
+  { method: 'GET', path: '/api/v1/setups/stats', policy: 'dashboards.view' },
+  { method: 'GET', path: '/api/v1/replays', policy: 'dashboards.view' },
+  {
+    method: 'GET',
+    path: '/api/v1/replays/settings?instrumentId=x',
+    policy: 'dashboards.view',
+    route: '/api/v1/replays/settings',
+  },
+  {
+    method: 'GET',
+    path: '/api/v1/exports/setup-stats.csv?groupBy=x',
+    policy: 'dashboards.view',
+    route: '/api/v1/exports/setup-stats.csv',
+  },
+  {
+    method: 'GET',
+    path: '/api/v1/exports/setups.csv?found=x',
+    policy: 'dashboards.view',
+    route: '/api/v1/exports/setups.csv',
+  },
+  { method: 'GET', path: '/api/v1/exports/run-comparison.csv', policy: 'dashboards.view' },
   { method: 'GET', path: '/healthz', policy: 'public' },
   { method: 'GET', path: '/readyz', policy: 'public' },
 ];

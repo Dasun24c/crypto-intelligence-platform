@@ -14,3 +14,4 @@ export * from './practice.js';
 export * from './ai.js';
 export * from './activity.js';
 export * from './whales.js';
+export * from './history.js';

@@ -68,12 +68,8 @@ export class ApiClient {
     return (await this.requestWithStatus<T>(method, path, body)).body;
   }
 
-  /** As `request`, with the status too: some answers differ only by it (200 done, 202 still working). */
-  async requestWithStatus<T>(
-    method: Method,
-    path: string,
-    body?: unknown,
-  ): Promise<{ status: number; body: T }> {
+  /** Sends, and on a 401 refreshes once and sends again (or ends the session). */
+  private async sendAuthorised(method: Method, path: string, body?: unknown): Promise<Response> {
     let res = await this.send(method, path, body);
     if (res.status === 401 && this.accessToken !== null) {
       if (await this.refresh()) {
@@ -83,8 +79,26 @@ export class ApiClient {
         this.onSessionEnded();
       }
     }
+    return res;
+  }
+
+  /** As `request`, with the status too: some answers differ only by it (200 done, 202 still working). */
+  async requestWithStatus<T>(
+    method: Method,
+    path: string,
+    body?: unknown,
+  ): Promise<{ status: number; body: T }> {
+    const res = await this.sendAuthorised(method, path, body);
     if (!res.ok) return ApiClient.fail(res);
     return { status: res.status, body: (res.status === 204 ? undefined : await res.json()) as T };
+  }
+
+  /** Gets a file (the CSV exports, Phase 12): its contents and the name the server gives it. */
+  async file(path: string): Promise<{ blob: Blob; filename: string | null }> {
+    const res = await this.sendAuthorised('GET', path);
+    if (!res.ok) return ApiClient.fail(res);
+    const disposition = res.headers.get('content-disposition') ?? '';
+    return { blob: await res.blob(), filename: /filename="([^"]+)"/.exec(disposition)?.[1] ?? null };
   }
 
   /** Calls an auth endpoint without the retry logic (login, MFA, enrolment). */

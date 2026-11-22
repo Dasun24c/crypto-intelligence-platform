@@ -10,7 +10,13 @@ import {
 import { type Capability, can, type Tf, type UserSummary } from '@cip/contracts';
 import { Shell } from './layout/shell.js';
 import { isTimeframe } from './lib/analysis.js';
-import { readAiSearch, readLiquiditySearch, readPracticeSearch, readScannerSearch } from './lib/search.js';
+import {
+  readAiSearch,
+  readHistorySearch,
+  readLiquiditySearch,
+  readPracticeSearch,
+  readScannerSearch,
+} from './lib/search.js';
 import { AdminAuditPage } from './pages/admin-audit.js';
 import { AdminInstrumentsPage } from './pages/admin-instruments.js';
 import { AdminUsersPage } from './pages/admin-users.js';
@@ -99,6 +105,14 @@ const routeTree = rootRoute.addChildren([
     path: '/setups/$setupId',
     beforeLoad: requireCapability('dashboards.view'),
     component: lazyRouteComponent(() => import('./pages/setup-detail.js'), 'SetupDetailPage'),
+  }),
+  // Phase 12: historical analytics (outcome statistics) and the replay UI (every role reads).
+  createRoute({
+    getParentRoute: () => rootRoute,
+    path: '/history',
+    beforeLoad: requireCapability('dashboards.view'),
+    validateSearch: readHistorySearch,
+    component: lazyRouteComponent(() => import('./pages/historical-analytics.js'), 'HistoricalAnalyticsPage'),
   }),
   createRoute({
     getParentRoute: () => rootRoute,

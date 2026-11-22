@@ -400,40 +400,273 @@ export type ZonesQuery = z.infer<typeof ZonesQuerySchema>;
 
 // ── Replays (API contracts §3 "Setups and replays") ───────────────────────────────────────────
 
-/** `POST /replays`: replay a stored period with the instrument's current profile. */
+const unique = <T>(xs: readonly T[]) => new Set(xs).size === xs.length;
+
+/**
+ * The settings a replay may change for itself (Phase 12, ADR 026): rulebook §6–§7 settings of the
+ * profile's `smc.setups`. Everything else is the live run's (or the instrument's) profile, and the
+ * live analysis never changes. At least one setting is named.
+ */
+export const ReplaySettingsSchema = z
+  .strictObject({
+    /** The patterns evaluated (§6); the engine keeps its own order. */
+    patterns: z.array(PatternSchema).min(1).refine(unique, 'a pattern is named twice').optional(),
+    /** Checklist item 7: the reward-to-risk of T1 must reach this. */
+    minRR: z.number().positive().max(20).optional(),
+    /** The checklist items a confirmation needs (§7). */
+    mandatory: z.array(ChecklistItemSchema).refine(unique, 'an item is named twice').optional(),
+    /** §6.1: a market structure shift counts only with displacement. */
+    requireDisplacement: z.boolean().optional(),
+    /** §6.1: setup candles a confirmed setup waits for its entry. */
+    entryExpiryBars: z.number().int().min(1).max(10_000).optional(),
+    /** §6.1: setup candles a setup is held after its entry before it expires open. */
+    maxHoldBars: z.number().int().min(1).max(100_000).optional(),
+    /** Checklist item 8: minutes before and after a high-impact event. */
+    newsBlackoutMin: z
+      .strictObject({ before: z.number().int().min(0).max(1_440), after: z.number().int().min(0).max(1_440) })
+      .optional(),
+    /** §7: the `low_liquidity` flag blocks confirmation. */
+    blockConfirmOnLowLiquidity: z.boolean().optional(),
+  })
+  .refine((s) => Object.keys(s).length > 0, 'name at least one setting to change');
+export type ReplaySettings = z.infer<typeof ReplaySettingsSchema>;
+
+/** Where each replay setting lives in a profile's settings (`market.instrument_profiles.params`). */
+export const REPLAY_SETTING_PATHS = {
+  patterns: 'smc.setups.patterns',
+  minRR: 'smc.setups.checklist.minRR',
+  mandatory: 'smc.setups.checklist.mandatory',
+  requireDisplacement: 'smc.setups.mss.requireDisplacement',
+  entryExpiryBars: 'smc.setups.timing.entryExpiryBars',
+  maxHoldBars: 'smc.setups.timing.maxHoldBars',
+  newsBlackoutMin: 'smc.setups.checklist.newsBlackoutMin',
+  blockConfirmOnLowLiquidity: 'smc.setups.quality.blockConfirmOnLowLiquidity',
+} as const satisfies Record<keyof ReplaySettings, string>;
+
+/** The part of a profile's settings the replay settings live in (`smc.setups`), if it has one. */
+interface SetupsPart {
+  patterns: Pattern[];
+  mss: { requireDisplacement: boolean };
+  timing: { entryExpiryBars: number; maxHoldBars: number };
+  checklist: {
+    minRR: number;
+    mandatory: ChecklistItem[];
+    newsBlackoutMin: { before: number; after: number };
+  };
+  quality: { blockConfirmOnLowLiquidity: boolean };
+}
+const setupsOf = (params: unknown): SetupsPart | undefined =>
+  (params as { smc?: { setups?: SetupsPart } } | null | undefined)?.smc?.setups;
+
+/**
+ * A copy of a profile's settings with a replay's changes applied. Patterns and mandatory items are
+ * kept in the rulebook's order, so the same choice always gives the same settings. Throws when the
+ * profile has no setup settings (versions before 4). The result still needs the engine's checks.
+ */
+export function applyReplaySettings<T>(params: T, settings: ReplaySettings): T {
+  const out = structuredClone(params);
+  const s = setupsOf(out);
+  if (!s) throw new Error('the profile has no setup settings (version 4 or later is needed)');
+  const ordered = <K extends string>(all: readonly K[], chosen: readonly K[]) =>
+    all.filter((x) => chosen.includes(x));
+  if (settings.patterns) s.patterns = ordered(PATTERN_NAMES, settings.patterns);
+  if (settings.minRR !== undefined) s.checklist.minRR = settings.minRR;
+  if (settings.mandatory) s.checklist.mandatory = ordered(CHECKLIST_ITEM_NAMES, settings.mandatory);
+  if (settings.requireDisplacement !== undefined) s.mss.requireDisplacement = settings.requireDisplacement;
+  if (settings.entryExpiryBars !== undefined) s.timing.entryExpiryBars = settings.entryExpiryBars;
+  if (settings.maxHoldBars !== undefined) s.timing.maxHoldBars = settings.maxHoldBars;
+  if (settings.newsBlackoutMin) s.checklist.newsBlackoutMin = { ...settings.newsBlackoutMin };
+  if (settings.blockConfirmOnLowLiquidity !== undefined)
+    s.quality.blockConfirmOnLowLiquidity = settings.blockConfirmOnLowLiquidity;
+  return out;
+}
+
+/** Every replay setting, as a profile has them. */
+export type ReplaySettingValues = Required<ReplaySettings>;
+
+/** The values a profile's settings give the settings a replay may change. */
+export function replaySettingsOf(params: unknown): ReplaySettingValues {
+  const s = setupsOf(params);
+  if (!s) throw new Error('the profile has no setup settings (version 4 or later is needed)');
+  return {
+    patterns: [...s.patterns],
+    minRR: s.checklist.minRR,
+    mandatory: [...s.checklist.mandatory],
+    requireDisplacement: s.mss.requireDisplacement,
+    entryExpiryBars: s.timing.entryExpiryBars,
+    maxHoldBars: s.timing.maxHoldBars,
+    newsBlackoutMin: { ...s.checklist.newsBlackoutMin },
+    blockConfirmOnLowLiquidity: s.quality.blockConfirmOnLowLiquidity,
+  };
+}
+
+/** `GET /replays/settings?instrumentId`: what a replay of the instrument starts from. */
+export const ReplayBaseQuerySchema = z.strictObject({ instrumentId: UuidSchema });
+export type ReplayBaseQuery = z.infer<typeof ReplayBaseQuerySchema>;
+export const ReplayBaseSettingsSchema = z.object({
+  instrumentId: UuidSchema,
+  /** The instrument's profile now (a replay of a period a live run covers uses that run's). */
+  profile: z.object({ name: z.string(), version: z.number().int() }),
+  settings: z.object({
+    patterns: z.array(PatternSchema),
+    minRR: z.number(),
+    mandatory: z.array(ChecklistItemSchema),
+    requireDisplacement: z.boolean(),
+    entryExpiryBars: z.number().int(),
+    maxHoldBars: z.number().int(),
+    newsBlackoutMin: z.object({ before: z.number().int(), after: z.number().int() }),
+    blockConfirmOnLowLiquidity: z.boolean(),
+  }),
+});
+export type ReplayBaseSettings = z.infer<typeof ReplayBaseSettingsSchema>;
+
+/**
+ * `POST /replays`: replay a stored period, at most 31 days, ending in the past. It starts from the
+ * live run that covers the period (its profile and series origins, ADR 017), else the instrument's
+ * current profile; `settings` changes some of that profile's settings for this replay only.
+ */
 export const ReplayRequestSchema = z
-  .strictObject({ instrumentId: UuidSchema, from: TsSchema, to: TsSchema })
+  .strictObject({
+    instrumentId: UuidSchema,
+    from: TsSchema,
+    to: TsSchema,
+    settings: ReplaySettingsSchema.optional(),
+  })
   .refine((r) => r.to > r.from, 'to must be after from')
   .refine((r) => r.to - r.from <= 31 * 86_400_000, 'a replay covers at most 31 days');
 export type ReplayRequest = z.infer<typeof ReplayRequestSchema>;
 
-/** The digests of the replay and of the live run over the same period (criterion 4.3). */
-export const DigestComparisonSchema = z.object({
-  liveRunId: UuidSchema,
+const RunModeSchema = z.enum(['live', 'replay']);
+
+/** One run's side of a comparison: its digest over the compared period (ADR 017). */
+export const RunDigestSchema = z.object({
+  runId: UuidSchema,
+  mode: RunModeSchema,
+  /** Its profile, and its rules version (indicators and SMC). */
+  profile: z.object({ name: z.string(), version: z.number().int() }),
+  rulesetVersion: z.string(),
+  /** sha256 over its events decided in the period, in order. */
+  digest: z.string(),
+  events: z.number().int(),
+  /** The settings it changed, for a replay that changed some. */
+  settings: ReplaySettingsSchema.nullable(),
+});
+export type RunDigest = z.infer<typeof RunDigestSchema>;
+
+/**
+ * A setting that differs between the two runs: a path in the profile's settings (for example
+ * `smc.setups.checklist.minRR`), or `rulesetVersion` or `profile`. Values are as stored (JSON).
+ */
+export const SettingDifferenceSchema = z.object({ path: z.string(), base: z.json(), other: z.json() });
+export type SettingDifference = z.infer<typeof SettingDifferenceSchema>;
+
+/** A setup as one run left it at the end of the compared period (its latest transition by then). */
+export const SetupSideSchema = z.object({
+  state: SetupStateSchema,
+  resolution: SetupResolutionSchema.nullable(),
+  score: z.number(),
+  mandatoryPassed: z.boolean(),
+  /** Its transitions in the period. */
+  transitions: z.number().int(),
+});
+export type SetupSide = z.infer<typeof SetupSideSchema>;
+
+/** A setup whose transitions in the period differ between the runs. */
+export const SetupDifferenceSchema = z.object({
+  /** The setup's natural key (the same in every run, ADR 017). */
+  key: z.string(),
+  pattern: PatternSchema,
+  variant: z.enum(['A', 'B']).nullable(),
+  direction: Direction,
+  contextTf: TimeframeSchema,
+  setupTf: TimeframeSchema,
+  /** When it started forming (decision time). */
+  createdAt: TsSchema,
+  /** Null when that run has no transition of it in the period. */
+  base: SetupSideSchema.nullable(),
+  other: SetupSideSchema.nullable(),
+});
+export type SetupDifference = z.infer<typeof SetupDifferenceSchema>;
+
+/**
+ * Two runs of one instrument compared over the period both cover (criteria 4.3 and 12.3): their
+ * digests, the settings that differ, and the detections that differ. Events are matched by type,
+ * timeframe, natural key and decision time, so runs that started at different points can still be
+ * compared event by event although their digests (which number the events) differ.
+ */
+export const RunComparisonSchema = z.object({
+  base: RunDigestSchema,
+  other: RunDigestSchema,
   /** The period compared: decisions after `from`, up to and including `to`. */
   from: TsSchema,
   to: TsSchema,
-  liveEvents: z.number().int(),
-  replayEvents: z.number().int(),
-  liveDigest: z.string(),
-  replayDigest: z.string(),
+  /** The digests are equal: the same events in the same order. */
   equal: z.boolean(),
+  /** Both runs started each timeframe at the same candle (otherwise their event numbers differ). */
+  sameOrigins: z.boolean(),
+  /** A live run that has not analysed the whole period yet: compare again later. */
+  incomplete: z.boolean(),
+  /** Empty when the rules versions, profiles and settings are the same. */
+  settings: z.array(SettingDifferenceSchema),
+  /** Events in the period per type, in each run. */
+  eventTypes: z.array(z.object({ type: z.string(), base: z.number().int(), other: z.number().int() })),
+  onlyInBase: z.number().int(),
+  onlyInOther: z.number().int(),
+  /** The same event in both, with different contents. */
+  changed: z.number().int(),
+  /** Setups that differ, oldest first; at most `SETUP_DIFFERENCES_SHOWN` (the CSV export has all). */
+  setups: z.array(SetupDifferenceSchema),
+  setupsTotal: z.number().int(),
 });
-export type DigestComparison = z.infer<typeof DigestComparisonSchema>;
+export type RunComparison = z.infer<typeof RunComparisonSchema>;
 
-/** `GET /replays/{runId}`. */
-export const ReplayStatusSchema = z.object({
+/** How many differing setups a comparison lists (`setupsTotal` counts them all). */
+export const SETUP_DIFFERENCES_SHOWN = 200;
+
+export const REPLAY_STATUSES = ['queued', 'warming_up', 'running', 'completed', 'failed'] as const;
+const ReplayStatusValue = z.enum(REPLAY_STATUSES);
+
+/** A replay in the list (`GET /replays`), newest first, queued ones included. */
+export const ReplaySummarySchema = z.object({
   runId: UuidSchema,
   instrumentId: UuidSchema,
-  status: z.enum(['queued', 'warming_up', 'running', 'completed', 'failed']),
+  status: ReplayStatusValue,
   from: TsSchema,
   to: TsSchema,
-  /** sha256 over the replay's events decided in (from, to]; null until it completes. */
+  /** The settings it changed; null: the live run's settings. */
+  settings: ReplaySettingsSchema.nullable(),
+  /** The live run it started from (ADR 017), if one covered the period. */
+  sourceRunId: UuidSchema.nullable(),
+  /** sha256 over its events decided in (from, to]; null until it completes. */
   digest: z.string().nullable(),
-  events: z.number().int().nullable(),
-  /** Null when no live run covers the period. */
-  comparison: DigestComparisonSchema.nullable(),
+  requestedAt: TsSchema,
+  finishedAt: TsSchema.nullable(),
+  /** Requested by the signed-in user. */
+  mine: z.boolean(),
   error: z.string().nullable(),
+});
+export type ReplaySummary = z.infer<typeof ReplaySummarySchema>;
+
+/** `GET /replays?instrumentId&limit`. */
+export const ReplaysQuerySchema = z.strictObject({
+  instrumentId: UuidSchema.optional(),
+  limit: z.coerce.number().int().min(1).max(200).default(50),
+});
+export type ReplaysQuery = z.infer<typeof ReplaysQuerySchema>;
+
+/** `GET /replays/{runId}?compareWith`: by default the comparison is with the live run it started from. */
+export const ReplayStatusQuerySchema = z.strictObject({ compareWith: UuidSchema.optional() });
+export type ReplayStatusQuery = z.infer<typeof ReplayStatusQuerySchema>;
+
+/** `GET /replays/{runId}`. */
+export const ReplayStatusSchema = ReplaySummarySchema.omit({ mine: true }).extend({
+  /** The replay's events decided in (from, to]; null until it completes. */
+  events: z.number().int().nullable(),
+  /**
+   * With the run `compareWith` named, else with the live run it started from; null until it
+   * completes, or when no live run covered the period and none was named.
+   */
+  comparison: RunComparisonSchema.nullable(),
 });
 export type ReplayStatus = z.infer<typeof ReplayStatusSchema>;
 
@@ -445,6 +678,8 @@ export interface ReplayJob {
   from: number;
   to: number;
   requestedBy: string | null;
+  /** Phase 12: settings changed for this replay (absent or null: none). */
+  settings?: ReplaySettings | null;
 }
 
 // ── The `smc:{instrumentId}` channel ──────────────────────────────────────────────────────────

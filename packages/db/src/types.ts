@@ -681,6 +681,10 @@ export interface DetectionRunsTable {
   finished_at: Date | null;
   /** For a replay, the live run it copied its origins and profile from (ADR 017). */
   source_run_id: ColumnType<string | null, string | null | undefined, string | null>;
+  /** Phase 12: the settings a replay changed (as requested), as JSON text on insert. */
+  settings: ColumnType<unknown, string | null | undefined, string | null>;
+  /** Phase 12: the whole settings such a replay ran with; null: its profile's. */
+  params: ColumnType<unknown, string | null | undefined, string | null>;
 }
 
 /** double precision columns come back from node-postgres as numbers, exactly as stored. */

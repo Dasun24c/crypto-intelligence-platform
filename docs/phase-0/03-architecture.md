@@ -267,6 +267,7 @@ docs/
 > - The analyzer consumes the `replay` queue (`ReplayWorker`, one job at a time), not `jobs`: the engine runtime lives in the analyzer.
 > - A replay copies the series origins and profile of the live run that covers the period, and records it as its source. Its digest must then equal the live run's.
 > - `node apps/analyzer/dist/cli.js replay <instrumentId> <from> <to>` runs a replay in-process and prints both digests. `digest <runId> <from> <to>` prints one run's.
+> - Phase 12 ([ADR 026](../adr/026-historical-analytics-and-replay-ui.md)): a replay may change a curated set of setup settings for itself, kept on its own run (`detection_runs.settings` and `params`); the API compares any two runs of an instrument by digest, settings and natural keys; the CLI takes the settings as a JSON argument. Replays still never publish detections.
 >
 > **Observability**
 >

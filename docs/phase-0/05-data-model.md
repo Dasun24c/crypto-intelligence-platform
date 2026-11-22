@@ -734,6 +734,12 @@ CREATE TABLE ops.system_events (                        -- hypertable on ts
 > - **Profiles**: version 4 of `crypto-majors` (`…0207`) and `gold` (`…0208`) adds `params.smc.setups` (rulebook §10), and every instrument moves to it.
 > - **Grants**: as for the Phase 4 projections, plus the transitions' identity sequence for svc_analyzer.
 
+> **As implemented in Phase 12** (migration 0016, [ADR 026](../adr/026-historical-analytics-and-replay-ui.md)):
+>
+> - `detection_runs` adds `settings` (the settings a replay changed for itself, as requested) and `params` (the whole settings it ran with: its profile's, with the changes). A check allows them only on replays, and only together; live runs and unchanged replays leave both null and read their profile's. Such a replay's `params_hash` is computed over `params`, as the profiles' hash is over theirs.
+> - `setups` adds an index on (`run_id`, `created_candle_time`) for the outcome statistics.
+> - The statistics have no table of their own: `GET /setups/stats` reads `setups` and `setup_outcomes` directly.
+
 ## 8. Hypertables, columnstore and retention
 
 | Table | Chunk interval | Columnstore after | Retention | Estimated rows/day (9 pairs) |

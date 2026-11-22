@@ -489,6 +489,8 @@ export const TABLE_COLUMNS: Record<Table, readonly string[]> = {
     started_at: true,
     finished_at: true,
     source_run_id: true,
+    settings: true,
+    params: true,
   }),
   'analysis.indicator_values': t<'analysis.indicator_values'>({
     instrument_id: true,

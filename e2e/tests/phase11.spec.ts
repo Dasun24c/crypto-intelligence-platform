@@ -67,6 +67,20 @@ test.describe('Phase 11', () => {
     await ctx?.close();
   });
 
+  /**
+   * The walls first seen in [from, to), counted through Market Activity's endpoint. It lists the
+   * newest 1,000 walls of a window, so a full answer is counted again in two halves (a busy pair has
+   * more than 1,000 walls in a day).
+   */
+  async function wallsAppeared(instrumentId: string, from: number, to: number): Promise<number> {
+    const res = await api.get(`/api/v1/market/${instrumentId}/walls?from=${from}&to=${to}`, { headers });
+    expect(res.status(), await res.text()).toBe(200);
+    const walls = (await res.json()) as Wall[];
+    if (walls.length < 1_000 || to - from < 2) return walls.length;
+    const mid = Math.floor((from + to) / 2);
+    return (await wallsAppeared(instrumentId, from, mid)) + (await wallsAppeared(instrumentId, mid, to));
+  }
+
   /** Every large trade of an instrument in [from, to), through the Market Activity endpoint. */
   async function storedTrades(instrumentId: string, from: number, to: number): Promise<LargeTrade[]> {
     const out: LargeTrade[] = [];
@@ -115,11 +129,9 @@ test.describe('Phase 11', () => {
         Number(s.soldUsd),
         2,
       );
-      const appeared = await api.get(
-        `/api/v1/market/${s.instrumentId}/walls?from=${flow.from}&to=${flow.to}`,
-        { headers },
+      expect(await wallsAppeared(s.instrumentId, flow.from, flow.to), `${s.instrumentId} walls`).toBe(
+        s.wallsAppeared,
       );
-      expect(((await appeared.json()) as Wall[]).length, `${s.instrumentId} walls`).toBe(s.wallsAppeared);
       const standing = await api.get(`/api/v1/market/${s.instrumentId}/walls?active=true`, { headers });
       // Walls can end between the two reads: the count is the standing walls seen by either.
       expect(Math.abs(((await standing.json()) as Wall[]).length - s.wallsStanding)).toBeLessThanOrEqual(2);

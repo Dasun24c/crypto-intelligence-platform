@@ -118,4 +118,37 @@ describe('ApiClient', () => {
     expect(err).toBeInstanceOf(ApiError);
     expect((err as ApiError).code).toBe('FORBIDDEN');
   });
+
+  it('downloads a file with its name, refreshing once on 401 (Phase 12 exports)', async () => {
+    const client = new ApiClient(platform('web'), () => {});
+    await client.acceptSession(token(1));
+    fetchMock
+      .mockResolvedValueOnce(
+        json(401, { type: 'about:blank', title: 'x', status: 401, code: 'AUTH_EXPIRED' }),
+      )
+      .mockResolvedValueOnce(json(200, token(2)))
+      .mockResolvedValueOnce(
+        new Response('a,b\r\n1,2\r\n', {
+          status: 200,
+          headers: { 'content-type': 'text/csv', 'content-disposition': 'attachment; filename="x-1.csv"' },
+        }),
+      );
+    const file = await client.file('/api/v1/exports/setups.csv');
+    expect(file.filename).toBe('x-1.csv');
+    expect(await file.blob.text()).toBe('a,b\r\n1,2\r\n');
+    expect(fetchMock.mock.calls[2]![1].headers.authorization).toBe('Bearer access-2');
+    // Without a name, and with a problem.
+    fetchMock.mockResolvedValueOnce(new Response('x', { status: 200 }));
+    expect((await client.file('/api/v1/exports/setups.csv')).filename).toBeNull();
+    fetchMock.mockResolvedValueOnce(
+      json(400, {
+        type: 'about:blank',
+        title: 'Bad',
+        status: 400,
+        code: 'VALIDATION_FAILED',
+        detail: 'Narrow it',
+      }),
+    );
+    await expect(client.file('/api/v1/exports/setups.csv')).rejects.toThrow('Narrow it');
+  });
 });

@@ -10,6 +10,9 @@ import { AdminAiSettingsController, AiController } from './ai/ai.controller.js';
 import { AiRepository } from './ai/ai.repository.js';
 import { AdminWhaleLabelsController, WhalesController } from './whales/whales.controller.js';
 import { WhalesRepository } from './whales/whales.repository.js';
+import { ComparisonService } from './history/comparison.service.js';
+import { ExportsController } from './history/exports.controller.js';
+import { StatsRepository } from './history/stats.repository.js';
 import { AiService } from './ai/ai.service.js';
 import { AuditService } from './audit/audit.service.js';
 import {
@@ -108,6 +111,7 @@ export class AppModule {
         AiController,
         AdminAiSettingsController,
         WhalesController,
+        ExportsController,
         AdminWhaleLabelsController,
         SystemController,
         ProbesController,
@@ -150,6 +154,8 @@ export class AppModule {
         SmcRepository,
         SetupsRepository,
         ReplayService,
+        StatsRepository,
+        ComparisonService,
         CalendarRepository,
         AlertsRepository,
         PracticeRepository,

@@ -154,7 +154,10 @@ export async function ensureTestAdmin(browser: Browser, baseURL: string | undefi
 export async function userIdOf(request: APIRequestContext, headers: Record<string, string>): Promise<string> {
   const res = await request.get('/api/v1/me', { headers });
   expect(res.status(), await res.text()).toBe(200);
-  return ((await res.json()) as { id: string }).id;
+  // `GET /me` answers `{ user, role, mfaEnabled, preferences }` (MeResponse).
+  const id = ((await res.json()) as { user?: { id?: unknown } }).user?.id;
+  expect(typeof id, 'the signed-in user has an id').toBe('string');
+  return id as string;
 }
 
 const SWITCHES = new Set([

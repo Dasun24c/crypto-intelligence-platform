@@ -697,13 +697,29 @@ describe('replays', () => {
       to: FROM + 10 * H,
       events: 3,
     });
-    expect(body.comparison).toMatchObject({ liveRunId: LIVE, liveEvents: 3, replayEvents: 3, equal: true });
-    expect(body.comparison!.liveDigest).toMatch(/^[0-9a-f]{64}$/);
-    // A differing event makes the digests differ.
+    expect(body.comparison).toMatchObject({
+      base: { runId: LIVE, mode: 'live', events: 3 },
+      other: { runId: REPLAY, mode: 'replay', events: 3, settings: null },
+      from: FROM,
+      to: FROM + 10 * H,
+      equal: true,
+      settings: [],
+      eventTypes: [{ type: 'swing_confirmed', base: 3, other: 3 }],
+      onlyInBase: 0,
+      onlyInOther: 0,
+      changed: 0,
+      setupsTotal: 0,
+    });
+    expect(body.comparison!.base.digest).toMatch(/^[0-9a-f]{64}$/);
+    expect(body.comparison!.other.digest).toBe(body.comparison!.base.digest);
+    // A differing event makes the digests differ, and is counted.
     await owner.deleteFrom('analysis.detection_events').where('run_id', '=', REPLAY).execute();
     await log(REPLAY, '.5');
     expect(((await get(`/replays/${REPLAY}`)).body as ReplayStatus).comparison).toMatchObject({
       equal: false,
+      onlyInBase: 0,
+      onlyInOther: 0,
+      changed: 1,
     });
   });
 });

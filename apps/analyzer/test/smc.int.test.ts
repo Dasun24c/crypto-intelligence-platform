@@ -2,7 +2,13 @@ import { Redis } from 'ioredis';
 import { sql } from 'kysely';
 import { afterAll, beforeAll, describe, expect, inject, it, vi } from 'vitest';
 import { v7 as uuidv7 } from 'uuid';
-import { type AnalysisStatus, analysisStatusKey, type SmcEventMessage } from '@cip/contracts';
+import {
+  type AnalysisStatus,
+  analysisStatusKey,
+  applyReplaySettings,
+  PATTERN_NAMES,
+  type SmcEventMessage,
+} from '@cip/contracts';
 import { candleToRow, createDb } from '@cip/db';
 import {
   aggregateCandles,
@@ -394,6 +400,55 @@ describe('SMC analysis runtime (Phase 4)', () => {
       expect(replay.events).toBeGreaterThan(0);
       expect(replay).toMatchObject({ digest: live.digest, events: live.events });
     }
+  });
+
+  it('replays with changed settings: the run keeps them, finds only the patterns kept, and differs (Phase 12)', async () => {
+    // Three days of warm-up history and the first live hours: the live run found setups there.
+    const from = FROM - 3 * 1_440 * MIN;
+    const to = FROM + 180 * MIN;
+    const live = await owner
+      .selectFrom('analysis.setups')
+      .select('pattern')
+      .where('run_id', '=', runId)
+      .where('created_candle_time', '>', new Date(from))
+      .where('created_candle_time', '<=', new Date(to))
+      .execute();
+    expect(live.length).toBeGreaterThan(0);
+    const tally = new Map<string, number>();
+    for (const s of live) tally.set(s.pattern, (tally.get(s.pattern) ?? 0) + 1);
+    const dropped = [...tally].sort((a, b) => b[1] - a[1])[0]![0];
+    const settings = { patterns: PATTERN_NAMES.filter((p) => p !== dropped), minRR: 2.5 };
+    const replay = await runReplay(
+      { repo, store, log },
+      { runId: uuidv7(), instrumentId: BTC, from, to, requestedBy: null, settings },
+    );
+    const run = await owner
+      .selectFrom('analysis.detection_runs')
+      .selectAll()
+      .where('id', '=', replay.runId)
+      .executeTakeFirstOrThrow();
+    const source = await owner
+      .selectFrom('analysis.detection_runs as r')
+      .innerJoin('market.instrument_profiles as p', 'p.id', 'r.profile_id')
+      .select(['r.params_hash', 'p.params'])
+      .where('r.id', '=', runId)
+      .executeTakeFirstOrThrow();
+    expect(run).toMatchObject({ source_run_id: runId, status: 'completed', settings });
+    expect(run.params).toEqual(applyReplaySettings(source.params, settings));
+    // Its own params hash, computed as the profiles' are.
+    const { rows } = await sql<{ hash: string }>`
+      SELECT encode(sha256(convert_to(params::text, 'UTF8')), 'hex') AS hash
+      FROM analysis.detection_runs WHERE id = ${replay.runId}`.execute(owner);
+    expect(run.params_hash).toBe(rows[0]!.hash);
+    expect(run.params_hash).not.toBe(source.params_hash);
+    const patterns = await owner
+      .selectFrom('analysis.setups')
+      .select('pattern')
+      .distinct()
+      .where('run_id', '=', replay.runId)
+      .execute();
+    expect(patterns.map((p) => p.pattern)).not.toContain(dropped);
+    expect(replay.digest).not.toBe((await store.digest(runId, from, to)).digest);
   });
 
   it('fences a former holder: a write with an older epoch is refused', async () => {
